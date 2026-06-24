@@ -1,0 +1,2457 @@
+import { useState, useMemo } from 'react';
+import {
+  CalendarPlus, MapPin, Users, Clock, CheckCircle, PlayCircle,
+  Plus, Trash2, Pencil, Lock, FileText, AlertCircle,
+  ClipboardList, ListChecks, ArrowDownCircle, ArrowUpCircle,
+  Landmark, DollarSign, ChevronRight, Printer, Receipt, X,
+  ClipboardCheck, ShieldAlert, CheckSquare, XSquare, MinusSquare,
+  BadgeDollarSign, TrendingUp, AlertTriangle, Banknote,
+  Trophy, Dices, Gavel, RefreshCw, Star,
+} from 'lucide-react';
+import { fmtDate, typePointLabel, statutPointLabel, fmt, periodeLabel } from '../data/mockData';
+import { useApp, TX_TYPES, TX_LABELS } from '../context/AppContext';
+import { PageHeader, Badge, Modal, FormField } from '../components/ui/index';
+import clsx from 'clsx';
+
+// ── Config statuts ────────────────────────────────────────────
+const sCfg = {
+  planifiee: { label:'Planifiée',  v:'blue',  icon: Clock       },
+  en_cours:  { label:'En cours',   v:'amber', icon: PlayCircle  },
+  cloturee:  { label:'Clôturée',   v:'green', icon: CheckCircle },
+};
+const typeCfg = {
+  administratif:{ v:'blue',  label:'Administratif' },
+  financier:    { v:'green', label:'Financier'     },
+  attribution:  { v:'amber', label:'Attribution'   },
+  disciplinaire:{ v:'red',   label:'Disciplinaire' },
+  divers:       { v:'gray',  label:'Divers'        },
+};
+const statutPointCfg = {
+  prevu:    { v:'blue',  label:'Prévu'    },
+  en_cours: { v:'amber', label:'En cours' },
+  traite:   { v:'green', label:'Traité'   },
+  reporte:  { v:'gray',  label:'Reporté'  },
+  annule:   { v:'red',   label:'Annulé'   },
+};
+
+const EMPTY_REUNION   = { date:'', lieu:'', numero:'', observation:'' };
+const EMPTY_OUVERTURE = { heureOuverture:'', presidentSeance:'', secretaireSeance:'', motOuverture:'' };
+const EMPTY_CLOTURE   = { heureCloture:'', presents:'', absents:'', membresAbsents:'', observation:'' };
+const EMPTY_POINT     = { titre:'', type:'administratif', description:'' };
+const EMPTY_TX        = { type:'cotisation', idMembre:'', montant:'', libelle:'', idSanction:'', idPret:'', idBanque:'', sousType:'', note:'' };
+
+// ── Feuille de présence / cotisation tontine ─────────────────
+const STATUT_COTIS = { non_defini: null, cotise: 'cotise', defaillant: 'defaillant' };
+
+function FeuillePresenceTontine({ reunion, onClose }) {
+  const {
+    tontines, membres, membresParTontine,
+    addSeanceTransaction, addSanction, seanceTransactions,
+    planningTours, enregistrerBeneficiaireSeance, tirerAuSort,
+    encheres,
+  } = useApp();
+
+  const locked   = reunion.statutReunion === 'cloturee';
+  const notOpen  = reunion.statutReunion === 'planifiee';
+
+  const [idTontineSelectee, setIdTontineSelectee] = useState('');
+  const [statutParMembre,   setStatutParMembre]   = useState({});
+  const [sanctionMontant,   setSanctionMontant]   = useState('');
+  const [valide,            setValide]            = useState(false);
+  // etape: 'choix' - 'cotisation' - 'beneficiaire' - 'recap'
+  const [etape, setEtape] = useState('choix');
+
+  // Bénéficiaire state (selon type)
+  const [gagnant,           setGagnant]           = useState(null);
+  const [enchereIdGagnant,  setEnchereIdGagnant]  = useState('');
+  const [miseGagnante,      setMiseGagnante]      = useState('');
+  const [tirageEffectue,    setTirageEffectue]    = useState(false);
+
+  const tontineSelectee = tontines.find(t => t.id === Number(idTontineSelectee));
+  const typeAttr = tontineSelectee?.typeAttribution;
+  const TYPE_ICONS  = { rotation:'', tirage:'', enchere:'' };
+  const TYPE_LABELS = { rotation:'Rotation fixe', tirage:'Tirage au sort', enchere:'Enchère' };
+  const TYPE_COLORS = {
+    rotation: 'border-primary-400 bg-primary-50 text-primary-800',
+    tirage:   'border-blue-400 bg-blue-50 text-blue-800',
+    enchere:  'border-amber-400 bg-amber-50 text-amber-800',
+  };
+
+  const membresDeLatontine = useMemo(() => {
+    if (!tontineSelectee) return [];
+    return membresParTontine
+      .filter(mt => mt.idTontine === tontineSelectee.id && mt.statut === 'actif')
+      .map(mt => { const m = membres.find(x => x.id === mt.idMembre); return m ? { ...m, nombreParts: mt.nombreParts, montantDu: tontineSelectee.cotisation * mt.nombreParts } : null; })
+      .filter(Boolean);
+  }, [tontineSelectee, membresParTontine, membres]);
+
+  const montantPot     = tontineSelectee ? tontineSelectee.cotisation * tontineSelectee.totalParts : 0;
+  const totalAttendu   = membresDeLatontine.reduce((s, m) => s + m.montantDu, 0);
+  const cotises        = membresDeLatontine.filter(m => statutParMembre[m.id] === 'cotise');
+  const defaillants    = membresDeLatontine.filter(m => statutParMembre[m.id] === 'defaillant');
+  const nonRenseignes  = membresDeLatontine.filter(m => !statutParMembre[m.id]);
+  const totalCollecte  = cotises.reduce((s, m) => s + m.montantDu, 0);
+
+  // Bénéficiaire déjà enregistré pour cette tontine dans la séance
+  const benefDejaEnregistre = (reunion.beneficiairesSeance||[]).find(b => b.idTontine === Number(idTontineSelectee));
+
+  // Tour planifié rotation
+  const tourPlanifieProchain = useMemo(() => {
+    if (!tontineSelectee || typeAttr !== 'rotation') return null;
+    const nbEncaisses = planningTours.filter(p => p.idTontine === tontineSelectee.id && p.statut === 'encaisse').length;
+    return planningTours.find(p => p.idTontine === tontineSelectee.id && p.numeroTour === nbEncaisses + 1 && p.statut !== 'encaisse');
+  }, [tontineSelectee, typeAttr, planningTours]);
+
+  // Enchères en attente
+  const encheresEnAttente = useMemo(() => {
+    if (!tontineSelectee || typeAttr !== 'enchere') return [];
+    return encheres.filter(e => e.statut === 'en_attente');
+  }, [tontineSelectee, typeAttr, encheres]);
+
+  const setStatut = (idMembre, statut) =>
+    setStatutParMembre(prev => ({ ...prev, [idMembre]: prev[idMembre] === statut ? undefined : statut }));
+
+  // ── Valider la feuille de cotisation ──
+  const handleValiderFeuille = () => {
+    if (!tontineSelectee) return;
+    cotises.forEach(m => {
+      addSeanceTransaction(reunion.id, {
+        type: 'cotisation', idMembre: m.id, montant: m.montantDu,
+        libelle: `Cotisation ${tontineSelectee.nom} — ${m.nombreParts} part(s)`,
+        idTontine: tontineSelectee.id,
+      }, [], membres);
+    });
+    defaillants.forEach(m => {
+      addSanction({
+        idMembre: m.id, nomMembre: `${m.nom} ${m.prenom}`,
+        typeSanction: 'non_paiement',
+        motif: `Défaillance cotisation — ${tontineSelectee.nom} — Séance N°${reunion.numero}`,
+        montant: sanctionMontant ? Number(sanctionMontant) : Math.round(m.montantDu * 0.1),
+        date: reunion.date, reunionId: reunion.id,
+      });
+    });
+    setValide(true);
+    // Aller directement à la désignation du bénéficiaire
+    setEtape('beneficiaire');
+  };
+
+  // ── Handlers bénéficiaire ──
+  const handleConfirmerRotation = () => {
+    if (!tourPlanifieProchain) return;
+    enregistrerBeneficiaireSeance(reunion.id, {
+      idTontine: tontineSelectee.id, nomTontine: tontineSelectee.nom,
+      typeAttribution: 'rotation', idMembre: tourPlanifieProchain.idMembre,
+      nomMembre: tourPlanifieProchain.nomMembre, montantPot,
+      numeroTour: tourPlanifieProchain.numeroTour, modeDesignation: 'rotation',
+    });
+    setGagnant({ nomMembre: tourPlanifieProchain.nomMembre, montantPot });
+    setEtape('recap');
+  };
+
+  const handleTirage = () => {
+    const nbEncaisses = planningTours.filter(p => p.idTontine === tontineSelectee.id && p.statut === 'encaisse').length;
+    const result = tirerAuSort(tontineSelectee.id, nbEncaisses + 1, reunion.date);
+    if (result) {
+      enregistrerBeneficiaireSeance(reunion.id, {
+        idTontine: tontineSelectee.id, nomTontine: tontineSelectee.nom,
+        typeAttribution: 'tirage', idMembre: result.idMembre, nomMembre: result.nomMembre,
+        montantPot: result.montantPot, numeroTour: nbEncaisses + 1, modeDesignation: 'tirage_au_sort',
+      });
+      setGagnant({ nomMembre: result.nomMembre, montantPot: result.montantPot });
+      setTirageEffectue(true);
+      setEtape('recap');
+    }
+  };
+
+  const handleConfirmerEnchere = (nomMembre, idMembre, mise) => {
+    enregistrerBeneficiaireSeance(reunion.id, {
+      idTontine: tontineSelectee.id, nomTontine: tontineSelectee.nom,
+      typeAttribution: 'enchere', idMembre, nomMembre,
+      montantPot: montantPot - Number(mise), montantEnchere: Number(mise),
+      numeroTour: planningTours.filter(p => p.idTontine === tontineSelectee.id && p.statut === 'encaisse').length + 1,
+      modeDesignation: 'enchere',
+    });
+    setGagnant({ nomMembre, montantPot: montantPot - Number(mise), mise: Number(mise) });
+    setEtape('recap');
+  };
+
+  const reset = () => {
+    setIdTontineSelectee(''); setEtape('choix'); setStatutParMembre({});
+    setValide(false); setSanctionMontant(''); setGagnant(null);
+    setEnchereIdGagnant(''); setMiseGagnante(''); setTirageEffectue(false);
+  };
+
+  // ── Blocage si séance non ouverte ──
+  if (notOpen) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12 text-center space-y-3">
+        <div className="w-14 h-14 rounded-2xl bg-amber-100 flex items-center justify-center">
+          <Lock size={28} className="text-amber-500"/>
+        </div>
+        <p className="font-bold text-gray-700">Séance non ouverte</p>
+        <p className="text-sm text-gray-400 max-w-xs">Les opérations de cotisation ne sont disponibles qu'après l'ouverture officielle de la séance.</p>
+        <div className="px-4 py-2 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-700 font-medium">
+           Ouvrez d'abord la séance via le bouton "Ouvrir la séance"
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+
+      {/* ── ÉTAPE 1 : Choix de la tontine ── */}
+      {etape === 'choix' && (
+        <div className="space-y-3">
+          <div className="p-3 bg-primary-50 rounded-xl border border-primary-100 text-xs text-primary-700 flex items-start gap-2">
+            <ClipboardCheck size={14} className="mt-0.5 shrink-0"/>
+            <p>Sélectionnez la tontine à traiter. Le système détectera automatiquement son mode (rotation, tirage ou enchère) et vous guidera vers la désignation du bénéficiaire.</p>
+          </div>
+
+          <div className="space-y-2">
+            {tontines.filter(t => t.statut === 'active').map(t => {
+              const nbEncaisses = planningTours.filter(p => p.idTontine === t.id && p.statut === 'encaisse').length;
+              const progressPct = t.nbTours > 0 ? Math.round(nbEncaisses / t.nbTours * 100) : 0;
+              const dejaTraite  = (reunion.beneficiairesSeance||[]).some(b => b.idTontine === t.id);
+              const isSelected  = Number(idTontineSelectee) === t.id;
+              const tColor      = TYPE_COLORS[t.typeAttribution] || '';
+              return (
+                <button key={t.id} type="button"
+                  onClick={() => setIdTontineSelectee(String(t.id))}
+                  className={clsx('w-full text-left p-3.5 rounded-xl border-2 transition-all',
+                    dejaTraite ? 'border-green-300 bg-green-50' :
+                    isSelected ? 'border-primary-500 bg-primary-50 shadow-sm' :
+                    'border-gray-200 hover:border-primary-300'
+                  )}>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xl">{TYPE_ICONS[t.typeAttribution] || ''}</span>
+                      <div>
+                        <p className="font-bold text-sm text-gray-800">{t.nom}</p>
+                        <p className="text-xs text-gray-400">{fmt(t.cotisation)} / part · {t.totalParts} parts = <strong>{fmt(t.cotisation * t.totalParts)}</strong></p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className={clsx('text-xs px-2 py-0.5 rounded-full border font-medium', tColor)}>
+                        {TYPE_LABELS[t.typeAttribution]}
+                      </span>
+                      {dejaTraite && <span className="text-xs text-green-600 font-bold">OK</span>}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                      <div className="h-1.5 bg-primary-500 rounded-full" style={{ width: `${progressPct}%` }}/>
+                    </div>
+                    <span className="text-xs text-gray-400 shrink-0">Tour {nbEncaisses + 1}/{t.nbTours}</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          {idTontineSelectee && tontineSelectee && !benefDejaEnregistre && (
+            <button onClick={() => setEtape('cotisation')} className="btn-primary w-full justify-center">
+              <ClipboardList size={15}/>
+              Commencer — Cotisations + {TYPE_ICONS[typeAttr]} {TYPE_LABELS[typeAttr]}
+            </button>
+          )}
+          {idTontineSelectee && benefDejaEnregistre && (
+            <div className="p-3 bg-green-50 rounded-xl border border-green-200 flex items-center gap-2 text-sm text-green-700">
+              <Trophy size={15}/> Bénéficiaire déjà désigné pour cette tontine dans cette séance.
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── ÉTAPE 2 : Feuille de cotisation ── */}
+      {etape === 'cotisation' && tontineSelectee && (
+        <div className="space-y-4">
+          {/* En-tête avec type tontine bien visible */}
+          <div className={clsx('p-3 rounded-xl border-2 flex items-center justify-between', TYPE_COLORS[typeAttr])}>
+            <div>
+              <p className="font-bold text-sm">{TYPE_ICONS[typeAttr]} {tontineSelectee.nom}</p>
+              <p className="text-xs opacity-75 mt-0.5">{TYPE_LABELS[typeAttr]} · {fmt(tontineSelectee.cotisation)} / part</p>
+            </div>
+            <div className="text-right">
+              <p className="text-xs opacity-75">Pot du tour</p>
+              <p className="font-black text-base">{fmt(montantPot)}</p>
+            </div>
+          </div>
+
+          {/* Pipeline visuel */}
+          <div className="flex items-center gap-1 text-xs">
+            <div className="flex items-center gap-1 px-2.5 py-1 bg-primary-600 text-white rounded-full font-bold">
+              <span>1</span><span>Cotisations</span>
+            </div>
+            <ChevronRight size={12} className="text-gray-300"/>
+            <div className="flex items-center gap-1 px-2.5 py-1 bg-gray-100 text-gray-400 rounded-full">
+              <span>2</span><span>{TYPE_ICONS[typeAttr]} Bénéficiaire</span>
+            </div>
+            <ChevronRight size={12} className="text-gray-300"/>
+            <div className="flex items-center gap-1 px-2.5 py-1 bg-gray-100 text-gray-400 rounded-full">
+              <span>3</span><span>Résumé</span>
+            </div>
+          </div>
+
+          <button onClick={() => setEtape('choix')} className="text-xs text-primary-600 hover:underline flex items-center gap-1">
+            - Changer de tontine
+          </button>
+
+          {/* Sélection rapide */}
+          <div className="flex gap-2">
+            <button onClick={() => { const all = {}; membresDeLatontine.forEach(m => { all[m.id] = 'cotise'; }); setStatutParMembre(all); }}
+              className="btn-secondary text-xs py-1.5 flex-1"><CheckSquare size={12}/> Tous cotisé</button>
+            <button onClick={() => setStatutParMembre({})} className="btn-secondary text-xs py-1.5 flex-1">
+              <MinusSquare size={12}/> Réinitialiser</button>
+          </div>
+
+          {/* Liste membres */}
+          <div className="rounded-2xl border border-gray-200 overflow-hidden">
+            <div className="grid grid-cols-[1fr_auto_auto_auto] bg-gray-50 px-3 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+              <span>Membre</span><span className="pr-2 text-center">Parts</span>
+              <span className="pr-2 text-right">Dû</span><span className="text-center">Statut</span>
+            </div>
+            <div className="divide-y divide-gray-100">
+              {membresDeLatontine.map(m => {
+                const isCotise  = statutParMembre[m.id] === 'cotise';
+                const isDefaill = statutParMembre[m.id] === 'defaillant';
+                return (
+                  <div key={m.id} className={clsx('grid grid-cols-[1fr_auto_auto_auto] items-center px-3 py-2.5 transition-colors',
+                    isCotise ? 'bg-green-50' : isDefaill ? 'bg-red-50' : 'bg-white hover:bg-gray-50')}>
+                    <div>
+                      <p className={clsx('font-semibold text-sm', isCotise ? 'text-green-800' : isDefaill ? 'text-red-700' : 'text-gray-800')}>
+                        {m.nom} {m.prenom}
+                      </p>
+                      <p className="text-xs text-gray-400">{m.profession}</p>
+                    </div>
+                    <span className="text-xs font-bold bg-gray-100 px-2 py-0.5 rounded-full mx-2">x{m.nombreParts}</span>
+                    <p className={clsx('text-sm font-bold pr-2', isCotise ? 'text-green-700' : isDefaill ? 'text-red-600' : 'text-gray-700')}>{fmt(m.montantDu)}</p>
+                    <div className="flex gap-1.5">
+                      <button onClick={() => setStatut(m.id, 'cotise')}
+                        className={clsx('w-8 h-8 rounded-lg flex items-center justify-center border transition-all',
+                          isCotise ? 'bg-green-500 border-green-500 text-white' : 'border-gray-200 text-gray-300 hover:border-green-300 hover:text-green-500')}>
+                        <CheckSquare size={15}/>
+                      </button>
+                      <button onClick={() => setStatut(m.id, 'defaillant')}
+                        className={clsx('w-8 h-8 rounded-lg flex items-center justify-center border transition-all',
+                          isDefaill ? 'bg-red-500 border-red-500 text-white' : 'border-gray-200 text-gray-300 hover:border-red-300 hover:text-red-500')}>
+                        <XSquare size={15}/>
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Bilan */}
+          <div className="grid grid-cols-3 gap-2">
+            <div className="p-2.5 bg-green-50 rounded-xl text-center border border-green-100">
+              <p className="text-lg font-bold text-green-700">{cotises.length}</p>
+              <p className="text-xs text-green-600">Cotisé(s)</p>
+              <p className="text-xs font-semibold text-green-800 mt-0.5">{fmt(totalCollecte)}</p>
+            </div>
+            <div className="p-2.5 bg-red-50 rounded-xl text-center border border-red-100">
+              <p className="text-lg font-bold text-red-600">{defaillants.length}</p>
+              <p className="text-xs text-red-500">Défaillant(s)</p>
+            </div>
+            <div className="p-2.5 bg-gray-50 rounded-xl text-center border border-gray-200">
+              <p className="text-lg font-bold text-gray-500">{nonRenseignes.length}</p>
+              <p className="text-xs text-gray-400">Non renseigné</p>
+            </div>
+          </div>
+
+          {/* Sanction */}
+          {defaillants.length > 0 && (
+            <div className="p-3 bg-red-50 rounded-xl border border-red-200 space-y-2">
+              <p className="text-xs font-semibold text-red-700 flex items-center gap-1.5"><ShieldAlert size={13}/> Amende pour {defaillants.length} défaillant(s)</p>
+              <input type="number" className="input text-sm"
+                placeholder={`Défaut : 10% = ${fmt(Math.round((membresDeLatontine[0]?.montantDu||0)*0.1))}`}
+                value={sanctionMontant} onChange={e => setSanctionMontant(e.target.value)}/>
+            </div>
+          )}
+          {nonRenseignes.length > 0 && (
+            <div className="flex items-center gap-2 p-2.5 bg-amber-50 rounded-xl text-xs text-amber-700 border border-amber-200">
+              <AlertTriangle size={13}/> <strong>{nonRenseignes.length}</strong> non renseigné(s) — non enregistrés.
+            </div>
+          )}
+
+          {!locked && (
+            <button onClick={handleValiderFeuille}
+              disabled={cotises.length + defaillants.length === 0}
+              className={clsx('btn-primary w-full justify-center', cotises.length + defaillants.length === 0 && 'opacity-40 cursor-not-allowed')}>
+              <ClipboardCheck size={15}/> Valider et désigner le bénéficiaire {TYPE_ICONS[typeAttr]}
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* ── ÉTAPE 3 : Désignation du bénéficiaire ── */}
+      {etape === 'beneficiaire' && tontineSelectee && (
+        <div className="space-y-4">
+          {/* Pipeline visuel */}
+          <div className="flex items-center gap-1 text-xs">
+            <div className="flex items-center gap-1 px-2.5 py-1 bg-green-100 text-green-700 rounded-full font-medium">
+              <CheckCircle size={11}/><span>Cotisations OK</span>
+            </div>
+            <ChevronRight size={12} className="text-gray-300"/>
+            <div className="flex items-center gap-1 px-2.5 py-1 bg-primary-600 text-white rounded-full font-bold">
+              <span>{TYPE_ICONS[typeAttr]}</span><span>Bénéficiaire</span>
+            </div>
+            <ChevronRight size={12} className="text-gray-300"/>
+            <div className="flex items-center gap-1 px-2.5 py-1 bg-gray-100 text-gray-400 rounded-full">
+              <span>3</span><span>Résumé</span>
+            </div>
+          </div>
+
+          {/* Bandeau tontine */}
+          <div className={clsx('p-3 rounded-xl border-2 text-center', TYPE_COLORS[typeAttr])}>
+            <p className="text-2xl mb-1">{TYPE_ICONS[typeAttr]}</p>
+            <p className="font-bold">{tontineSelectee.nom}</p>
+            <p className="text-xs mt-0.5 opacity-75">{TYPE_LABELS[typeAttr]} · Pot : <strong>{fmt(montantPot)}</strong></p>
+          </div>
+
+          {/* ROTATION */}
+          {typeAttr === 'rotation' && (
+            tourPlanifieProchain ? (
+              <div className="space-y-3">
+                <div className="p-4 bg-white rounded-2xl border-2 border-primary-400 text-center shadow-sm">
+                  <p className="text-xs text-gray-400 mb-1">Bénéficiaire planifié — Tour N°{tourPlanifieProchain.numeroTour}</p>
+                  <p className="text-2xl font-black text-gray-800 mt-1">{tourPlanifieProchain.nomMembre}</p>
+                  <p className="text-sm font-bold text-primary-600 mt-1">{fmt(montantPot)}</p>
+                </div>
+                <button onClick={handleConfirmerRotation} className="btn-primary w-full justify-center">
+                  <Trophy size={15}/> Confirmer et encaisser le tour
+                </button>
+                <p className="text-xs text-gray-400 text-center">L'ordre a été défini au préalable dans le module Tontines.</p>
+              </div>
+            ) : (
+              <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 text-center space-y-2">
+                <AlertCircle size={24} className="mx-auto text-amber-500"/>
+                <p className="font-semibold text-amber-800 text-sm">Aucun tour planifié</p>
+                <p className="text-xs text-amber-600">Allez dans Tontines - Bénéficiaires pour définir l'ordre de rotation de tous les membres.</p>
+                <button onClick={() => setEtape('recap')} className="btn-secondary text-xs">
+                  Passer sans bénéficiaire
+                </button>
+              </div>
+            )
+          )}
+
+          {/* TIRAGE AU SORT */}
+          {typeAttr === 'tirage' && (
+            <div className="space-y-3">
+              <div className="p-4 bg-white rounded-2xl border-2 border-blue-300 text-center">
+                <Dices size={40} className="mx-auto text-blue-400 mb-3"/>
+                <p className="text-sm text-gray-600 mb-1">Désignation aléatoire en séance</p>
+                <p className="text-xs text-gray-400 mb-4">Seuls les membres n'ayant pas encore bénéficié sont éligibles.</p>
+                <button onClick={handleTirage} className="btn-primary w-full justify-center text-base py-3">
+                  <Dices size={18}/>  Lancer le tirage maintenant
+                </button>
+              </div>
+              <button onClick={() => setEtape('recap')} className="text-xs text-gray-400 hover:text-gray-600 w-full text-center hover:underline">
+                Passer sans tirage
+              </button>
+            </div>
+          )}
+
+          {/* ENCHÈRE */}
+          {typeAttr === 'enchere' && (
+            <div className="space-y-3">
+              {encheresEnAttente.length > 0 ? (
+                <>
+                  <p className="text-xs font-semibold text-gray-600">Enchères enregistrées — sélectionnez le gagnant :</p>
+                  {encheresEnAttente.map(e => (
+                    <label key={e.id}
+                      className={clsx('flex items-center gap-3 p-3 rounded-xl border-2 cursor-pointer transition-all',
+                        Number(enchereIdGagnant) === e.id ? 'border-amber-400 bg-amber-50' : 'border-gray-200 hover:border-amber-300')}>
+                      <input type="radio" name="enc_gagnant" value={e.id}
+                        checked={Number(enchereIdGagnant) === e.id}
+                        onChange={() => { setEnchereIdGagnant(String(e.id)); setMiseGagnante(String(e.montantEnchere)); }}/>
+                      <div className="flex-1">
+                        <p className="font-bold text-gray-800">{e.nomMembre}</p>
+                        <p className="text-xs text-gray-500">Mise : <strong className="text-amber-600">{fmt(e.montantEnchere)}</strong></p>
+                      </div>
+                    </label>
+                  ))}
+                  {enchereIdGagnant && (
+                    <>
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        <div className="p-2 bg-gray-50 rounded-lg"><span className="text-gray-400">Pot total</span><br/><strong>{fmt(montantPot)}</strong></div>
+                        <div className="p-2 bg-amber-50 rounded-lg"><span className="text-gray-400">Mise retenue</span><br/><strong className="text-amber-600">{fmt(Number(miseGagnante))}</strong></div>
+                        <div className="col-span-2 p-2 bg-green-50 rounded-lg"><span className="text-gray-400">Net versé au gagnant</span><br/><strong className="text-green-600 text-base">{fmt(montantPot - Number(miseGagnante))}</strong></div>
+                      </div>
+                      <button onClick={() => {
+                        const enc = encheres.find(e => e.id === Number(enchereIdGagnant));
+                        if (enc) handleConfirmerEnchere(enc.nomMembre, enc.idMembre, miseGagnante);
+                      }} className="btn-primary w-full justify-center">
+                        <Trophy size={15}/> Confirmer le gagnant de l'enchère
+                      </button>
+                    </>
+                  )}
+                </>
+              ) : (
+                // Saisie manuelle
+                <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 space-y-3">
+                  <p className="text-xs font-semibold text-amber-700">Aucune enchère préenregistrée — saisie manuelle</p>
+                  <select className="select" value={enchereIdGagnant} onChange={e => setEnchereIdGagnant(e.target.value)}>
+                    <option value="">— Sélectionner le gagnant —</option>
+                    {membresDeLatontine.map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
+                  </select>
+                  <input type="number" className="input" placeholder="Montant de la mise gagnante (FCFA)"
+                    value={miseGagnante} onChange={e => setMiseGagnante(e.target.value)}/>
+                  {enchereIdGagnant && miseGagnante && (() => {
+                    const m = membres.find(x => x.id === Number(enchereIdGagnant));
+                    return m ? (
+                      <button onClick={() => handleConfirmerEnchere(`${m.nom} ${m.prenom}`, m.id, miseGagnante)}
+                        className="btn-primary w-full justify-center">
+                        <Trophy size={15}/> Confirmer le gagnant
+                      </button>
+                    ) : null;
+                  })()}
+                </div>
+              )}
+              <button onClick={() => setEtape('recap')} className="text-xs text-gray-400 hover:text-gray-600 w-full text-center hover:underline">
+                Passer sans désigner
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── ÉTAPE 4 : Récapitulatif ── */}
+      {etape === 'recap' && tontineSelectee && (
+        <div className="space-y-4">
+          {/* Pipeline complet */}
+          <div className="flex items-center gap-1 text-xs justify-center">
+            {['Cotisations', 'Bénéficiaire', 'Résumé'].map((s, i) => (
+              <>
+                <div key={s} className="flex items-center gap-1 px-2.5 py-1 bg-green-100 text-green-700 rounded-full font-medium">
+                  <CheckCircle size={11}/><span>{s} OK</span>
+                </div>
+                {i < 2 && <ChevronRight key={`a${i}`} size={12} className="text-gray-300"/>}
+              </>
+            ))}
+          </div>
+
+          <div className="p-4 bg-green-50 rounded-2xl border border-green-200 text-center">
+            <CheckCircle size={32} className="mx-auto text-green-500 mb-2"/>
+            <p className="font-bold text-green-800">Séance traitée !</p>
+            <p className="text-xs text-green-600 mt-1">{tontineSelectee.nom} — Séance N°{reunion.numero}</p>
+          </div>
+
+          <div className="space-y-2">
+            {cotises.length > 0 && (
+              <div className="p-3 bg-green-50 rounded-xl border border-green-200">
+                <p className="text-xs font-bold text-green-700 mb-1.5 flex items-center gap-1"><Banknote size={12}/> {cotises.length} cotisation(s) — {fmt(totalCollecte)}</p>
+                {cotises.map(m => (
+                  <div key={m.id} className="flex justify-between text-xs py-1 border-b border-green-100 last:border-0">
+                    <span className="text-green-800 font-medium">{m.nom} {m.prenom}</span>
+                    <span className="font-bold text-green-700">{fmt(m.montantDu)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {gagnant && (
+              <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 flex items-center gap-3">
+                <Trophy size={20} className="text-amber-500 shrink-0"/>
+                <div>
+                  <p className="font-bold text-amber-900 text-sm">{gagnant.nomMembre}</p>
+                  <p className="text-xs text-amber-600">
+                    {TYPE_ICONS[typeAttr]} {TYPE_LABELS[typeAttr]} ·{' '}
+                    {gagnant.mise ? `Mise ${fmt(gagnant.mise)} - Net ${fmt(gagnant.montantPot)}` : fmt(gagnant.montantPot)}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {defaillants.length > 0 && (
+              <div className="p-3 bg-red-50 rounded-xl border border-red-200">
+                <p className="text-xs font-bold text-red-700 mb-1"><ShieldAlert size={12} className="inline mr-1"/>{defaillants.length} sanction(s)</p>
+                {defaillants.map(m => <p key={m.id} className="text-xs text-red-600">- {m.nom} {m.prenom}</p>)}
+              </div>
+            )}
+          </div>
+
+          <button onClick={reset} className="btn-secondary w-full justify-center text-sm">
+            <ClipboardList size={14}/> Traiter une autre tontine
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RapportSeance({ reunion, transactions, membres, onClose }) {
+  const txs = transactions.filter(t => t.reunionId === reunion.id);
+
+  const totalEntrees = txs.filter(t => TX_TYPES.find(tt => tt.value === t.type)?.dir === 'entree')
+    .reduce((s, t) => s + t.montant, 0);
+  const totalSorties = txs.filter(t => TX_TYPES.find(tt => tt.value === t.type)?.dir === 'sortie')
+    .reduce((s, t) => s + t.montant, 0);
+  const totalBanque  = txs.filter(t => t.type === 'depot_banque')
+    .reduce((s, t) => s + t.montant, 0);
+  const soldeSeance  = totalEntrees - totalSorties;
+
+  const txByType = TX_TYPES.reduce((acc, tt) => {
+    const groupe = txs.filter(t => t.type === tt.value);
+    if (groupe.length > 0) acc[tt.value] = { meta: tt, items: groupe };
+    return acc;
+  }, {});
+
+  const tauxPresence = reunion.cloture && (reunion.cloture.presents + reunion.cloture.absents) > 0
+    ? Math.round(reunion.cloture.presents / (reunion.cloture.presents + reunion.cloture.absents) * 100)
+    : null;
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-box max-w-3xl w-full" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <div className="flex items-center gap-2">
+            <FileText size={18} className="text-primary-600"/>
+            <h3 className="font-bold text-gray-900">Procès-verbal — Réunion N°{reunion.numero}</h3>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => window.print()} className="btn-secondary text-xs py-1.5">
+              <Printer size={13}/> Imprimer
+            </button>
+            <button onClick={onClose} className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100">
+              <X size={16}/>
+            </button>
+          </div>
+        </div>
+
+        <div id="rapport-print" className="overflow-y-auto max-h-[80vh] p-6 space-y-5 text-sm">
+          {/* En-tête officiel */}
+          <div className="text-center border-b-2 border-primary-200 pb-4">
+            <p className="text-xs text-gray-400 uppercase tracking-widest mb-1">Procès-verbal de séance</p>
+            <h2 className="text-xl font-black text-primary-700">RÉUNION N°{reunion.numero}</h2>
+            <p className="text-gray-600 mt-1">{fmtDate(reunion.date)} &nbsp;·&nbsp; {reunion.lieu}</p>
+          </div>
+
+          {/* Section I — Participants */}
+          <div className="p-4 bg-gray-50 rounded-xl">
+            <h4 className="font-bold text-gray-700 uppercase text-xs tracking-wider mb-3 flex items-center gap-2">
+              <span className="w-5 h-5 rounded-full bg-primary-600 text-white text-xs flex items-center justify-center font-bold">I</span>
+              Bureau & Participants
+            </h4>
+            {reunion.ouverture ? (
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div><span className="text-gray-400">Président de séance :</span><span className="font-semibold ml-1">{reunion.ouverture.presidentSeance}</span></div>
+                {reunion.ouverture.secretaireSeance && <div><span className="text-gray-400">Secrétaire :</span><span className="font-semibold ml-1">{reunion.ouverture.secretaireSeance}</span></div>}
+                <div><span className="text-gray-400">Heure d'ouverture :</span><span className="font-semibold ml-1">{reunion.ouverture.heureOuverture}</span></div>
+                {reunion.cloture?.heureCloture && <div><span className="text-gray-400">Heure de clôture :</span><span className="font-semibold ml-1">{reunion.cloture.heureCloture}</span></div>}
+              </div>
+            ) : <p className="text-gray-400 italic">Ouverture non renseignée</p>}
+            {reunion.cloture && (
+              <div className="flex gap-6 mt-3 pt-3 border-t border-gray-200">
+                <div className="text-center">
+                  <p className="text-2xl font-bold text-primary-600">{reunion.cloture.presents}</p>
+                  <p className="text-xs text-gray-500">Présents</p>
+                </div>
+                <div className="text-center">
+                  <p className="text-2xl font-bold text-red-500">{reunion.cloture.absents}</p>
+                  <p className="text-xs text-gray-500">Absents</p>
+                </div>
+                {tauxPresence !== null && (
+                  <div className="text-center">
+                    <p className="text-2xl font-bold text-amber-600">{tauxPresence}%</p>
+                    <p className="text-xs text-gray-500">Taux présence</p>
+                  </div>
+                )}
+              </div>
+            )}
+            {reunion.cloture?.membresAbsents && (
+              <p className="text-xs text-red-500 mt-2">Absent(s) : {reunion.cloture.membresAbsents}</p>
+            )}
+          </div>
+
+          {/* Section II — Ordre du jour */}
+          <div>
+            <h4 className="font-bold text-gray-700 uppercase text-xs tracking-wider mb-3 flex items-center gap-2">
+              <span className="w-5 h-5 rounded-full bg-primary-600 text-white text-xs flex items-center justify-center font-bold">II</span>
+              Ordre du jour ({reunion.pointsOrdreJour?.length || 0} points)
+            </h4>
+            {(reunion.pointsOrdreJour || []).length === 0
+              ? <p className="text-gray-400 italic text-sm">Aucun point enregistré</p>
+              : <div className="space-y-1.5">
+                  {(reunion.pointsOrdreJour || []).map((p, i) => (
+                    <div key={p.id} className="flex items-start gap-2 p-2.5 bg-gray-50 rounded-lg">
+                      <span className="text-xs text-gray-400 font-mono mt-0.5 shrink-0 w-6">{i + 1}.</span>
+                      <div className="flex-1">
+                        <span className="font-medium text-gray-800">{p.titre}</span>
+                        {p.description && <span className="text-gray-500 ml-2 text-xs">— {p.description}</span>}
+                      </div>
+                      <div className="flex gap-1 shrink-0">
+                        <Badge variant={typeCfg[p.type]?.v || 'gray'}>{typeCfg[p.type]?.label || p.type}</Badge>
+                        <Badge variant={statutPointCfg[p.statut]?.v || 'gray'}>{statutPointCfg[p.statut]?.label || p.statut}</Badge>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+            }
+          </div>
+
+          {/* Section III — Transactions financières */}
+          <div>
+            <h4 className="font-bold text-gray-700 uppercase text-xs tracking-wider mb-3 flex items-center gap-2">
+              <span className="w-5 h-5 rounded-full bg-primary-600 text-white text-xs flex items-center justify-center font-bold">III</span>
+              Transactions financières de la séance ({txs.length})
+            </h4>
+            {txs.length === 0
+              ? <p className="text-gray-400 italic text-sm">Aucune transaction enregistrée pour cette séance</p>
+              : (
+                <>
+                  {/* Tableau des transactions */}
+                  <div className="overflow-x-auto rounded-xl border border-gray-200">
+                    <table className="w-full text-xs">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="text-left p-2.5 font-semibold text-gray-600">Heure</th>
+                          <th className="text-left p-2.5 font-semibold text-gray-600">Type</th>
+                          <th className="text-left p-2.5 font-semibold text-gray-600">Membre</th>
+                          <th className="text-left p-2.5 font-semibold text-gray-600">Libellé</th>
+                          <th className="text-right p-2.5 font-semibold text-green-600">Entrée</th>
+                          <th className="text-right p-2.5 font-semibold text-red-500">Sortie</th>
+                          <th className="text-right p-2.5 font-semibold text-blue-600">Banque</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {txs.map(tx => {
+                          const meta = TX_TYPES.find(t => t.value === tx.type);
+                          const isEntree = meta?.dir === 'entree';
+                          const isSortie = meta?.dir === 'sortie';
+                          const isBanque = tx.type === 'depot_banque';
+                          return (
+                            <tr key={tx.id} className="hover:bg-gray-50">
+                              <td className="p-2.5 text-gray-400 font-mono">{tx.heure}</td>
+                              <td className="p-2.5">
+                                <span className="text-xs">{meta?.icon} {meta?.label || tx.type}</span>
+                              </td>
+                              <td className="p-2.5 font-medium text-gray-700">{tx.nomMembre || '—'}</td>
+                              <td className="p-2.5 text-gray-500 italic truncate max-w-[140px]">{tx.libelle || '—'}</td>
+                              <td className="p-2.5 text-right font-bold text-green-600">{isEntree ? fmt(tx.montant) : '—'}</td>
+                              <td className="p-2.5 text-right font-bold text-red-500">{isSortie ? fmt(tx.montant) : '—'}</td>
+                              <td className="p-2.5 text-right font-bold text-blue-600">{isBanque ? fmt(tx.montant) : '—'}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                      <tfoot className="bg-gray-50 border-t-2 border-gray-200 font-bold text-xs">
+                        <tr>
+                          <td colSpan={4} className="p-2.5 text-gray-700">TOTAUX</td>
+                          <td className="p-2.5 text-right text-green-600">{fmt(totalEntrees)}</td>
+                          <td className="p-2.5 text-right text-red-500">{fmt(totalSorties)}</td>
+                          <td className="p-2.5 text-right text-blue-600">{fmt(totalBanque)}</td>
+                        </tr>
+                        <tr className="bg-primary-50">
+                          <td colSpan={4} className="p-2.5 text-primary-700 font-bold">SOLDE NET SÉANCE (entrées − sorties)</td>
+                          <td colSpan={3} className={clsx('p-2.5 text-right text-base font-black', soldeSeance >= 0 ? 'text-primary-700' : 'text-red-600')}>
+                            {soldeSeance >= 0 ? '+' : ''}{fmt(soldeSeance)}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+
+                  {/* Récapitulatif par rubrique */}
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    {Object.values(txByType).map(({ meta, items }) => {
+                      const total = items.reduce((s, t) => s + t.montant, 0);
+                      return (
+                        <div key={meta.value} className="flex items-center justify-between p-2 bg-gray-50 rounded-lg">
+                          <span className="text-xs text-gray-600">{meta.icon} {meta.label}</span>
+                          <span className={clsx('text-xs font-bold', meta.dir === 'entree' ? 'text-green-600' : meta.dir === 'sortie' ? 'text-red-500' : 'text-blue-600')}>
+                            {fmt(total)} <span className="text-gray-400 font-normal">({items.length})</span>
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )
+            }
+          </div>
+
+          {/* Section IV — Bénéficiaires tontine */}
+          {(reunion.beneficiairesSeance || []).length > 0 && (
+            <div>
+              <h4 className="font-bold text-gray-700 uppercase text-xs tracking-wider mb-3 flex items-center gap-2">
+                <span className="w-5 h-5 rounded-full bg-amber-500 text-white text-xs flex items-center justify-center font-bold">IV</span>
+                Bénéficiaires de la tontine — Séance N°{reunion.numero}
+              </h4>
+              <div className="space-y-2">
+                {reunion.beneficiairesSeance.map((b, i) => {
+                  const typeIcon = { rotation: '', tirage: '', enchere: '' }[b.typeAttribution] || '';
+                  const typeLabel = { rotation: 'Rotation fixe', tirage: 'Tirage au sort', enchere: 'Enchère' }[b.typeAttribution] || b.typeAttribution;
+                  return (
+                    <div key={i} className="flex items-start gap-3 p-3 bg-amber-50 rounded-xl border border-amber-200">
+                      <span className="text-xl shrink-0">{typeIcon}</span>
+                      <div className="flex-1">
+                        <div className="flex items-center justify-between">
+                          <p className="font-bold text-amber-900 text-sm">{b.nomMembre}</p>
+                          <span className="text-xs px-2 py-0.5 bg-amber-200 text-amber-800 rounded-full font-medium">{typeLabel}</span>
+                        </div>
+                        <p className="text-xs text-amber-700 mt-0.5">Tontine : <strong>{b.nomTontine}</strong> — Tour N°{b.numeroTour}</p>
+                        <div className="flex gap-4 mt-1.5 text-xs">
+                          {b.montantEnchere > 0 && (
+                            <>
+                              <span className="text-amber-600">Mise : <strong>{fmt(b.montantEnchere)}</strong></span>
+                              <span className="text-green-600">Net reçu : <strong>{fmt(b.montantPot)}</strong></span>
+                            </>
+                          )}
+                          {!b.montantEnchere && (
+                            <span className="text-green-600">Montant versé : <strong>{fmt(b.montantPot)}</strong></span>
+                          )}
+                          <span className="text-gray-500">Le {b.dateAttrib ? new Date(b.dateAttrib).toLocaleDateString('fr-FR') : fmtDate(reunion.date)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Section V — Décisions / résolutions */}
+          {reunion.cloture?.observation && (
+            <div className="p-4 bg-amber-50 rounded-xl border border-amber-100">
+              <h4 className="font-bold text-gray-700 uppercase text-xs tracking-wider mb-2 flex items-center gap-2">
+                <span className="w-5 h-5 rounded-full bg-primary-600 text-white text-xs flex items-center justify-center font-bold">{(reunion.beneficiairesSeance||[]).length > 0 ? 'V' : 'IV'}</span>
+                Décisions & observations
+              </h4>
+              <p className="text-gray-700 italic text-sm">« {reunion.cloture.observation} »</p>
+            </div>
+          )}
+
+          {/* Signatures */}
+          <div className="border-t-2 border-dashed border-gray-200 pt-4 mt-2">
+            <div className="grid grid-cols-2 gap-8 text-center text-xs text-gray-500">
+              <div>
+                <p className="font-semibold mb-8">Le Président de séance</p>
+                <p className="border-t border-gray-300 pt-1">{reunion.ouverture?.presidentSeance || '________________________'}</p>
+              </div>
+              <div>
+                <p className="font-semibold mb-8">Le Secrétaire de séance</p>
+                <p className="border-t border-gray-300 pt-1">{reunion.ouverture?.secretaireSeance || '________________________'}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Formulaires intelligents par type de transaction ──────────
+
+const AIDE_SOCIALE_MONTANTS = {
+  maladie: 25000, deces_parent: 50000, deces_membre: 100000, mariage: 30000, naissance: 15000, autre: 0,
+};
+const AIDE_SOCIALE_LABELS = {
+  maladie: 'Maladie grave', deces_parent: 'Décès parent proche', deces_membre: 'Décès membre',
+  mariage: 'Mariage', naissance: 'Naissance', autre: 'Autre événement',
+};
+
+function TypePicker({ onSelect }) {
+  const groups = [
+    {
+      label: ' Entrées de caisse', color: 'green',
+      types: TX_TYPES.filter(t => t.dir === 'entree'),
+    },
+    {
+      label: ' Sorties de caisse', color: 'red',
+      types: TX_TYPES.filter(t => t.dir === 'sortie'),
+    },
+    {
+      label: ' Opérations bancaires', color: 'blue',
+      types: TX_TYPES.filter(t => t.dir === 'banque'),
+    },
+  ];
+  const dirDesc = {
+    cotisation:         'Encaissement des parts membres',
+    amende:             'Règlement d\'une sanction / pénalité',
+    remboursement_pret: 'Remboursement total ou partiel',
+    divers_entree:      'Autre recette non catégorisée',
+    pret_accorde:       'Octroi d\'un prêt à un membre',
+    aide_sociale:       'Maladie, décès, mariage, naissance…',
+    attribution_tour:   'Versement du pot au bénéficiaire',
+    divers_sortie:      'Autre dépense non catégorisée',
+    depot_banque:       'Dépôt des fonds en banque',
+  };
+  return (
+    <div className="space-y-4">
+      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Choisir le type de transaction</p>
+      {groups.map(g => (
+        <div key={g.label}>
+          <p className={clsx(
+            'text-xs font-bold mb-2 px-2 py-1 rounded-lg inline-block',
+            g.color === 'green' ? 'bg-green-100 text-green-700' :
+            g.color === 'red'   ? 'bg-red-100 text-red-700'     :
+            'bg-blue-100 text-blue-700'
+          )}>{g.label}</p>
+          <div className="grid grid-cols-2 gap-2">
+            {g.types.map(t => (
+              <button key={t.value} onClick={() => onSelect(t.value)}
+                className="text-left p-3 rounded-xl border-2 border-gray-100 bg-white hover:border-primary-300 hover:bg-primary-50 transition-all group">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-lg">{t.icon}</span>
+                  <span className="text-xs font-bold text-gray-800 group-hover:text-primary-700 leading-tight">{t.label}</span>
+                </div>
+                <p className="text-xs text-gray-400 leading-snug">{dirDesc[t.value] || ''}</p>
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+
+// ── Wrapper formulaire intelligent (sans hook conditionnel) ────
+// Tous les états "extra" sont dans form._idTontine pour éviter
+// les hooks conditionnels (violation React)
+function SmartFormWrapper({ type, reunion, membres, banques, prets, sanctions, tontines, membresParTontine, onSubmit, onCancel }) {
+  const [form, setForm] = useState({
+    type, montant: '', libelle: '', idMembre: '', idSanction: '', idPret: '',
+    idBanque: '', sousType: 'autre',
+    _idTontine: '',   // état partagé pour cotisation + attribution_tour
+  });
+  const sf = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const meta = TX_TYPES.find(t => t.value === type);
+
+  const handleSubmit = () => {
+    if (!form.montant || Number(form.montant) <= 0) return;
+    // Nettoyage des champs internes avant envoi
+    const { _idTontine, ...cleanForm } = form;
+    onSubmit(cleanForm);
+  };
+
+  // Validation selon le type
+  const isValid = (() => {
+    if (!form.montant || Number(form.montant) <= 0) return false;
+    if (type === 'depot_banque' && !form.idBanque) return false;
+    if (type === 'depot_banque' && !form.idMembre) return false;
+    if (type === 'attribution_tour' && !form.idMembre) return false;
+    return true;
+  })();
+
+  return (
+    <div className="space-y-4">
+      <SmartFormFields
+        type={type} form={form} sf={sf} reunion={reunion}
+        membres={membres} banques={banques} prets={prets} sanctions={sanctions}
+        tontines={tontines} membresParTontine={membresParTontine}
+      />
+      {form.montant && Number(form.montant) > 0 && (
+        <div className={clsx('p-2.5 rounded-xl text-center border',
+          meta?.dir === 'entree' ? 'bg-green-50 border-green-200 text-green-800' :
+          meta?.dir === 'sortie' ? 'bg-red-50 border-red-200 text-red-800' :
+          'bg-blue-50 border-blue-200 text-blue-800')}>
+          <p className="text-xs">Montant à enregistrer</p>
+          <p className="text-lg font-black">{fmt(Number(form.montant))} FCFA</p>
+        </div>
+      )}
+      <div className="flex gap-2 pt-1">
+        <button onClick={onCancel} className="btn-secondary flex-1">Annuler</button>
+        <button onClick={handleSubmit} disabled={!isValid}
+          className={clsx('btn-primary flex-1', !isValid && 'opacity-40 cursor-not-allowed')}>
+          <CheckCircle size={14}/> Valider la transaction
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Champs intelligents par type — SANS hook conditionnel ──────
+// Tous les hooks sont appelés inconditionnellement en haut.
+// Les états "internes" des sous-formulaires (ex: idTontine pour cotisation
+// et attribution) sont stockés dans form._idTontine via sf().
+function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, sanctions, tontines, membresParTontine }) {
+  const meta      = TX_TYPES.find(t => t.value === type);
+  const isEntree  = meta?.dir === 'entree';
+
+  // ── Pré-calculs (sans hooks conditionnels) ──────────────────
+  const tontinesActives   = tontines.filter(t => t.statut === 'active');
+  const tontineChoisie    = tontines.find(t => t.id === Number(form._idTontine));
+  const pretsActifs       = prets.filter(p => ['en_cours', 'en_retard'].includes(p.statut));
+  const sanctionsImpayees = sanctions.filter(s => s.statut === 'impayee');
+
+  const membresEligiblesCotis = tontineChoisie
+    ? membresParTontine
+        .filter(mt => mt.idTontine === tontineChoisie.id && mt.statut === 'actif')
+        .map(mt => { const m = membres.find(x => x.id === mt.idMembre); return m ? { ...m, parts: mt.nombreParts, montantDu: tontineChoisie.cotisation * mt.nombreParts } : null; })
+        .filter(Boolean)
+    : membres;
+
+  const membreDansTontine = tontineChoisie && form.idMembre
+    ? membresParTontine.find(mt => mt.idTontine === tontineChoisie.id && mt.idMembre === Number(form.idMembre) && mt.statut === 'actif')
+    : null;
+
+  const membresAttrTour = tontineChoisie
+    ? membresParTontine.filter(mt => mt.idTontine === tontineChoisie.id && mt.statut === 'actif')
+        .map(mt => membres.find(x => x.id === mt.idMembre)).filter(Boolean)
+    : [];
+
+  const pretChoisi        = form.idPret    ? prets.find(p => p.id === Number(form.idPret))        : null;
+  const sanctionsMembre   = form.idMembre  ? sanctionsImpayees.filter(s => s.idMembre === Number(form.idMembre)) : sanctionsImpayees;
+
+  // ── Handlers ────────────────────────────────────────────────
+  const onTontineChange = (val) => {
+    sf('_idTontine', val); sf('idMembre', ''); sf('montant', ''); sf('libelle', '');
+  };
+  const onMembreCotisChange = (val) => {
+    sf('idMembre', val);
+    const t = tontines.find(x => x.id === Number(form._idTontine));
+    if (t && val) {
+      const mt = membresParTontine.find(x => x.idTontine === t.id && x.idMembre === Number(val) && x.statut === 'actif');
+      if (mt) { sf('montant', String(t.cotisation * mt.nombreParts)); sf('libelle', `Cotisation ${t.nom} — ${mt.nombreParts} part(s) — Séance N°${reunion.numero}`); }
+    }
+  };
+  const onSanctionChange = (val) => {
+    sf('idSanction', val);
+    const s = sanctions.find(x => x.id === Number(val));
+    if (s) { sf('montant', String(s.montant)); sf('libelle', `Amende — ${s.typeSanction} — ${s.nomMembre}`); sf('idMembre', String(s.idMembre)); }
+  };
+  const onPretChange = (val) => {
+    sf('idPret', val);
+    const p = prets.find(x => x.id === Number(val));
+    if (p) { sf('idMembre', String(p.idMembre)); sf('montant', String(p.resteAPayer)); sf('libelle', `Remboursement prêt — ${p.nomMembre}`); }
+  };
+  const onTontineAttrChange = (val) => {
+    sf('_idTontine', val); sf('idMembre', '');
+    const t = tontines.find(x => x.id === Number(val));
+    if (t) { sf('montant', String(t.cotisation * t.totalParts)); sf('libelle', `Versement pot — ${t.nom} — Séance N°${reunion.numero}`); }
+  };
+  const onBenefChange = (val) => {
+    sf('idMembre', val);
+    const m = membres.find(x => x.id === Number(val));
+    if (m && tontineChoisie) sf('libelle', `Pot ${tontineChoisie.nom} - ${m.nom} ${m.prenom} — Séance N°${reunion.numero}`);
+  };
+  const onBanqueChange = (val) => {
+    sf('idBanque', val);
+    const b = banques.find(x => x.id === Number(val));
+    const m = membres.find(x => x.id === Number(form.idMembre));
+    const depositaire = m ? `${m.nom} ${m.prenom}` : '';
+    if (b) sf('libelle', `Dépôt ${b.nom}${depositaire ? ' — ' + depositaire : ''} — Séance N°${reunion.numero}`);
+  };
+  const onDeposantChange = (val) => {
+    sf('idMembre', val);
+    const m = membres.find(x => x.id === Number(val));
+    const b = banques.find(x => x.id === Number(form.idBanque));
+    if (b && m) sf('libelle', `Dépôt ${b.nom} — ${m.nom} ${m.prenom} — Séance N°${reunion.numero}`);
+  };
+  const onAideEventChange = (val) => {
+    sf('sousType', val);
+    const def = AIDE_SOCIALE_MONTANTS[val] || 0;
+    if (def > 0) sf('montant', String(def));
+    const m = membres.find(x => x.id === Number(form.idMembre));
+    if (m) sf('libelle', `Aide sociale — ${AIDE_SOCIALE_LABELS[val]} — ${m.nom} ${m.prenom}`);
+  };
+  const onMembreAideChange = (val) => {
+    sf('idMembre', val);
+    const m = membres.find(x => x.id === Number(val));
+    if (m && form.sousType) sf('libelle', `Aide sociale — ${AIDE_SOCIALE_LABELS[form.sousType] || ''} — ${m.nom} ${m.prenom}`);
+  };
+
+  // ── Rendu selon le type ─────────────────────────────────────
+  if (type === 'cotisation') return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 p-2.5 bg-green-50 rounded-xl border border-green-100">
+        <span className="text-lg"></span>
+        <div><p className="text-xs font-bold text-green-800">Cotisation membre</p><p className="text-xs text-green-600">Le montant est calculé automatiquement selon les parts</p></div>
+      </div>
+      {tontinesActives.length > 0 && (
+        <FormField label="Tontine concernée">
+          <select className="select" value={form._idTontine} onChange={e => onTontineChange(e.target.value)}>
+            <option value="">— Cotisation hors tontine —</option>
+            {tontinesActives.map(t => <option key={t.id} value={t.id}>{t.nom} — {fmt(t.cotisation)}/part</option>)}
+          </select>
+        </FormField>
+      )}
+      <FormField label="Membre" required>
+        <select className="select" value={form.idMembre} onChange={e => onMembreCotisChange(e.target.value)}>
+          <option value="">— Sélectionner un membre —</option>
+          {membresEligiblesCotis.map(m => (
+            <option key={m.id} value={m.id}>{m.nom} {m.prenom}{m.parts ? ` — ${m.parts} part(s) - ${fmt(m.montantDu)}` : ''}</option>
+          ))}
+        </select>
+      </FormField>
+      <div className="grid grid-cols-2 gap-2">
+        <FormField label="Montant (FCFA)" required>
+          <input className="input" type="number" value={form.montant} onChange={e => sf('montant', e.target.value)}/>
+        </FormField>
+        {membreDansTontine && tontineChoisie && (
+          <div className="p-2.5 bg-green-50 rounded-xl border border-green-200 flex flex-col justify-center">
+            <p className="text-xs text-green-600">x{membreDansTontine.nombreParts} parts</p>
+            <p className="text-xs font-bold text-green-800">= {fmt(tontineChoisie.cotisation * membreDansTontine.nombreParts)}</p>
+          </div>
+        )}
+      </div>
+      <FormField label="Libellé">
+        <input className="input" value={form.libelle} onChange={e => sf('libelle', e.target.value)} placeholder="Ex : Cotisation mensuelle"/>
+      </FormField>
+    </div>
+  );
+
+  if (type === 'amende') return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 p-2.5 bg-amber-50 rounded-xl border border-amber-100">
+        <span className="text-lg"></span>
+        <div><p className="text-xs font-bold text-amber-800">Paiement d'amende</p><p className="text-xs text-amber-600">Sélectionnez la sanction pour pré-remplir le montant</p></div>
+      </div>
+      <FormField label="Membre redevable">
+        <select className="select" value={form.idMembre} onChange={e => { sf('idMembre', e.target.value); sf('idSanction', ''); sf('montant', ''); }}>
+          <option value="">— Tous les membres —</option>
+          {membres.map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
+        </select>
+      </FormField>
+      {sanctionsImpayees.length > 0 && (
+        <FormField label="Sanction à régler">
+          <select className="select" value={form.idSanction} onChange={e => onSanctionChange(e.target.value)}>
+            <option value="">— Saisie manuelle (sans sanction liée) —</option>
+            {sanctionsMembre.map(s => <option key={s.id} value={s.id}>{s.nomMembre} — {s.typeSanction} — {fmt(s.montant)}</option>)}
+          </select>
+        </FormField>
+      )}
+      {sanctionsImpayees.length === 0 && (
+        <div className="p-2 bg-gray-50 rounded-xl text-xs text-gray-400 text-center">Aucune sanction impayée enregistrée</div>
+      )}
+      <div className="grid grid-cols-2 gap-2">
+        <FormField label="Montant reçu (FCFA)" required>
+          <input className="input" type="number" value={form.montant} onChange={e => sf('montant', e.target.value)}/>
+        </FormField>
+        <FormField label="Libellé">
+          <input className="input" value={form.libelle} onChange={e => sf('libelle', e.target.value)} placeholder="Ex : Amende retard"/>
+        </FormField>
+      </div>
+    </div>
+  );
+
+  if (type === 'remboursement_pret') return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 p-2.5 bg-blue-50 rounded-xl border border-blue-100">
+        <span className="text-lg"></span>
+        <div><p className="text-xs font-bold text-blue-800">Remboursement de prêt</p><p className="text-xs text-blue-600">Le montant restant est pré-rempli automatiquement</p></div>
+      </div>
+      {pretsActifs.length === 0
+        ? <div className="p-3 bg-gray-50 rounded-xl text-center text-xs text-gray-400">Aucun prêt actif en cours de remboursement</div>
+        : (
+          <FormField label="Prêt à rembourser" required>
+            <select className="select" value={form.idPret} onChange={e => onPretChange(e.target.value)}>
+              <option value="">— Sélectionner un prêt —</option>
+              {pretsActifs.map(p => <option key={p.id} value={p.id}>{p.nomMembre} — Reste : {fmt(p.resteAPayer)} {p.statut === 'en_retard' ? '' : ''}</option>)}
+            </select>
+          </FormField>
+        )
+      }
+      {pretChoisi && (
+        <div className="grid grid-cols-3 gap-2 text-center">
+          <div className="p-2 bg-gray-50 rounded-xl"><p className="text-xs text-gray-400">Prêt initial</p><p className="text-xs font-bold">{fmt(pretChoisi.montantPret)}</p></div>
+          <div className="p-2 bg-red-50 rounded-xl"><p className="text-xs text-red-400">Reste dû</p><p className="text-xs font-bold text-red-700">{fmt(pretChoisi.resteAPayer)}</p></div>
+          <div className="p-2 bg-green-50 rounded-xl"><p className="text-xs text-green-400">Déjà remboursé</p><p className="text-xs font-bold text-green-700">{fmt(pretChoisi.montantRembourse)}</p></div>
+        </div>
+      )}
+      {pretChoisi && (
+        <div className="flex gap-2">
+          <button type="button" onClick={() => sf('montant', String(pretChoisi.resteAPayer))} className="text-xs text-blue-600 hover:underline">
+            - Rembourser la totalité ({fmt(pretChoisi.resteAPayer)})
+          </button>
+        </div>
+      )}
+      <div className="grid grid-cols-2 gap-2">
+        <FormField label="Montant reçu (FCFA)" required>
+          <input className="input" type="number" value={form.montant} onChange={e => sf('montant', e.target.value)}/>
+        </FormField>
+        <FormField label="Libellé">
+          <input className="input" value={form.libelle} onChange={e => sf('libelle', e.target.value)}/>
+        </FormField>
+      </div>
+    </div>
+  );
+
+  if (type === 'pret_accorde') return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 p-2.5 bg-orange-50 rounded-xl border border-orange-100">
+        <span className="text-lg"></span>
+        <div><p className="text-xs font-bold text-orange-800">Octroi de prêt</p><p className="text-xs text-orange-600">Décaissement — pensez à l'enregistrer dans Prêts</p></div>
+      </div>
+      <FormField label="Membre bénéficiaire" required>
+        <select className="select" value={form.idMembre} onChange={e => { sf('idMembre', e.target.value); const m = membres.find(x => x.id === Number(e.target.value)); if (m) sf('libelle', `Prêt accordé — ${m.nom} ${m.prenom}`); }}>
+          <option value="">— Sélectionner un membre —</option>
+          {membres.map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
+        </select>
+      </FormField>
+      <FormField label="Montant accordé (FCFA)" required>
+        <input className="input" type="number" placeholder="Ex : 500 000" value={form.montant} onChange={e => sf('montant', e.target.value)}/>
+      </FormField>
+      <FormField label="Libellé">
+        <input className="input" value={form.libelle} onChange={e => sf('libelle', e.target.value)}/>
+      </FormField>
+      <div className="p-2.5 bg-orange-50 rounded-xl border border-orange-100 text-xs text-orange-700 flex items-center gap-1.5">
+        <AlertTriangle size={12}/> Enregistrez aussi ce prêt dans la section <strong>Prêts</strong> pour suivre le remboursement.
+      </div>
+    </div>
+  );
+
+  if (type === 'aide_sociale') return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 p-2.5 bg-pink-50 rounded-xl border border-pink-100">
+        <span className="text-lg"></span>
+        <div><p className="text-xs font-bold text-pink-800">Aide sociale versée</p><p className="text-xs text-pink-600">Les montants par défaut sont configurés selon l'événement</p></div>
+      </div>
+      <FormField label="Membre bénéficiaire" required>
+        <select className="select" value={form.idMembre} onChange={e => onMembreAideChange(e.target.value)}>
+          <option value="">— Sélectionner un membre —</option>
+          {membres.map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
+        </select>
+      </FormField>
+      <FormField label="Type d'événement">
+        <div className="grid grid-cols-3 gap-1.5 mt-1">
+          {Object.entries(AIDE_SOCIALE_LABELS).map(([key, label]) => (
+            <button key={key} type="button" onClick={() => onAideEventChange(key)}
+              className={clsx('p-2 rounded-xl border-2 text-center transition-all',
+                form.sousType === key ? 'border-pink-400 bg-pink-50' : 'border-gray-200 bg-white hover:border-pink-200')}>
+              <p className="text-xs font-semibold text-gray-800 leading-tight">{label}</p>
+              {AIDE_SOCIALE_MONTANTS[key] > 0 && <p className="text-xs text-pink-600 font-bold mt-0.5">{fmt(AIDE_SOCIALE_MONTANTS[key])}</p>}
+            </button>
+          ))}
+        </div>
+      </FormField>
+      <div className="grid grid-cols-2 gap-2">
+        <FormField label="Montant versé (FCFA)" required>
+          <input className="input" type="number" value={form.montant} onChange={e => sf('montant', e.target.value)}/>
+        </FormField>
+        <FormField label="Libellé">
+          <input className="input" value={form.libelle} onChange={e => sf('libelle', e.target.value)}/>
+        </FormField>
+      </div>
+    </div>
+  );
+
+  if (type === 'attribution_tour') return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 p-2.5 bg-yellow-50 rounded-xl border border-yellow-100">
+        <span className="text-lg"></span>
+        <div><p className="text-xs font-bold text-yellow-800">Versement du pot</p><p className="text-xs text-yellow-600">Le montant du pot est calculé automatiquement</p></div>
+      </div>
+      <FormField label="Tontine" required>
+        <select className="select" value={form._idTontine} onChange={e => onTontineAttrChange(e.target.value)}>
+          <option value="">— Sélectionner la tontine —</option>
+          {tontinesActives.map(t => <option key={t.id} value={t.id}>{t.nom} — Pot : {fmt(t.cotisation * t.totalParts)}</option>)}
+        </select>
+      </FormField>
+      {tontineChoisie && (
+        <div className="p-2.5 bg-yellow-50 rounded-xl border border-yellow-200 flex justify-between">
+          <span className="text-xs text-yellow-700">Pot ({tontineChoisie.totalParts} parts x {fmt(tontineChoisie.cotisation)})</span>
+          <span className="text-sm font-black text-yellow-800">{fmt(tontineChoisie.cotisation * tontineChoisie.totalParts)}</span>
+        </div>
+      )}
+      <FormField label="Membre bénéficiaire" required>
+        <select className="select" value={form.idMembre} onChange={e => onBenefChange(e.target.value)} disabled={!tontineChoisie}>
+          <option value="">— Sélectionner le bénéficiaire —</option>
+          {membresAttrTour.map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
+        </select>
+      </FormField>
+      <div className="grid grid-cols-2 gap-2">
+        <FormField label="Montant (FCFA)" required>
+          <input className="input" type="number" value={form.montant} onChange={e => sf('montant', e.target.value)}/>
+        </FormField>
+        <FormField label="Libellé">
+          <input className="input" value={form.libelle} onChange={e => sf('libelle', e.target.value)}/>
+        </FormField>
+      </div>
+    </div>
+  );
+
+  if (type === 'depot_banque') return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 p-2.5 bg-teal-50 rounded-xl border border-teal-100">
+        <span className="text-lg"></span>
+        <div><p className="text-xs font-bold text-teal-800">Dépôt en banque</p><p className="text-xs text-teal-600">Identifiez le déposant et la banque destinataire</p></div>
+      </div>
+      {/* DÉPOSANT — champ manquant corrigé */}
+      <FormField label="Membre déposant" required>
+        <select className="select" value={form.idMembre} onChange={e => onDeposantChange(e.target.value)}>
+          <option value="">— Sélectionner le membre déposant —</option>
+          {membres.map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
+        </select>
+      </FormField>
+      <FormField label="Banque de destination" required>
+        <div className="grid grid-cols-1 gap-2">
+          {banques.map(b => (
+            <button key={b.id} type="button" onClick={() => onBanqueChange(String(b.id))}
+              className={clsx('p-3 rounded-xl border-2 text-left transition-all',
+                Number(form.idBanque) === b.id ? 'border-teal-400 bg-teal-50' : 'border-gray-200 bg-white hover:border-teal-200')}>
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-semibold text-gray-800">{b.nom}</p>
+                <p className="text-xs text-teal-600 font-bold">Solde : {fmt(b.totalSolde)}</p>
+              </div>
+              <p className="text-xs text-gray-400 mt-0.5">{b.description}</p>
+            </button>
+          ))}
+        </div>
+      </FormField>
+      <div className="grid grid-cols-2 gap-2">
+        <FormField label="Montant à déposer (FCFA)" required>
+          <input className="input" type="number" placeholder="Ex : 50 000" value={form.montant} onChange={e => sf('montant', e.target.value)}/>
+        </FormField>
+        <FormField label="Libellé">
+          <input className="input" value={form.libelle} onChange={e => sf('libelle', e.target.value)}/>
+        </FormField>
+      </div>
+      {form.idMembre && form.idBanque && (
+        <div className="p-2.5 bg-teal-50 rounded-xl border border-teal-200 text-xs text-teal-800 flex items-center gap-1.5">
+          <CheckCircle size={12}/>
+          Dépôt de <strong>{membres.find(m => m.id === Number(form.idMembre))?.nom} {membres.find(m => m.id === Number(form.idMembre))?.prenom}</strong> dans <strong>{banques.find(b => b.id === Number(form.idBanque))?.nom}</strong>
+        </div>
+      )}
+    </div>
+  );
+
+  // divers_entree / divers_sortie
+  return (
+    <div className="space-y-3">
+      <div className={clsx('flex items-center gap-2 p-2.5 rounded-xl border',
+        isEntree ? 'bg-purple-50 border-purple-100' : 'bg-red-50 border-red-100')}>
+        <span className="text-lg">{meta?.icon || ''}</span>
+        <div>
+          <p className={clsx('text-xs font-bold', isEntree ? 'text-purple-800' : 'text-red-800')}>{meta?.label}</p>
+          <p className={clsx('text-xs', isEntree ? 'text-purple-600' : 'text-red-600')}>
+            {isEntree ? 'Autre recette non catégorisée' : 'Autre dépense non catégorisée'}
+          </p>
+        </div>
+      </div>
+      <FormField label="Libellé / description" required>
+        <input className="input"
+          placeholder={isEntree ? "Ex : Don, frais d'inscription, droit d'entrée…" : "Ex : Frais de salle, fournitures, déplacement…"}
+          value={form.libelle} onChange={e => sf('libelle', e.target.value)}/>
+      </FormField>
+      <FormField label="Membre concerné (optionnel)">
+        <select className="select" value={form.idMembre} onChange={e => sf('idMembre', e.target.value)}>
+          <option value="">— Sans membre spécifique —</option>
+          {membres.map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
+        </select>
+      </FormField>
+      <FormField label="Montant (FCFA)" required>
+        <input className="input" type="number" placeholder="Ex : 10 000" value={form.montant} onChange={e => sf('montant', e.target.value)}/>
+      </FormField>
+    </div>
+  );
+}
+
+// ── Panneau Bénéficiaire de séance ────────────────────────────
+function BeneficiaireSeancePanel({ reunion }) {
+  const {
+    tontines, membres, membresParTontine, planningTours,
+    encheres, enregistrerBeneficiaireSeance, tirerAuSort,
+  } = useApp();
+
+  const [idTontine,    setIdTontine]    = useState('');
+  const [etape,        setEtape]        = useState('choix'); // 'choix' | 'designation' | 'confirme'
+  const [gagnant,      setGagnant]      = useState(null);
+  const [miseGagnante, setMiseGagnante] = useState('');
+  const [enchereIdGagnant, setEnchereIdGagnant] = useState('');
+
+  const locked = reunion.statutReunion === 'cloturee';
+  const beneficiairesSeance = reunion.beneficiairesSeance || [];
+
+  const tontine = tontines.find(t => t.id === Number(idTontine));
+  const typeAttr = tontine?.typeAttribution;
+  const montantPot = tontine ? tontine.cotisation * tontine.totalParts : 0;
+
+  // Membres actifs de la tontine sélectionnée
+  const membresActifs = useMemo(() => {
+    if (!tontine) return [];
+    return membresParTontine
+      .filter(mt => mt.idTontine === tontine.id && mt.statut === 'actif')
+      .map(mt => {
+        const m = membres.find(x => x.id === mt.idMembre);
+        return m ? { ...m, nombreParts: mt.nombreParts } : null;
+      })
+      .filter(Boolean);
+  }, [tontine, membresParTontine, membres]);
+
+  // Bénéficiaire planifié pour cette tontine (rotation)
+  const tourPlanifieProchain = useMemo(() => {
+    if (!tontine || typeAttr !== 'rotation') return null;
+    const nbEncaisses = planningTours.filter(p => p.idTontine === tontine.id && p.statut === 'encaisse').length;
+    const nextNumero = nbEncaisses + 1;
+    return planningTours.find(p => p.idTontine === tontine.id && p.numeroTour === nextNumero && p.statut !== 'encaisse');
+  }, [tontine, typeAttr, planningTours]);
+
+  // Enchères en attente pour cette tontine
+  const encheresEnAttente = useMemo(() => {
+    if (!tontine || typeAttr !== 'enchere') return [];
+    const nbEncaisses = planningTours.filter(p => p.idTontine === tontine.id && p.statut === 'encaisse').length;
+    return encheres.filter(e => {
+      const rotation = e.idRotation;
+      return rotation !== undefined && e.statut === 'en_attente';
+    });
+  }, [tontine, typeAttr, encheres, planningTours]);
+
+  // Bénéficiaire déjà enregistré pour cette tontine dans la séance
+  const benefDejaEnregistre = beneficiairesSeance.find(b => b.idTontine === Number(idTontine));
+
+  const handleConfirmerRotation = () => {
+    if (!tourPlanifieProchain || !tontine) return;
+    enregistrerBeneficiaireSeance(reunion.id, {
+      idTontine: tontine.id,
+      nomTontine: tontine.nom,
+      typeAttribution: typeAttr,
+      idMembre: tourPlanifieProchain.idMembre,
+      nomMembre: tourPlanifieProchain.nomMembre,
+      montantPot,
+      numeroTour: tourPlanifieProchain.numeroTour,
+      modeDesignation: 'rotation',
+    });
+    setEtape('confirme');
+    setGagnant({ nomMembre: tourPlanifieProchain.nomMembre, montantPot });
+  };
+
+  const handleTirage = () => {
+    if (!tontine) return;
+    const nbEncaisses = planningTours.filter(p => p.idTontine === tontine.id && p.statut === 'encaisse').length;
+    const result = tirerAuSort(tontine.id, nbEncaisses + 1, reunion.date);
+    if (result) {
+      // enregistrerBeneficiaireSeance sera appelé dans tirerAuSort via addTourPlanning + marquerTourEncaisse
+      enregistrerBeneficiaireSeance(reunion.id, {
+        idTontine: tontine.id,
+        nomTontine: tontine.nom,
+        typeAttribution: 'tirage',
+        idMembre: result.idMembre,
+        nomMembre: result.nomMembre,
+        montantPot: result.montantPot,
+        numeroTour: nbEncaisses + 1,
+        modeDesignation: 'tirage_au_sort',
+      });
+      setGagnant({ nomMembre: result.nomMembre, montantPot: result.montantPot });
+      setEtape('confirme');
+    }
+  };
+
+  const handleConfirmerEnchere = () => {
+    if (!enchereIdGagnant || !tontine) return;
+    const enc = encheres.find(e => e.id === Number(enchereIdGagnant));
+    if (!enc) return;
+    const mise = Number(miseGagnante) || enc.montantEnchere;
+    enregistrerBeneficiaireSeance(reunion.id, {
+      idTontine: tontine.id,
+      nomTontine: tontine.nom,
+      typeAttribution: 'enchere',
+      idMembre: enc.idMembre,
+      nomMembre: enc.nomMembre,
+      montantPot: montantPot - mise,
+      montantEnchere: mise,
+      numeroTour: planningTours.filter(p => p.idTontine === tontine.id && p.statut === 'encaisse').length + 1,
+      modeDesignation: 'enchere',
+    });
+    setGagnant({ nomMembre: enc.nomMembre, montantPot: montantPot - mise, mise });
+    setEtape('confirme');
+  };
+
+  const resetForm = () => { setIdTontine(''); setEtape('choix'); setGagnant(null); setEnchereIdGagnant(''); setMiseGagnante(''); };
+
+  return (
+    <div className="space-y-4">
+      {/* Bénéficiaires déjà enregistrés */}
+      {beneficiairesSeance.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">Bénéficiaires désignés cette séance</p>
+          {beneficiairesSeance.map((b, i) => (
+            <div key={i} className="p-3 bg-amber-50 rounded-xl border border-amber-200 flex items-center gap-3">
+              <Trophy size={18} className="text-amber-500 shrink-0"/>
+              <div className="flex-1 min-w-0">
+                <p className="font-bold text-amber-900">{b.nomMembre}</p>
+                <p className="text-xs text-amber-700">{b.nomTontine} — {b.typeAttribution === 'rotation' ? ' Rotation' : b.typeAttribution === 'tirage' ? ' Tirage' : ' Enchère'}</p>
+                {b.montantEnchere > 0 && <p className="text-xs text-amber-600">Mise : {fmt(b.montantEnchere)} | Net reçu : {fmt(b.montantPot)}</p>}
+                {!b.montantEnchere && <p className="text-xs text-amber-600">Montant : {fmt(b.montantPot)}</p>}
+              </div>
+              <span className="text-xs px-2 py-0.5 bg-amber-200 text-amber-800 rounded-full font-medium">OK Confirmé</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {locked ? (
+        <div className="p-3 bg-gray-50 rounded-xl text-center text-xs text-gray-400">
+          <Lock size={14} className="mx-auto mb-1 text-gray-300"/> Séance clôturée
+        </div>
+      ) : (
+        <>
+          {/* Étape 1: choix tontine */}
+          {etape === 'choix' && (
+            <div className="space-y-3">
+              <p className="text-sm text-gray-600">Sélectionnez la tontine à attribuer cette séance :</p>
+              <div className="space-y-2">
+                {tontines.filter(t => t.statut === 'active').map(t => {
+                  const dejaFait = beneficiairesSeance.some(b => b.idTontine === t.id);
+                  const typeIcon = { rotation: '', tirage: '', enchere: '' }[t.typeAttribution] || '';
+                  const nbEncaisses = planningTours.filter(p => p.idTontine === t.id && p.statut === 'encaisse').length;
+                  const progressPct = t.nbTours > 0 ? Math.round(nbEncaisses / t.nbTours * 100) : 0;
+                  return (
+                    <button key={t.id} type="button"
+                      onClick={() => { if (!dejaFait) { setIdTontine(String(t.id)); setEtape('designation'); } }}
+                      disabled={dejaFait}
+                      className={clsx('w-full p-3 rounded-xl border-2 text-left transition-all',
+                        dejaFait ? 'border-green-300 bg-green-50 opacity-70 cursor-default' :
+                        Number(idTontine) === t.id ? 'border-primary-500 bg-primary-50' :
+                        'border-gray-200 hover:border-primary-300'
+                      )}>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="font-semibold text-gray-800">{typeIcon} {t.nom}</p>
+                          <p className="text-xs text-gray-500 mt-0.5">{fmt(t.cotisation)} x {t.totalParts} parts = <strong>{fmt(t.cotisation * t.totalParts)}</strong></p>
+                        </div>
+                        {dejaFait ? <span className="text-xs text-green-600 font-medium">OK Attribué</span> : <span className="text-xs text-primary-600">Tour {nbEncaisses + 1}/{t.nbTours}</span>}
+                      </div>
+                      <div className="mt-2 w-full bg-gray-200 rounded-full h-1">
+                        <div className="h-1 rounded-full bg-primary-500 transition-all" style={{ width: `${progressPct}%` }}/>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Étape 2: Désignation selon le type */}
+          {etape === 'designation' && tontine && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2">
+                <button onClick={() => { setEtape('choix'); setIdTontine(''); }} className="text-xs text-primary-600 hover:underline">- Changer</button>
+                <p className="text-sm font-bold text-gray-800">{tontine.nom}</p>
+                <span className="text-xs px-2 py-0.5 bg-primary-100 text-primary-700 rounded-full">{fmt(montantPot)}</span>
+              </div>
+
+              {/* ROTATION */}
+              {typeAttr === 'rotation' && (
+                <div className="space-y-3">
+                  <div className="p-3 bg-primary-50 rounded-xl border border-primary-200 flex items-center gap-2">
+                    <RefreshCw size={14} className="text-primary-600"/>
+                    <p className="text-xs text-primary-700 font-medium">Mode Rotation — bénéficiaire défini par l'ordre prédéfini</p>
+                  </div>
+                  {tourPlanifieProchain ? (
+                    <div className="p-4 bg-white rounded-xl border-2 border-primary-300 text-center">
+                      <Trophy size={28} className="mx-auto text-primary-500 mb-2"/>
+                      <p className="text-lg font-bold text-gray-800">{tourPlanifieProchain.nomMembre}</p>
+                      <p className="text-xs text-gray-500 mt-0.5">Tour N°{tourPlanifieProchain.numeroTour} — {fmt(montantPot)}</p>
+                      <button onClick={handleConfirmerRotation}
+                        className="mt-3 btn-primary w-full text-sm">
+                        <CheckCircle size={14}/> Confirmer ce bénéficiaire
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 text-center">
+                      <AlertCircle size={20} className="mx-auto text-amber-500 mb-2"/>
+                      <p className="text-sm font-medium text-amber-800">Aucun tour planifié trouvé</p>
+                      <p className="text-xs text-amber-600 mt-1">Allez dans l'onglet Tontines pour définir l'ordre de rotation.</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* TIRAGE AU SORT */}
+              {typeAttr === 'tirage' && (
+                <div className="space-y-3">
+                  <div className="p-3 bg-blue-50 rounded-xl border border-blue-200 flex items-center gap-2">
+                    <Dices size={14} className="text-blue-600"/>
+                    <p className="text-xs text-blue-700 font-medium">Mode Tirage au sort — désignation aléatoire en séance</p>
+                  </div>
+                  <div className="p-4 bg-white rounded-xl border-2 border-blue-200 text-center">
+                    <Dices size={32} className="mx-auto text-blue-400 mb-3"/>
+                    <p className="text-sm text-gray-600 mb-4">Cliquez pour désigner aléatoirement le bénéficiaire parmi les membres non encore bénéficiaires.</p>
+                    <button onClick={handleTirage} className="btn-primary w-full text-sm">
+                      <Dices size={14}/>  Lancer le tirage au sort
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* ENCHÈRE */}
+              {typeAttr === 'enchere' && (
+                <div className="space-y-3">
+                  <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 flex items-center gap-2">
+                    <Gavel size={14} className="text-amber-600"/>
+                    <p className="text-xs text-amber-700 font-medium">Mode Enchère — le plus offrant remporte le pot</p>
+                  </div>
+                  {encheresEnAttente.length === 0 ? (
+                    <div className="p-4 bg-gray-50 rounded-xl border border-dashed text-center text-xs text-gray-400">
+                      <Gavel size={16} className="mx-auto mb-2 text-gray-300"/>
+                      Aucune enchère en attente. Enregistrez les enchères via le module Enchères.
+                    </div>
+                  ) : (
+                    <>
+                      <div className="space-y-2">
+                        <p className="text-xs font-medium text-gray-600">Enchères reçues — sélectionnez le gagnant :</p>
+                        {encheresEnAttente.map(e => (
+                          <label key={e.id}
+                            className={clsx('flex items-center gap-3 p-3 rounded-xl border-2 cursor-pointer transition-all',
+                              Number(enchereIdGagnant) === e.id ? 'border-amber-400 bg-amber-50' : 'border-gray-200 hover:border-amber-300')}>
+                            <input type="radio" name="enchere_gagnante" value={e.id}
+                              checked={Number(enchereIdGagnant) === e.id}
+                              onChange={() => { setEnchereIdGagnant(String(e.id)); setMiseGagnante(String(e.montantEnchere)); }}/>
+                            <div className="flex-1">
+                              <p className="font-semibold text-gray-800">{e.nomMembre}</p>
+                              <p className="text-xs text-gray-500">Mise proposée : <strong className="text-amber-600">{fmt(e.montantEnchere)}</strong></p>
+                            </div>
+                          </label>
+                        ))}
+                      </div>
+                      {enchereIdGagnant && (
+                        <>
+                          <div className="grid grid-cols-2 gap-2 text-xs">
+                            <div className="p-2 bg-gray-50 rounded-lg">
+                              <span className="text-gray-500">Pot total :</span><br/>
+                              <span className="font-bold">{fmt(montantPot)}</span>
+                            </div>
+                            <div className="p-2 bg-amber-50 rounded-lg">
+                              <span className="text-gray-500">Mise retenue :</span><br/>
+                              <span className="font-bold text-amber-600">{fmt(Number(miseGagnante))}</span>
+                            </div>
+                            <div className="p-2 bg-green-50 rounded-lg col-span-2">
+                              <span className="text-gray-500">Net versé au gagnant :</span><br/>
+                              <span className="font-bold text-green-600">{fmt(montantPot - Number(miseGagnante))}</span>
+                            </div>
+                          </div>
+                          <button onClick={handleConfirmerEnchere} className="btn-primary w-full text-sm">
+                            <Trophy size={14}/> Confirmer le gagnant de l'enchère
+                          </button>
+                        </>
+                      )}
+                    </>
+                  )}
+                  {/* Enchère manuelle si pas d'enchères préenregistrées */}
+                  {encheresEnAttente.length === 0 && (
+                    <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 space-y-2">
+                      <p className="text-xs font-medium text-amber-700">Saisie manuelle du gagnant</p>
+                      <select className="select text-sm"
+                        value={enchereIdGagnant}
+                        onChange={e => setEnchereIdGagnant(e.target.value)}>
+                        <option value="">— Sélectionner le gagnant —</option>
+                        {membresActifs.map(m => <option key={m.id} value={`m${m.id}`}>{m.nom} {m.prenom}</option>)}
+                      </select>
+                      <input type="number" className="input text-sm" placeholder="Montant mise gagnante (FCFA)"
+                        value={miseGagnante} onChange={e => setMiseGagnante(e.target.value)}/>
+                      {enchereIdGagnant && miseGagnante && (
+                        <button
+                          onClick={() => {
+                            const mid = Number(enchereIdGagnant.replace('m', ''));
+                            const m = membres.find(x => x.id === mid);
+                            if (!m) return;
+                            enregistrerBeneficiaireSeance(reunion.id, {
+                              idTontine: tontine.id, nomTontine: tontine.nom, typeAttribution: 'enchere',
+                              idMembre: mid, nomMembre: `${m.nom} ${m.prenom}`,
+                              montantPot: montantPot - Number(miseGagnante), montantEnchere: Number(miseGagnante),
+                              numeroTour: planningTours.filter(p => p.idTontine === tontine.id && p.statut === 'encaisse').length + 1,
+                              modeDesignation: 'enchere',
+                            });
+                            setGagnant({ nomMembre: `${m.nom} ${m.prenom}`, montantPot: montantPot - Number(miseGagnante), mise: Number(miseGagnante) });
+                            setEtape('confirme');
+                          }}
+                          className="btn-primary w-full text-sm">
+                          <Trophy size={14}/> Confirmer le gagnant
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Étape 3: Confirmation */}
+          {etape === 'confirme' && gagnant && (
+            <div className="space-y-4">
+              <div className="p-5 bg-gradient-to-br from-amber-50 to-yellow-50 rounded-2xl border-2 border-amber-300 text-center">
+                <Trophy size={36} className="mx-auto text-amber-500 mb-2"/>
+                <p className="text-xl font-black text-amber-900"> {gagnant.nomMembre}</p>
+                <p className="text-sm text-amber-700 mt-1">{gagnant.mise ? `Mise : ${fmt(gagnant.mise)} — Net reçu :` : 'Montant pot :'} <strong>{fmt(gagnant.montantPot)}</strong></p>
+                <p className="text-xs text-amber-600 mt-2">Bénéficiaire enregistré et planning mis à jour OK</p>
+              </div>
+              <button onClick={resetForm} className="btn-secondary w-full text-sm">
+                <Plus size={13}/> Attribuer une autre tontine
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── Panneau transactions séance ───────────────────────────────
+function PanneauTransactions({ reunion, onClose }) {
+  const {
+    membres, banques, prets, sanctions,
+    seanceTransactions, addSeanceTransaction, deleteSeanceTransaction,
+    tontines, membresParTontine,
+  } = useApp();
+
+  const txs     = seanceTransactions.filter(t => t.reunionId === reunion.id);
+  const locked  = reunion.statutReunion === 'cloturee';
+  const notOpen = reunion.statutReunion === 'planifiee';
+
+  const [selectedType, setSelectedType] = useState(null);
+  // null        - bouton "Enregistrer"
+  // '__picker__'- grille de sélection du type
+  // 'cotisation'- formulaire intelligent du type choisi
+
+  const totalEntrees = txs.filter(t => TX_TYPES.find(tt => tt.value === t.type)?.dir === 'entree').reduce((s, t) => s + t.montant, 0);
+  const totalSorties = txs.filter(t => TX_TYPES.find(tt => tt.value === t.type)?.dir === 'sortie').reduce((s, t) => s + t.montant, 0);
+  const totalBanque  = txs.filter(t => t.type === 'depot_banque').reduce((s, t) => s + t.montant, 0);
+
+  // ── Garde : séance non ouverte
+  if (notOpen) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12 text-center space-y-3">
+        <div className="w-14 h-14 rounded-2xl bg-amber-100 flex items-center justify-center">
+          <Lock size={28} className="text-amber-500"/>
+        </div>
+        <p className="font-bold text-gray-700">Séance non ouverte</p>
+        <p className="text-sm text-gray-400 max-w-xs">Aucune transaction ne peut être enregistrée tant que la séance n'est pas officiellement ouverte.</p>
+        <div className="px-4 py-2 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-700 font-medium">
+           Cliquez sur "Ouvrir la séance" pour commencer les opérations
+        </div>
+      </div>
+    );
+  }
+
+  const handleSubmitTx = (form) => {
+    if (!form.montant || Number(form.montant) <= 0) return;
+    addSeanceTransaction(reunion.id, {
+      ...form,
+      idMembre:   form.idMembre   ? Number(form.idMembre)   : null,
+      idSanction: form.idSanction ? Number(form.idSanction) : null,
+      idPret:     form.idPret     ? Number(form.idPret)      : null,
+      idBanque:   form.idBanque   ? Number(form.idBanque)    : null,
+    }, banques, membres);
+    setSelectedType(null);
+  };
+
+  return (
+    <div className="space-y-4">
+
+      {/* Résumé financier */}
+      <div className="grid grid-cols-3 gap-2">
+        {[
+          { l: 'Entrées caisse', v: totalEntrees, c: 'text-green-600', bg: 'bg-green-50 border border-green-100' },
+          { l: 'Sorties caisse', v: totalSorties, c: 'text-red-500',   bg: 'bg-red-50 border border-red-100'     },
+          { l: 'Dépôts banque',  v: totalBanque,  c: 'text-blue-600',  bg: 'bg-blue-50 border border-blue-100'   },
+        ].map(s => (
+          <div key={s.l} className={`p-2.5 rounded-xl text-center ${s.bg}`}>
+            <p className={`text-base font-bold ${s.c}`}>{fmt(s.v)}</p>
+            <p className="text-xs text-gray-500">{s.l}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Zone formulaire / sélecteur */}
+      {!locked && (
+        <div>
+          {/* Bouton principal */}
+          {selectedType === null && (
+            <button
+              onClick={() => setSelectedType('__picker__')}
+              className="btn-primary w-full text-sm justify-center"
+            >
+              <Plus size={15}/> Enregistrer une transaction
+            </button>
+          )}
+
+          {/* Sélecteur de type */}
+          {selectedType === '__picker__' && (
+            <div className="p-4 bg-white rounded-xl border border-gray-200 shadow-sm space-y-4">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-bold text-gray-800">Choisir le type de transaction</p>
+                <button
+                  onClick={() => setSelectedType(null)}
+                  className="p-1 rounded-lg hover:bg-gray-100 text-gray-400"
+                >
+                  <X size={15}/>
+                </button>
+              </div>
+              <TypePicker onSelect={(t) => setSelectedType(t)} />
+            </div>
+          )}
+
+          {/* Formulaire intelligent selon le type choisi */}
+          {selectedType && selectedType !== '__picker__' && (
+            <div className="p-4 bg-white rounded-xl border border-gray-200 shadow-sm">
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-sm font-bold text-gray-800">
+                  {TX_TYPES.find(t => t.value === selectedType)?.icon}{' '}
+                  {TX_TYPES.find(t => t.value === selectedType)?.label}
+                </p>
+                <button
+                  onClick={() => setSelectedType('__picker__')}
+                  className="text-xs text-primary-600 hover:underline"
+                >
+                  - Changer de type
+                </button>
+              </div>
+              <SmartFormWrapper
+                type={selectedType}
+                reunion={reunion}
+                membres={membres}
+                banques={banques}
+                prets={prets}
+                sanctions={sanctions}
+                tontines={tontines}
+                membresParTontine={membresParTontine}
+                onSubmit={handleSubmitTx}
+                onCancel={() => setSelectedType(null)}
+              />
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Liste des transactions enregistrées */}
+      {txs.length === 0 ? (
+        <div className="text-center py-8 text-gray-400">
+          <DollarSign size={28} className="mx-auto mb-2 text-gray-200"/>
+          <p className="text-sm">Aucune transaction enregistrée pour cette séance</p>
+          {!locked && <p className="text-xs mt-1">Cliquez sur « Enregistrer une transaction » pour commencer</p>}
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {txs.map(tx => {
+            const meta    = TX_TYPES.find(t => t.value === tx.type);
+            const isEntree = meta?.dir === 'entree';
+            const isSortie = meta?.dir === 'sortie';
+            return (
+              <div key={tx.id}
+                className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl group hover:bg-white hover:shadow-sm transition-all"
+              >
+                <div className={clsx(
+                  'w-9 h-9 rounded-xl flex items-center justify-center text-base shrink-0',
+                  isEntree ? 'bg-green-100' : isSortie ? 'bg-red-100' : 'bg-blue-100'
+                )}>
+                  {meta?.icon || ''}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-gray-800 truncate">{tx.libelle || meta?.label || tx.type}</p>
+                  <p className="text-xs text-gray-400">{tx.nomMembre || '—'} · {tx.heure}</p>
+                </div>
+                <div className="text-right shrink-0">
+                  <p className={clsx('text-sm font-bold',
+                    isEntree ? 'text-green-600' : isSortie ? 'text-red-500' : 'text-blue-600'
+                  )}>
+                    {isEntree ? '+' : isSortie ? '−' : ''} {fmt(tx.montant)}
+                  </p>
+                  <p className="text-xs text-gray-400">{meta?.label}</p>
+                </div>
+                {!locked && (
+                  <button
+                    onClick={() => deleteSeanceTransaction(tx.id)}
+                    className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg opacity-0 group-hover:opacity-100 transition-all shrink-0"
+                  >
+                    <Trash2 size={13}/>
+                  </button>
+                )}
+              </div>
+            );
+          })}
+          {/* Total séance */}
+          <div className="flex justify-between items-center p-2.5 bg-gray-100 rounded-xl text-xs font-bold text-gray-700 mt-1">
+            <span>{txs.length} transaction(s)</span>
+            <span className={totalEntrees - totalSorties >= 0 ? 'text-green-700' : 'text-red-600'}>
+              Net : {totalEntrees - totalSorties >= 0 ? '+' : ''}{fmt(totalEntrees - totalSorties)}
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Page principale ───────────────────────────────────────────
+export function Reunions() {
+  const {
+    reunions, membres,
+    addReunion, updateReunion, ouvrirSeance,
+    addPointODJ, updatePointODJ, removePointODJ, cloturerSeance,
+    seanceTransactions,
+  } = useApp();
+
+  const [showAdd,        setShowAdd]        = useState(false);
+  const [showDetail,     setShowDetail]     = useState(null);
+  const [showEdit,       setShowEdit]       = useState(null);
+  const [showOuverture,  setShowOuverture]  = useState(null);
+  const [showCloture,    setShowCloture]    = useState(null);
+  const [showAddPoint,   setShowAddPoint]   = useState(null);
+  const [showEditPoint,  setShowEditPoint]  = useState(null);
+  const [showRapport,    setShowRapport]    = useState(null);
+  const [detailTab,      setDetailTab]      = useState('info'); // 'info' | 'transactions' | 'rapport'
+
+  const [formReunion,  setFormReunion]  = useState(EMPTY_REUNION);
+  const [formOuv,      setFormOuv]      = useState(EMPTY_OUVERTURE);
+  const [formCloture,  setFormCloture]  = useState(EMPTY_CLOTURE);
+  const [formPoint,    setFormPoint]    = useState(EMPTY_POINT);
+
+  const membresNoms = membres.map(m => `${m.nom} ${m.prenom}`);
+
+  const handleAddReunion = () => {
+    if (!formReunion.date || !formReunion.lieu) return;
+    addReunion({ ...formReunion });
+    setShowAdd(false); setFormReunion(EMPTY_REUNION);
+  };
+
+  const handleEditReunion = () => {
+    if (!formReunion.date || !formReunion.lieu) return;
+    updateReunion({ ...showEdit, ...formReunion });
+    setShowEdit(null);
+  };
+
+  const handleOuverture = () => {
+    if (!formOuv.heureOuverture || !formOuv.presidentSeance) return;
+    ouvrirSeance(showOuverture.id, formOuv);
+    setShowOuverture(null); setFormOuv(EMPTY_OUVERTURE);
+  };
+
+  const handleCloture = () => {
+    if (!formCloture.heureCloture || !formCloture.presents) return;
+    cloturerSeance(showCloture.id, formCloture);
+    setShowCloture(null); setFormCloture(EMPTY_CLOTURE);
+  };
+
+  const handleAddPoint = () => {
+    if (!formPoint.titre.trim()) return;
+    addPointODJ(showAddPoint, formPoint);
+    setShowAddPoint(null); setFormPoint(EMPTY_POINT);
+  };
+
+  const handleEditPoint = () => {
+    if (!formPoint.titre.trim()) return;
+    updatePointODJ(showEditPoint.reunionId, showEditPoint.point.id, formPoint);
+    setShowEditPoint(null); setFormPoint(EMPTY_POINT);
+  };
+
+  const stats = [
+    { l:'Clôturées',     v: reunions.filter(r=>r.statutReunion==='cloturee').length,  c:'text-primary-600' },
+    { l:'En cours',      v: reunions.filter(r=>r.statutReunion==='en_cours').length,   c:'text-amber-600'   },
+    { l:'Planifiées',    v: reunions.filter(r=>r.statutReunion==='planifiee').length,  c:'text-blue-600'    },
+    { l:'Taux présence', v: (() => {
+      const t = reunions.filter(r=>r.cloture && (r.cloture.presents+r.cloture.absents)>0);
+      if (!t.length) return '—';
+      const moy = t.reduce((s,r)=>s+r.cloture.presents/(r.cloture.presents+r.cloture.absents),0)/t.length;
+      return `${Math.round(moy*100)}%`;
+    })(), c:'text-purple-600' },
+  ];
+
+  const FR = ({ k, ...p }) => <input className="input" value={formReunion[k]||''} onChange={e=>setFormReunion(f=>({...f,[k]:e.target.value}))} {...p}/>;
+  const FO = ({ k, ...p }) => <input className="input" value={formOuv[k]||''} onChange={e=>setFormOuv(f=>({...f,[k]:e.target.value}))} {...p}/>;
+  const FC = ({ k, ...p }) => <input className="input" value={formCloture[k]||''} onChange={e=>setFormCloture(f=>({...f,[k]:e.target.value}))} {...p}/>;
+  const FP = ({ k, ...p }) => <input className="input" value={formPoint[k]||''} onChange={e=>setFormPoint(f=>({...f,[k]:e.target.value}))} {...p}/>;
+
+  return (
+    <div className="space-y-6">
+      <PageHeader title="Réunions" subtitle={`${reunions.length} réunions au total`}
+        action={<button onClick={()=>{ setFormReunion({ ...EMPTY_REUNION, numero: reunions.length + 1, date: new Date().toISOString().split('T')[0] }); setShowAdd(true); }} className="btn-primary">
+          <CalendarPlus size={15}/> Planifier une réunion
+        </button>}
+      />
+
+      {/* Stats */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {stats.map(s=>(
+          <div key={s.l} className="card text-center py-3">
+            <p className={`text-2xl font-bold ${s.c}`}>{s.v}</p>
+            <p className="text-xs text-gray-400 mt-0.5">{s.l}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Bannières actives */}
+      {reunions.filter(r=>r.statutReunion==='en_cours').map(r=>(
+        <div key={r.id} className="card border-l-4 border-l-amber-500 bg-amber-50/40">
+          <div className="flex items-center gap-3 flex-wrap">
+            <PlayCircle size={20} className="text-amber-500 shrink-0"/>
+            <div className="flex-1 min-w-0">
+              <p className="font-semibold text-gray-800">Séance en cours — N°{r.numero}</p>
+              <p className="text-sm text-gray-500">{fmtDate(r.date)} · {r.lieu}</p>
+              {r.ouverture && <p className="text-xs text-amber-700 mt-0.5">Ouverte à {r.ouverture.heureOuverture} par {r.ouverture.presidentSeance}</p>}
+            </div>
+            <div className="flex gap-2">
+              <button onClick={()=>{ setShowDetail(r); setDetailTab('transactions'); }} className="btn-secondary text-xs">
+                <Receipt size={13}/> Transactions
+              </button>
+              <button onClick={()=>{ setShowDetail(r); setDetailTab('info'); }} className="btn-secondary text-xs">
+                <FileText size={13}/> Gérer
+              </button>
+              <button onClick={()=>{ setShowCloture(r); setFormCloture(EMPTY_CLOTURE); }} className="btn-primary text-xs">
+                <CheckCircle size={13}/> Clôturer
+              </button>
+            </div>
+          </div>
+        </div>
+      ))}
+
+      {reunions.filter(r=>r.statutReunion==='planifiee').map(r=>(
+        <div key={r.id} className="card border-l-4 border-l-blue-500 bg-blue-50/40">
+          <div className="flex items-center gap-3 flex-wrap">
+            <Clock size={20} className="text-blue-500 shrink-0"/>
+            <div className="flex-1 min-w-0">
+              <p className="font-semibold text-gray-800">Prochaine réunion — N°{r.numero}</p>
+              <p className="text-sm text-gray-500">{fmtDate(r.date)} · <span className="inline-flex items-center gap-1"><MapPin size={11}/>{r.lieu}</span></p>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={()=>{ setShowEdit(r); setFormReunion({date:r.date,lieu:r.lieu,numero:r.numero,observation:r.observation||''}); }} className="btn-secondary text-xs">
+                <Pencil size={13}/> Modifier
+              </button>
+              <button onClick={()=>{ setShowOuverture(r); setFormOuv(EMPTY_OUVERTURE); }} className="btn-primary text-xs">
+                <PlayCircle size={13}/> Ouvrir la séance
+              </button>
+            </div>
+          </div>
+        </div>
+      ))}
+
+      {/* Grille réunions */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {[...reunions].sort((a,b)=>b.numero-a.numero).map(r=>{
+          const cfg = sCfg[r.statutReunion];
+          const Icon = cfg.icon;
+          const cloture = r.cloture;
+          const txCount = seanceTransactions.filter(t => t.reunionId === r.id).length;
+          return (
+            <div key={r.id} onClick={()=>{ setShowDetail(r); setDetailTab('info'); }}
+              className="card cursor-pointer hover:shadow-md transition-all border border-gray-100 hover:border-primary-200">
+              <div className="flex items-start justify-between mb-3">
+                <div className="w-11 h-11 rounded-xl gradient-primary flex flex-col items-center justify-center text-white shrink-0">
+                  <span className="text-base font-bold leading-none">{new Date(r.date).getDate()}</span>
+                  <span className="text-xs opacity-80">{new Date(r.date).toLocaleDateString('fr-FR',{month:'short'})}</span>
+                </div>
+                <Badge variant={cfg.v}>{cfg.label}</Badge>
+              </div>
+              <p className="font-bold text-gray-800 mb-1">Réunion N°{r.numero}</p>
+              <div className="flex items-center gap-1.5 text-xs text-gray-400 mb-1">
+                <MapPin size={11}/><span className="truncate">{r.lieu}</span>
+              </div>
+              <div className="flex items-center gap-1.5 text-xs text-gray-400 mb-1">
+                <ClipboardList size={11}/>
+                <span>{r.pointsOrdreJour?.length || 0} point(s) à l'ordre du jour</span>
+              </div>
+              {txCount > 0 && (
+                <div className="flex items-center gap-1.5 text-xs text-green-600 mb-1">
+                  <Receipt size={11}/>
+                  <span>{txCount} transaction(s) enregistrée(s)</span>
+                </div>
+              )}
+              {cloture && (
+                <div className="flex gap-3 pt-2 border-t border-gray-100 text-xs">
+                  <span className="text-primary-600 flex items-center gap-1"><Users size={11}/>{cloture.presents} présents</span>
+                  {cloture.absents>0 && <span className="text-red-500">{cloture.absents} absent(s)</span>}
+                </div>
+              )}
+              {r.statutReunion==='cloturee' && (
+                <div className="flex items-center gap-1 text-xs text-gray-300 mt-2 pt-2 border-t border-gray-100">
+                  <Lock size={10}/><span>Séance verrouillée</span>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ══ MODAL DÉTAIL ═══════════════════════════════════ */}
+      {showDetail && (() => {
+        const r = reunions.find(x=>x.id===showDetail.id) || showDetail;
+        const cfg = sCfg[r.statutReunion];
+        const locked = r.statutReunion === 'cloturee';
+        const tabs = [
+          { id:'info',              label:'Informations',       icon: ClipboardList  },
+          { id:'feuille_cotisation',label:'Feuille Cotisation', icon: ClipboardCheck },
+          { id:'beneficiaire',      label:'Bénéficiaire',       icon: Trophy         },
+          { id:'transactions',      label:'Transactions',        icon: Receipt        },
+        ];
+
+        return (
+          <Modal open={true} onClose={()=>setShowDetail(null)} title={`Réunion N°${r.numero}`}
+            footer={
+              <div className="flex gap-2 flex-wrap w-full">
+                {r.statutReunion==='planifiee' && (
+                  <>
+                    <button onClick={()=>{ setShowEdit(r); setFormReunion({date:r.date,lieu:r.lieu,numero:r.numero,observation:r.observation||''}); setShowDetail(null); }} className="btn-secondary">
+                      <Pencil size={13}/> Modifier
+                    </button>
+                    <button onClick={()=>{ setShowOuverture(r); setFormOuv(EMPTY_OUVERTURE); setShowDetail(null); }} className="btn-primary">
+                      <PlayCircle size={13}/> Ouvrir la séance
+                    </button>
+                  </>
+                )}
+                {r.statutReunion==='en_cours' && (
+                  <button onClick={()=>{ setShowCloture(r); setFormCloture(EMPTY_CLOTURE); setShowDetail(null); }} className="btn-primary">
+                    <CheckCircle size={13}/> Clôturer la séance
+                  </button>
+                )}
+                {(r.statutReunion==='cloturee' || seanceTransactions.filter(t=>t.reunionId===r.id).length > 0) && (
+                  <button onClick={()=>{ setShowRapport(r); }} className="btn-secondary">
+                    <FileText size={13}/> Rapport PV
+                  </button>
+                )}
+                <button onClick={()=>setShowDetail(null)} className="btn-secondary ml-auto">Fermer</button>
+              </div>
+            }>
+            <div className="space-y-4">
+              {/* Tabs */}
+              <div className="flex gap-1 p-1 bg-gray-100 rounded-xl">
+                {tabs.map(tab => (
+                  <button key={tab.id} onClick={()=>setDetailTab(tab.id)}
+                    className={clsx('flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-xs font-medium transition-all',
+                      detailTab===tab.id ? 'bg-white text-primary-700 shadow-sm' : 'text-gray-500 hover:text-gray-700')}>
+                    <tab.icon size={13}/>{tab.label}
+                    {tab.id==='transactions' && seanceTransactions.filter(t=>t.reunionId===r.id).length > 0 && (
+                      <span className="ml-1 px-1.5 py-0.5 bg-primary-600 text-white rounded-full text-xs leading-none">
+                        {seanceTransactions.filter(t=>t.reunionId===r.id).length}
+                      </span>
+                    )}
+                    {tab.id==='beneficiaire' && (r.beneficiairesSeance||[]).length > 0 && (
+                      <span className="ml-1 px-1.5 py-0.5 bg-amber-500 text-white rounded-full text-xs leading-none">
+                        {(r.beneficiairesSeance||[]).length}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+
+              {/* Tab: Informations */}
+              {detailTab === 'info' && (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div className="p-3 bg-gray-50 rounded-xl">
+                      <p className="text-xs text-gray-400 mb-1">Date</p>
+                      <p className="font-semibold">{fmtDate(r.date)}</p>
+                    </div>
+                    <div className="p-3 bg-gray-50 rounded-xl">
+                      <p className="text-xs text-gray-400 mb-1">Statut</p>
+                      <Badge variant={cfg.v}>{cfg.label}</Badge>
+                    </div>
+                    <div className="p-3 bg-gray-50 rounded-xl col-span-2">
+                      <p className="text-xs text-gray-400 mb-1">Lieu</p>
+                      <p className="font-semibold flex items-center gap-1"><MapPin size={12} className="text-gray-400"/>{r.lieu}</p>
+                    </div>
+                  </div>
+
+                  {r.ouverture ? (
+                    <div className="p-3 bg-amber-50 rounded-xl border border-amber-100">
+                      <p className="text-xs font-semibold text-amber-700 mb-2 flex items-center gap-1"><PlayCircle size={12}/> Ouverture de séance</p>
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        <div><span className="text-gray-400">Heure : </span><span className="font-medium">{r.ouverture.heureOuverture}</span></div>
+                        <div><span className="text-gray-400">Président : </span><span className="font-medium">{r.ouverture.presidentSeance}</span></div>
+                        {r.ouverture.secretaireSeance && <div><span className="text-gray-400">Secrétaire : </span><span className="font-medium">{r.ouverture.secretaireSeance}</span></div>}
+                      </div>
+                      {r.ouverture.motOuverture && <p className="text-xs text-gray-600 mt-2 italic">« {r.ouverture.motOuverture} »</p>}
+                    </div>
+                  ) : (
+                    <div className="p-3 bg-gray-50 rounded-xl border border-dashed border-gray-200 text-center text-xs text-gray-400">
+                      <Clock size={16} className="mx-auto mb-1 text-gray-300"/>Séance non encore ouverte
+                    </div>
+                  )}
+
+                  {/* ODJ */}
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-sm font-semibold text-gray-700 flex items-center gap-1.5">
+                        <ListChecks size={15} className="text-primary-500"/>
+                        Ordre du jour ({r.pointsOrdreJour?.length || 0})
+                      </p>
+                      {!locked && (
+                        <button onClick={()=>{ setShowAddPoint(r.id); setFormPoint(EMPTY_POINT); }} className="btn-secondary text-xs py-1">
+                          <Plus size={12}/> Ajouter
+                        </button>
+                      )}
+                    </div>
+                    <div className="space-y-1.5">
+                      {(r.pointsOrdreJour||[]).map((p,i)=>(
+                        <div key={p.id} className="flex items-start gap-2 p-2.5 bg-gray-50 rounded-lg group">
+                          <span className="text-xs text-gray-400 font-mono mt-0.5 shrink-0">{String(i+1).padStart(2,'0')}.</span>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-gray-800 truncate">{p.titre}</p>
+                            {p.description && <p className="text-xs text-gray-500 truncate">{p.description}</p>}
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <Badge variant={typeCfg[p.type]?.v||'gray'}>{typeCfg[p.type]?.label||p.type}</Badge>
+                            <Badge variant={statutPointCfg[p.statut]?.v||'gray'}>{statutPointCfg[p.statut]?.label||p.statut}</Badge>
+                            {!locked && (
+                              <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button onClick={e=>{e.stopPropagation();setShowEditPoint({reunionId:r.id,point:p});setFormPoint({titre:p.titre,type:p.type,description:p.description||'',statut:p.statut});}} className="p-1 hover:bg-white rounded">
+                                  <Pencil size={11} className="text-gray-400"/>
+                                </button>
+                                <button onClick={e=>{e.stopPropagation();removePointODJ(r.id,p.id);}} className="p-1 hover:bg-white rounded">
+                                  <Trash2 size={11} className="text-red-400"/>
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                      {(!r.pointsOrdreJour||r.pointsOrdreJour.length===0) && (
+                        <p className="text-xs text-gray-400 text-center py-3">Aucun point à l'ordre du jour</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Clôture */}
+                  {r.cloture ? (
+                    <div className="p-3 bg-primary-50 rounded-xl border border-primary-100">
+                      <p className="text-xs font-semibold text-primary-700 mb-2 flex items-center gap-1"><CheckCircle size={12}/> Clôture de séance</p>
+                      <div className="flex gap-4 text-center mb-2">
+                        <div className="flex-1"><p className="text-2xl font-bold text-primary-600">{r.cloture.presents}</p><p className="text-xs text-gray-500">Présents</p></div>
+                        <div className="flex-1"><p className="text-2xl font-bold text-red-500">{r.cloture.absents}</p><p className="text-xs text-gray-500">Absents</p></div>
+                        <div className="flex-1">
+                          <p className="text-2xl font-bold text-amber-600">
+                            {r.cloture.presents+r.cloture.absents>0
+                              ? `${Math.round(r.cloture.presents/(r.cloture.presents+r.cloture.absents)*100)}%`
+                              : '—'}
+                          </p>
+                          <p className="text-xs text-gray-500">Présence</p>
+                        </div>
+                      </div>
+                      {r.cloture.heureCloture && <p className="text-xs text-gray-500">Heure de clôture : <strong>{r.cloture.heureCloture}</strong></p>}
+                      {r.cloture.membresAbsents && <p className="text-xs text-red-500 mt-1">Absents : {r.cloture.membresAbsents}</p>}
+                      {r.cloture.observation && <p className="text-xs text-gray-600 mt-2 italic">« {r.cloture.observation} »</p>}
+                    </div>
+                  ) : r.statutReunion!=='planifiee' ? (
+                    <div className="p-3 bg-gray-50 rounded-xl border border-dashed border-gray-200 text-center text-xs text-gray-400">
+                      <CheckCircle size={16} className="mx-auto mb-1 text-gray-300"/>
+                      Séance en cours — non encore clôturée
+                    </div>
+                  ) : null}
+
+                  {locked && (
+                    <div className="flex items-center gap-2 p-2.5 bg-gray-100 rounded-lg text-xs text-gray-500">
+                      <Lock size={12}/> Cette séance est clôturée. Aucune modification possible.
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Tab: Bénéficiaire */}
+              {detailTab === 'beneficiaire' && (
+                <BeneficiaireSeancePanel reunion={r}/>
+              )}
+
+              {/* Tab: Feuille de cotisation */}
+              {detailTab === 'feuille_cotisation' && (
+                <FeuillePresenceTontine reunion={r} onClose={() => setShowDetail(null)}/>
+              )}
+
+              {/* Tab: Transactions */}
+              {detailTab === 'transactions' && (
+                <PanneauTransactions reunion={r} onClose={()=>setShowDetail(null)}/>
+              )}
+            </div>
+          </Modal>
+        );
+      })()}
+
+      {/* ── Rapport / PV ─────────────────────────────────── */}
+      {showRapport && (
+        <RapportSeance
+          reunion={reunions.find(r=>r.id===showRapport.id) || showRapport}
+          transactions={seanceTransactions}
+          membres={membres}
+          onClose={()=>setShowRapport(null)}
+        />
+      )}
+
+      {/* ── Planifier ────────────────────────────────────── */}
+      <Modal open={showAdd} onClose={()=>setShowAdd(false)} title="Planifier une réunion"
+        footer={<>
+          <button onClick={()=>setShowAdd(false)} className="btn-secondary">Annuler</button>
+          <button onClick={handleAddReunion} disabled={!formReunion.date || !formReunion.lieu}
+            className={clsx('btn-primary', (!formReunion.date || !formReunion.lieu) && 'opacity-40 cursor-not-allowed')}>
+            <CalendarPlus size={14}/> Planifier la réunion
+          </button>
+        </>}>
+        <div className="space-y-4">
+          {/* Bannière info */}
+          <div className="p-3 bg-blue-50 rounded-xl border border-blue-100 flex items-start gap-2 text-xs text-blue-700">
+            <CalendarPlus size={14} className="mt-0.5 shrink-0"/>
+            <p>Remplissez les informations ci-dessous pour planifier la séance. Vous pourrez ajouter l'ordre du jour et ouvrir la séance ultérieurement.</p>
+          </div>
+
+          {/* Date + N° (pré-remplis automatiquement) */}
+          <div className="grid grid-cols-2 gap-3">
+            <FormField label="Date de la réunion" required>
+              <FR k="date" type="date"/>
+            </FormField>
+            <FormField label="N° de séance">
+              <div className="relative">
+                <FR k="numero" type="number" placeholder={reunions.length + 1}/>
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-400">auto</span>
+              </div>
+            </FormField>
+          </div>
+
+          {/* Lieu avec suggestions */}
+          <FormField label="Lieu de la réunion" required>
+            <FR k="lieu" placeholder="Ex : Salle Akwa Palace, Douala"/>
+          </FormField>
+
+          {/* Lieux récents comme suggestions rapides */}
+          {(() => {
+            const lieuxRecents = [...new Set(reunions.slice(-5).map(r => r.lieu).filter(Boolean))];
+            return lieuxRecents.length > 0 ? (
+              <div>
+                <p className="text-xs text-gray-400 mb-1.5">Lieux récents :</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {lieuxRecents.map(l => (
+                    <button key={l} type="button"
+                      onClick={() => setFormReunion(f => ({ ...f, lieu: l }))}
+                      className={clsx('text-xs px-2.5 py-1 rounded-lg border transition-all',
+                        formReunion.lieu === l ? 'border-primary-500 bg-primary-50 text-primary-700' : 'border-gray-200 text-gray-600 hover:border-primary-300')}>
+                      {l}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null;
+          })()}
+
+          {/* Observation */}
+          <FormField label="Notes préparatoires (optionnel)">
+            <textarea className="input h-20 resize-none" placeholder="Ordre du jour prévu, points à aborder, rappels…"
+              value={formReunion.observation||''} onChange={e=>setFormReunion(f=>({...f,observation:e.target.value}))}/>
+          </FormField>
+
+          {/* Récapitulatif si formulaire complet */}
+          {formReunion.date && formReunion.lieu && (
+            <div className="p-3 bg-gradient-to-br from-primary-50 to-primary-50 rounded-xl border border-primary-200 text-xs space-y-1">
+              <p className="font-bold text-primary-700 mb-1.5"> Récapitulatif de la séance</p>
+              <div className="flex gap-2">
+                <span className="text-gray-500">Séance N°</span>
+                <span className="font-semibold text-gray-800">{formReunion.numero || reunions.length + 1}</span>
+              </div>
+              <div className="flex gap-2">
+                <span className="text-gray-500">Date</span>
+                <span className="font-semibold text-gray-800">{fmtDate(formReunion.date)}</span>
+              </div>
+              <div className="flex gap-2">
+                <span className="text-gray-500">Lieu</span>
+                <span className="font-semibold text-gray-800">{formReunion.lieu}</span>
+              </div>
+            </div>
+          )}
+        </div>
+      </Modal>
+
+      {/* ── Modifier ─────────────────────────────────────── */}
+      <Modal open={!!showEdit} onClose={()=>setShowEdit(null)} title={`Modifier — Réunion N°${showEdit?.numero}`}
+        footer={<><button onClick={()=>setShowEdit(null)} className="btn-secondary">Annuler</button><button onClick={handleEditReunion} className="btn-primary"><Pencil size={14}/>Enregistrer</button></>}>
+        <div className="space-y-4">
+          <div className="p-3 bg-blue-50 rounded-xl text-xs text-blue-700 flex items-center gap-2">
+            <AlertCircle size={14}/> Modifiable jusqu'à l'ouverture et la clôture de la séance.
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <FormField label="Date" required><FR k="date" type="date"/></FormField>
+            <FormField label="N° de réunion"><FR k="numero" type="number"/></FormField>
+          </div>
+          <FormField label="Lieu" required><FR k="lieu"/></FormField>
+          <FormField label="Observation">
+            <textarea className="input h-20 resize-none" value={formReunion.observation||''} onChange={e=>setFormReunion(f=>({...f,observation:e.target.value}))}/>
+          </FormField>
+        </div>
+      </Modal>
+
+      {/* ── Ouverture ────────────────────────────────────── */}
+      <Modal open={!!showOuverture} onClose={()=>setShowOuverture(null)} title={`Ouverture — Réunion N°${showOuverture?.numero}`}
+        footer={<><button onClick={()=>setShowOuverture(null)} className="btn-secondary">Annuler</button><button onClick={handleOuverture} className="btn-primary"><PlayCircle size={14}/>Ouvrir la séance</button></>}>
+        <div className="space-y-4">
+          <div className="p-3 bg-blue-50 rounded-xl text-sm text-blue-800">
+            <strong>{fmtDate(showOuverture?.date)}</strong> — {showOuverture?.lieu}
+          </div>
+          <FormField label="Heure d'ouverture" required><FO k="heureOuverture" placeholder="10h00"/></FormField>
+          <div className="grid grid-cols-2 gap-3">
+            <FormField label="Président de séance" required>
+              <select className="select" value={formOuv.presidentSeance||''} onChange={e=>setFormOuv(f=>({...f,presidentSeance:e.target.value}))}>
+                <option value="">-- Choisir --</option>
+                {membresNoms.map(n=><option key={n} value={n}>{n}</option>)}
+              </select>
+            </FormField>
+            <FormField label="Secrétaire de séance">
+              <select className="select" value={formOuv.secretaireSeance||''} onChange={e=>setFormOuv(f=>({...f,secretaireSeance:e.target.value}))}>
+                <option value="">-- Choisir --</option>
+                {membresNoms.map(n=><option key={n} value={n}>{n}</option>)}
+              </select>
+            </FormField>
+          </div>
+          <FormField label="Mot d'ouverture">
+            <textarea className="input h-20 resize-none" placeholder="Discours d'ouverture de séance…"
+              value={formOuv.motOuverture||''} onChange={e=>setFormOuv(f=>({...f,motOuverture:e.target.value}))}/>
+          </FormField>
+        </div>
+      </Modal>
+
+      {/* ── Clôture ──────────────────────────────────────── */}
+      <Modal open={!!showCloture} onClose={()=>setShowCloture(null)} title={`Clôture — Réunion N°${showCloture?.numero}`}
+        footer={<><button onClick={()=>setShowCloture(null)} className="btn-secondary">Annuler</button><button onClick={handleCloture} className="btn-primary"><CheckCircle size={14}/>Valider la clôture</button></>}>
+        <div className="space-y-4">
+          <div className="p-3 bg-amber-50 rounded-xl text-sm text-amber-800">
+            <strong>{fmtDate(showCloture?.date)}</strong> — {showCloture?.lieu}
+            <p className="text-xs mt-1 text-amber-600"> Après clôture, aucune modification ne sera possible.</p>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <FormField label="Heure de clôture" required><FC k="heureCloture" placeholder="12h30"/></FormField>
+            <div/>
+            <FormField label="Nombre de présents" required>
+              <input type="number" className="input" min="0" value={formCloture.presents} onChange={e=>setFormCloture(f=>({...f,presents:e.target.value}))}/>
+            </FormField>
+            <FormField label="Nombre d'absents">
+              <input type="number" className="input" min="0" value={formCloture.absents} onChange={e=>setFormCloture(f=>({...f,absents:e.target.value}))}/>
+            </FormField>
+          </div>
+          <FormField label="Membres absents"><FC k="membresAbsents" placeholder="Nom des membres absents"/></FormField>
+          <FormField label="Observation / PV">
+            <textarea className="input h-24 resize-none" placeholder="Résumé de la séance…"
+              value={formCloture.observation||''} onChange={e=>setFormCloture(f=>({...f,observation:e.target.value}))}/>
+          </FormField>
+        </div>
+      </Modal>
+
+      {/* ── Ajouter point ODJ ────────────────────────────── */}
+      <Modal open={!!showAddPoint} onClose={()=>setShowAddPoint(null)} title="Ajouter un point à l'ordre du jour"
+        footer={<><button onClick={()=>setShowAddPoint(null)} className="btn-secondary">Annuler</button><button onClick={handleAddPoint} className="btn-primary"><Plus size={14}/>Ajouter</button></>}>
+        <div className="space-y-4">
+          <FormField label="Titre du point" required><FP k="titre" placeholder="Ex : Collecte des cotisations"/></FormField>
+          <FormField label="Type">
+            <select className="select" value={formPoint.type||'administratif'} onChange={e=>setFormPoint(f=>({...f,type:e.target.value}))}>
+              {Object.entries(typePointLabel).map(([k,l])=><option key={k} value={k}>{l}</option>)}
+            </select>
+          </FormField>
+          <FormField label="Description">
+            <textarea className="input h-20 resize-none" placeholder="Détails du point…"
+              value={formPoint.description||''} onChange={e=>setFormPoint(f=>({...f,description:e.target.value}))}/>
+          </FormField>
+        </div>
+      </Modal>
+
+      {/* ── Modifier point ODJ ───────────────────────────── */}
+      <Modal open={!!showEditPoint} onClose={()=>setShowEditPoint(null)} title="Modifier le point"
+        footer={<><button onClick={()=>setShowEditPoint(null)} className="btn-secondary">Annuler</button><button onClick={handleEditPoint} className="btn-primary"><Pencil size={14}/>Enregistrer</button></>}>
+        <div className="space-y-4">
+          <FormField label="Titre du point" required><FP k="titre"/></FormField>
+          <div className="grid grid-cols-2 gap-3">
+            <FormField label="Type">
+              <select className="select" value={formPoint.type||'administratif'} onChange={e=>setFormPoint(f=>({...f,type:e.target.value}))}>
+                {Object.entries(typePointLabel).map(([k,l])=><option key={k} value={k}>{l}</option>)}
+              </select>
+            </FormField>
+            <FormField label="Statut">
+              <select className="select" value={formPoint.statut||'prevu'} onChange={e=>setFormPoint(f=>({...f,statut:e.target.value}))}>
+                {Object.entries(statutPointLabel).map(([k,l])=><option key={k} value={k}>{l}</option>)}
+              </select>
+            </FormField>
+          </div>
+          <FormField label="Description">
+            <textarea className="input h-20 resize-none"
+              value={formPoint.description||''} onChange={e=>setFormPoint(f=>({...f,description:e.target.value}))}/>
+          </FormField>
+        </div>
+      </Modal>
+    </div>
+  );
+}

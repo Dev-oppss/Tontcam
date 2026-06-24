@@ -1,0 +1,30 @@
+.env
+.env.*
+!.env.example
+
+node_modules/
+vendor/
+dist/
+build/
+
+backend/vendor/
+backend/.env
+backend/.phpunit.cache/
+backend/storage/*.key
+backend/storage/logs/*.log
+
+frontend/node_modules/
+frontend/dist/
+frontend/vite-dev.log
+
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+PLAN.md
+script postgreSQL.sql
+TontineApp_Regles_de_Gestion.docx
+CDC_ET_TESTS.md
+cahier de charges TONTIX_020731.pdf
