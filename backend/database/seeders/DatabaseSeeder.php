@@ -40,7 +40,7 @@ class DatabaseSeeder extends Seeder
             'membre_id' => $membreId,
             'email' => 'admin@test.local',
             'password_hash' => Hash::make('password'),
-            'role' => 'admin',
+            'role' => 'super_admin',
             'actif' => true,
         ]);
     }

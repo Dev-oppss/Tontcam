@@ -2,14 +2,18 @@
 
 use App\Http\Controllers\Api\AideSocialeController;
 use App\Http\Controllers\Api\AssociationController;
+use App\Http\Controllers\Api\AuditLogController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\CaisseController;
+use App\Http\Controllers\Api\ExportController;
 use App\Http\Controllers\Api\CycleTontineController;
+use App\Http\Controllers\Api\PortalController;
 use App\Http\Controllers\Api\MembreController;
 use App\Http\Controllers\Api\PretController;
 use App\Http\Controllers\Api\ReunionController;
 use App\Http\Controllers\Api\SanctionController;
 use App\Http\Controllers\Api\TontineController;
+use App\Http\Middleware\SetAssociationContext;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/health', fn () => ['ok' => true, 'app' => 'TontineApp API']);
@@ -25,15 +29,15 @@ Route::prefix('auth')->group(function () {
     });
 });
 
-Route::middleware('auth:sanctum')->group(function () {
+Route::middleware(['auth:sanctum', SetAssociationContext::class])->group(function () {
     Route::apiResource('associations', AssociationController::class);
     Route::post('/associations/{id}/statuts', [AssociationController::class, 'update']);
     Route::post('/reglements', [AssociationController::class, 'store']);
 
     Route::apiResource('membres', MembreController::class);
-    Route::post('/membres/import-csv', [MembreController::class, 'store']);
+    Route::post('/membres/import-csv', [MembreController::class, 'importCsv']);
     Route::get('/membres/{id}/situation', [MembreController::class, 'show']);
-    Route::get('/membres/{id}/releve-pdf', [MembreController::class, 'show']);
+    Route::get('/membres/{id}/releve-pdf', [MembreController::class, 'relevePdf']);
 
     Route::apiResource('reunions', ReunionController::class);
     Route::post('/reunions/{id}/ouvrir', [ReunionController::class, 'update']);
@@ -43,7 +47,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/reunions/{id}/pieces-jointes', [ReunionController::class, 'update']);
     Route::post('/reunions/{id}/soumettre-signature', [ReunionController::class, 'update']);
     Route::post('/reunions/{id}/signer', [ReunionController::class, 'update']);
-    Route::get('/reunions/{id}/pv-pdf', [ReunionController::class, 'show']);
+    Route::get('/reunions/{id}/pv-pdf', [ReunionController::class, 'pvPdf']);
 
     Route::apiResource('tontines', TontineController::class);
     Route::post('/tontines/{id}/parts', [TontineController::class, 'update']);
@@ -52,13 +56,13 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/cycles/{id}/designer-gagnant', [CycleTontineController::class, 'update']);
     Route::post('/cycles/{id}/cloturer', [CycleTontineController::class, 'update']);
     Route::post('/cycles/{id}/bulletin', [CycleTontineController::class, 'update']);
-    Route::get('/bulletins/{id}/pdf', [CycleTontineController::class, 'show']);
+    Route::get('/bulletins/{id}/pdf', [CycleTontineController::class, 'bulletinPdf']);
 
     Route::apiResource('caisses', CaisseController::class);
     Route::post('/caisses/{id}/transactions', [CaisseController::class, 'update']);
     Route::post('/caisses/transferts', [CaisseController::class, 'store']);
     Route::get('/caisses/{id}/journal', [CaisseController::class, 'show']);
-    Route::get('/caisses/{id}/journal-pdf', [CaisseController::class, 'show']);
+    Route::get('/caisses/{id}/journal-pdf', [CaisseController::class, 'journalPdf']);
 
     Route::apiResource('prets', PretController::class);
     Route::post('/prets/{id}/valider', [PretController::class, 'update']);
@@ -73,4 +77,15 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('aides-sociales', AideSocialeController::class);
     Route::post('/aides-sociales/{id}/valider', [AideSocialeController::class, 'update']);
     Route::post('/aides-sociales/{id}/verser', [AideSocialeController::class, 'update']);
+    Route::get('/portail/membre', [PortalController::class, 'show']);
+
+    Route::middleware('role:super_admin,controleur,president,tresorier')->group(function () {
+        Route::get('/audit-log', [AuditLogController::class, 'index']);
+        Route::get('/exports/membres.csv', [ExportController::class, 'membresCsv']);
+        Route::get('/exports/membres.xlsx', [ExportController::class, 'membresXlsx']);
+        Route::get('/exports/transactions.csv', [ExportController::class, 'transactionsCsv']);
+        Route::get('/exports/transactions.xlsx', [ExportController::class, 'transactionsXlsx']);
+        Route::get('/exports/sanctions.csv', [ExportController::class, 'sanctionsCsv']);
+        Route::get('/exports/sanctions.xlsx', [ExportController::class, 'sanctionsXlsx']);
+    });
 });
