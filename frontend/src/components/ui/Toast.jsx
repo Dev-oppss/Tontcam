@@ -1,9 +1,11 @@
-import { useApp } from '../../context/AppContext';
+import { useContext } from 'react';
+import { AppContext } from '../../context/AppContext';
 import { CheckCircle2, AlertTriangle, X } from 'lucide-react';
 import clsx from 'clsx';
 
 export function Toast() {
-  const { toast } = useApp();
+  const app = useContext(AppContext);
+  const toast = app?.toast;
   if (!toast) return null;
 
   const isWarning = toast.type === 'warning';

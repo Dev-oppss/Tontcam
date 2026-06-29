@@ -1,3 +1,18 @@
+export const associations = [
+  {
+    id: 'asso-tontix-001',
+    nom: 'TONTIX Solidarité Cameroun',
+    abrege: 'TSC',
+    ville: 'Douala',
+    pays: 'Cameroun',
+    devise: 'XAF',
+    siege: 'Akwa, Douala',
+    telephone: '+237 6XX XXX XXX',
+    email: 'contact@tontix.cm',
+    statut: 'active',
+  },
+];
+
 export const membres = [];
 export const tontines = [];
 export const membresParTontine = [];

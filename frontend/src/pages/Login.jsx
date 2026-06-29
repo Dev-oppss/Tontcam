@@ -2,12 +2,20 @@ import { useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 
+const pillars = [
+  'Organisation claire',
+  'Réunions et PV',
+  'Tontines et cycles',
+  'Finance et prêts',
+  'Sanctions et social',
+];
+
 export default function Login() {
-  const { user, login, changePassword } = useApp();
+  const { user, login, changePassword, apiStatus } = useApp();
   const navigate = useNavigate();
   const [form, setForm] = useState({ email: '', password: '' });
   const [mustChange, setMustChange] = useState(false);
-  const [passwordForm, setPasswordForm] = useState({ current_password:'', password:'', password_confirmation:'' });
+  const [passwordForm, setPasswordForm] = useState({ current_password: '', password: '', password_confirmation: '' });
   const [error, setError] = useState(null);
 
   if (user) return <Navigate to="/" replace />;
@@ -20,7 +28,7 @@ export default function Login() {
       const response = await login(form);
       if (response.must_change_password) {
         setMustChange(true);
-        setPasswordForm(f => ({ ...f, current_password: form.password }));
+        setPasswordForm((f) => ({ ...f, current_password: form.password }));
         return;
       }
       navigate('/');
@@ -41,39 +49,143 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[linear-gradient(180deg,#f8fafc, #eef4fb)] p-6">
-      <div className="w-full max-w-md bg-white rounded-2xl shadow-lg p-6">
-        <h2 className="text-lg font-semibold mb-2 text-ink-900">Se connecter</h2>
-        <p className="text-xs text-ink-600 mb-4">Entrez vos identifiants pour accéder au tableau de bord</p>
+    <div className="min-h-screen app-shell flex items-stretch bg-[linear-gradient(135deg,#09142a_0%,#2147a6_42%,#fbfaf7_100%)] p-4 md:p-6">
+      <div className="absolute inset-0 opacity-[.12] surface-pattern pointer-events-none" />
 
-        {!mustChange ? <form onSubmit={submit} className="space-y-4">
+      <div className="relative z-10 grid w-full max-w-6xl mx-auto lg:grid-cols-[1.1fr_.9fr] gap-5">
+        <div className="hero-panel rounded-[32px] p-6 md:p-8 flex flex-col justify-between overflow-hidden">
           <div>
-            <label className="label">Email</label>
-            <input type="email" value={form.email} onChange={e=>setForm({...form,email:e.target.value})} className="input" />
+            <div className="flex items-center gap-3">
+              <img src="/tontix-logo.jpeg" alt="TONTIX" className="h-14 w-auto rounded-[18px] bg-white p-1 shadow-[0_12px_30px_rgba(0,0,0,.18)]" />
+              <div>
+                <p className="font-display text-xl font-semibold text-white">TONTIX</p>
+                <p className="text-xs text-white/70">Gestion solidaire, pensée pour l’Afrique</p>
+              </div>
+            </div>
+
+            <h1 className="font-display text-3xl md:text-5xl font-semibold leading-[1.02] mt-8 max-w-xl">
+              Une interface nette pour les tontines, les caisses et les membres.
+            </h1>
+            <div className="africa-band mt-5 max-w-[220px]" />
+            <p className="mt-4 text-white/[0.74] max-w-xl leading-relaxed">
+              Chaque association est la racine. Ensuite viennent les membres, réunions, tontines, finances, prêts,
+              sanctions et rapports, tous liés au même <span className="font-semibold">association_id</span>.
+            </p>
+
+            <div className="flex flex-wrap gap-2 mt-6">
+              {pillars.map((item) => (
+                <span key={item} className="hero-chip">
+                  {item}
+                </span>
+              ))}
+            </div>
+
+            <div className="mt-6 rounded-[24px] border border-white/12 bg-white/[0.08] p-4 max-w-xl">
+              <p className="text-[11px] uppercase tracking-[0.16em] text-white/55 font-bold">Parcours métier</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {['Association', 'Membres', 'Réunions', 'Tontines', 'Finance', 'Rapports'].map((step, index) => (
+                  <span key={step} className="hero-chip">
+                    {String(index + 1).padStart(2, '0')} · {step}
+                  </span>
+                ))}
+              </div>
+            </div>
           </div>
-          <div>
-            <label className="label">Mot de passe</label>
-            <input type="password" value={form.password} onChange={e=>setForm({...form,password:e.target.value})} className="input" />
+
+          <div className="grid sm:grid-cols-3 gap-3 mt-8">
+            <div className="rounded-[24px] bg-white/10 border border-white/10 p-4">
+              <p className="text-[11px] uppercase tracking-[0.14em] text-white/55 font-bold">Statut</p>
+              <p className="text-sm text-white font-semibold mt-2">Mode {apiStatus === 'disabled' ? 'local' : apiStatus}</p>
+            </div>
+            <div className="rounded-[24px] bg-white/10 border border-white/10 p-4">
+              <p className="text-[11px] uppercase tracking-[0.14em] text-white/55 font-bold">Cible</p>
+              <p className="text-sm text-white font-semibold mt-2">Connexion API Laravel</p>
+            </div>
+            <div className="rounded-[24px] bg-white/10 border border-white/10 p-4">
+              <p className="text-[11px] uppercase tracking-[0.14em] text-white/55 font-bold">Style</p>
+              <p className="text-sm text-white font-semibold mt-2">Afrique moderne</p>
+            </div>
           </div>
-          {error && <div className="text-sm text-red-600">{error}</div>}
-          <div className="flex items-center justify-between">
-            <button type="submit" className="btn-primary">Se connecter</button>
-            <button type="button" className="btn-secondary" onClick={()=>{ setForm({email:'admin@test.local',password:'password'}); }}>Remplir</button>
+        </div>
+
+        <div className="card rounded-[32px] p-6 md:p-8 self-center shadow-[0_30px_80px_rgba(16,32,27,.18)]">
+          <div className="mb-6">
+            <span className="hero-chip bg-[#e7efff] text-[#1f4aa6] border-[#cfdcff]">Accès sécurisé</span>
+            <h2 className="text-2xl font-display font-semibold text-ink-900 mt-4">
+              Se connecter
+            </h2>
+            <p className="text-sm text-ink-600/70 mt-1">
+              Entrez vos identifiants pour accéder au tableau de bord.
+            </p>
           </div>
-          <p className="text-xs text-ink-500">Mot de passe oublié et réinitialisation seront gérés par l’API Laravel.</p>
-        </form> : <form onSubmit={submitPassword} className="space-y-4">
-          <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800">Changement de mot de passe requis.</div>
-          <div>
-            <label className="label">Nouveau mot de passe</label>
-            <input type="password" value={passwordForm.password} onChange={e=>setPasswordForm({...passwordForm,password:e.target.value})} className="input" />
-          </div>
-          <div>
-            <label className="label">Confirmation</label>
-            <input type="password" value={passwordForm.password_confirmation} onChange={e=>setPasswordForm({...passwordForm,password_confirmation:e.target.value})} className="input" />
-          </div>
-          {error && <div className="text-sm text-red-600">{error}</div>}
-          <button type="submit" className="btn-primary">Changer</button>
-        </form>}
+
+          {!mustChange ? (
+            <form onSubmit={submit} className="space-y-4">
+              <div>
+                <label className="label">Email</label>
+                <input
+                  type="email"
+                  value={form.email}
+                  onChange={(e) => setForm({ ...form, email: e.target.value })}
+                  className="input"
+                />
+              </div>
+              <div>
+                <label className="label">Mot de passe</label>
+                <input
+                  type="password"
+                  value={form.password}
+                  onChange={(e) => setForm({ ...form, password: e.target.value })}
+                  className="input"
+                />
+              </div>
+              {error && <div className="text-sm text-[#a64734]">{error}</div>}
+              <div className="flex items-center justify-between gap-3">
+                <button type="submit" className="btn-primary">Se connecter</button>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => {
+                    setForm({ email: 'admin@test.local', password: 'password' });
+                  }}
+                >
+                  Remplir
+                </button>
+              </div>
+              <p className="text-xs text-ink-500 leading-relaxed">
+                Le mot de passe oublié et la réinitialisation seront gérés par l’API Laravel.
+              </p>
+            </form>
+          ) : (
+            <form onSubmit={submitPassword} className="space-y-4">
+              <div className="rounded-2xl bg-[#fcf1d7] border border-[#edd399] p-3 text-sm text-[#8a6421]">
+                Changement de mot de passe requis.
+              </div>
+              <div>
+                <label className="label">Nouveau mot de passe</label>
+                <input
+                  type="password"
+                  value={passwordForm.password}
+                  onChange={(e) => setPasswordForm({ ...passwordForm, password: e.target.value })}
+                  className="input"
+                />
+              </div>
+              <div>
+                <label className="label">Confirmation</label>
+                <input
+                  type="password"
+                  value={passwordForm.password_confirmation}
+                  onChange={(e) => setPasswordForm({ ...passwordForm, password_confirmation: e.target.value })}
+                  className="input"
+                />
+              </div>
+              {error && <div className="text-sm text-[#a64734]">{error}</div>}
+              <button type="submit" className="btn-primary w-full justify-center">
+                Changer
+              </button>
+            </form>
+          )}
+        </div>
       </div>
     </div>
   );
