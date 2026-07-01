@@ -94,16 +94,16 @@ const typeLabels = {
   banque_annuelle:'Annuelle', banque_projet:'Projet', banque_assurance:'Assurance'
 };
 
-const EMPTY_BANQUE = {
+const createEmptyBanque = () => ({
   nom: '', description: '',
   montantCotisation: '',
   operationsAutorisees: ['epargne'],
   pretAutorise: false,
   tauxInteretPret: 10,
   dureeMaxPretMois: 6,
-  amortissementPret: 'lineaire',
+  amortissementPret: 'unique',
   echeancesPret: 'mensuel',
-};
+});
 
 export default function Banques() {
   const {
@@ -116,7 +116,7 @@ export default function Banques() {
   const [enrollModal, setEnrollModal] = useState(null);
   const [showComptes, setShowComptes] = useState(null);
 
-  const [newBanque,  setNewBanque]  = useState(EMPTY_BANQUE);
+  const [newBanque,  setNewBanque]  = useState(createEmptyBanque());
   const [opForm,     setOpForm]     = useState({ montant:'', observation:'', dateOperation: new Date().toISOString().split('T')[0] });
   const [enrollForm, setEnrollForm] = useState({ idMembre:'' });
 
@@ -128,6 +128,11 @@ export default function Banques() {
   /* ─── Helpers ──────────────────────────────────────────────── */
   const comptesDeBanque     = (id) => comptesBanque.filter(c => c.idBanque === id);
   const membresDisponibles  = (id) => membres.filter(m => !comptesBanque.some(c => c.idBanque === id && c.idMembre === m.id));
+
+  const resetAddWizard = () => {
+    setNewBanque(createEmptyBanque());
+    setStep(1);
+  };
 
   const toggleOp = (opId) => {
     setNewBanque(prev => {
@@ -142,8 +147,7 @@ export default function Banques() {
   };
 
   const openAddModal = () => {
-    setNewBanque(EMPTY_BANQUE);
-    setStep(1);
+    resetAddWizard();
     setAddModal(true);
   };
 
@@ -176,13 +180,12 @@ export default function Banques() {
       pretAutorise,
       tauxInteretPret: pretAutorise ? Number(newBanque.tauxInteretPret || 0) : 0,
       dureeMaxPretMois: pretAutorise ? Number(newBanque.dureeMaxPretMois || 0) : 0,
-      amortissementPret: pretAutorise ? newBanque.amortissementPret || 'lineaire' : 'lineaire',
+      amortissementPret: pretAutorise ? newBanque.amortissementPret || 'unique' : 'unique',
       echeancesPret: pretAutorise ? newBanque.echeancesPret || 'mensuel' : 'mensuel',
       totalSolde: 0,
     });
     setAddModal(false);
-    setNewBanque(EMPTY_BANQUE);
-    setStep(1);
+    resetAddWizard();
   };
 
   /* ─── Inscription membre ───────────────────────────────────── */
@@ -377,7 +380,8 @@ export default function Banques() {
       {/* ══ MODAL NOUVELLE BANQUE — wizard 2 étapes ══════════ */}
       <Modal
         open={addModal}
-        onClose={() => { setAddModal(false); setStep(1); }}
+        onClose={() => { setAddModal(false); resetAddWizard(); }}
+        size="xl"
         title={
           <div className="flex items-center gap-3">
             <span>Nouvelle caisse</span>
@@ -471,7 +475,7 @@ export default function Banques() {
               Sélectionnez une ou plusieurs options. Cela détermine les actions disponibles pour les membres.
             </p>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-[340px] overflow-y-auto pr-1">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pr-1">
               {ALL_OPERATIONS.map(op => {
                 const selected = newBanque.operationsAutorisees?.includes(op.id);
                 const Icon = op.icon;
@@ -558,7 +562,7 @@ export default function Banques() {
                       value={newBanque.amortissementPret}
                       onChange={e => setNewBanque(f => ({ ...f, amortissementPret: e.target.value }))}
                     >
-                      <option value="lineaire">Linéaire</option>
+                      <option value="unique">Remboursement unique</option>
                       <option value="echelonne">Échelonné</option>
                     </select>
                   </FormField>
@@ -639,7 +643,7 @@ export default function Banques() {
                   <p className="text-sm">Aucun membre inscrit dans cette caisse</p>
                 </div>
               ) : (
-                <div className="space-y-1.5 max-h-64 overflow-y-auto">
+                <div className="space-y-1.5">
                   {comptes.map(c => {
                     const opsM = opsB.filter(o => o.idMembre === c.idMembre);
                     return (

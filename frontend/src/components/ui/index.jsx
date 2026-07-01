@@ -53,8 +53,16 @@ export function Table({ headers, children, empty }) {
 }
 
 /* ── Modal ──────────────────────────────────────────────────── */
-export function Modal({ open, onClose, title, children, footer }) {
+export function Modal({ open, onClose, title, children, footer, size = 'md' }) {
   const bodyRef = useRef(null);
+
+  const sizeStyle = {
+    sm:  { maxWidth: '480px' },
+    md:  { maxWidth: '680px' },
+    lg:  { maxWidth: '860px' },
+    xl:  { maxWidth: '1100px' },
+    full:{ maxWidth: '100rem' },
+  }[size] || { maxWidth: '680px' };
 
   useEffect(() => {
     if (!open) return;
@@ -71,7 +79,7 @@ export function Modal({ open, onClose, title, children, footer }) {
   if (!open) return null;
   return (
     <div className="modal-overlay scale-in" onClick={onClose}>
-      <div className="modal-box" onClick={e => e.stopPropagation()}>
+      <div className="modal-box" style={sizeStyle} onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-4 py-3 border-b border-surface-100">
           <h3 className="font-semibold text-ink-900 text-base">{title}</h3>
           <button onClick={onClose} className="w-8 h-8 flex items-center justify-center text-ink-600/50 hover:text-ink-800 hover:bg-surface-100 rounded-lg transition-all">
@@ -80,7 +88,9 @@ export function Modal({ open, onClose, title, children, footer }) {
         </div>
         <div ref={bodyRef} className="modal-body px-4 py-3.5">{children}</div>
         {footer && (
-          <div className="px-4 py-3 border-t border-surface-100 flex justify-end gap-3 bg-surface-50 rounded-b-[18px]">{footer}</div>
+          <div className="sticky bottom-0 z-10 px-4 py-3 border-t border-surface-100 flex justify-end gap-3 bg-surface-50 rounded-b-[18px] shadow-[0_-8px_24px_rgba(16,24,39,0.06)]">
+            {footer}
+          </div>
         )}
       </div>
     </div>

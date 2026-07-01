@@ -23,6 +23,7 @@ export default function Prets() {
 
   const sMap = { en_cours: 'blue', en_retard: 'red', rembourse: 'green' };
   const sLbl = { en_cours: 'En cours', en_retard: 'En retard', rembourse: 'Remboursé' };
+  const formatAmortissement = (value) => (value === 'echelonne' ? 'Échelonné' : 'Remboursement unique');
 
   const calcEcheance = (datePret, dureeMois) => {
     if (!datePret || !dureeMois) return '';
@@ -119,7 +120,7 @@ export default function Prets() {
       montantTotal: pretSimule.montantTotal,
       montantMensuel: pretSimule.mensualiteMoyenne,
       ficheAmortissement: pretSimule.ficheAmortissement,
-      amortissementPret: caisseSelectionnee?.amortissementPret || 'lineaire',
+      amortissementPret: caisseSelectionnee?.amortissementPret || 'unique',
       echeancesPret: caisseSelectionnee?.echeancesPret || 'mensuel',
     });
     setAdd(false);
@@ -156,7 +157,7 @@ export default function Prets() {
             <div key={c.id} className="rounded-2xl border border-surface-200 bg-surface-50 p-4">
               <p className="font-semibold text-ink-900">{c.nom}</p>
               <p className="text-xs text-ink-600/55 mt-1">Taux: {c.tauxInteretPret || 0}% · Durée max: {c.dureeMaxPretMois || 0} mois</p>
-              <p className="text-xs text-ink-600/55 mt-1">Amortissement: {c.amortissementPret || 'lineaire'}</p>
+              <p className="text-xs text-ink-600/55 mt-1">Amortissement: {formatAmortissement(c.amortissementPret)}</p>
             </div>
           ))}
         </div>

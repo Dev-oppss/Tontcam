@@ -92,6 +92,11 @@ export default function Tontines() {
     activeTab === 'toutes' ? true : t.typeAttribution === activeTab
   );
   const caissesMap = Object.fromEntries((caisses || []).map((c) => [c.id, c]));
+  const caissesTontine = (caisses || []).filter((c) =>
+    c?.type === 'tontine' ||
+    c?.type === 'banque_tontine' ||
+    (c?.operationsAutorisees || []).includes('cotisation')
+  );
 
   const getTourPlanning   = (id) => (planningTours || []).filter(p => p.idTontine === id).sort((a,b) => a.numeroTour - b.numeroTour);
   const getMembresActifs  = (id) => membresParTontine.filter(mt => mt.idTontine === id && mt.statut === 'actif');
@@ -729,7 +734,7 @@ export default function Tontines() {
             <FormField label="Caisse liée" required>
               <S k="caisseId">
                 <option value="">Sélectionner une caisse…</option>
-                {(caisses || []).map((c) => <option key={c.id} value={c.id}>{c.nom}</option>)}
+                {caissesTontine.map((c) => <option key={c.id} value={c.id}>{c.nom}</option>)}
               </S>
             </FormField>
           </div>
@@ -783,7 +788,7 @@ export default function Tontines() {
           <FormField label="Caisse liée" required>
             <S k="caisseId">
               <option value="">Sélectionner une caisse…</option>
-              {(caisses || []).map((c) => <option key={c.id} value={c.id}>{c.nom}</option>)}
+              {caissesTontine.map((c) => <option key={c.id} value={c.id}>{c.nom}</option>)}
             </S>
           </FormField>
           <div className="grid grid-cols-2 gap-3">
