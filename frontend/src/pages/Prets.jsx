@@ -1,17 +1,17 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Plus, HandCoins, CreditCard, ChevronDown, ChevronUp, Coins, TrendingUp, Users, CheckCircle } from 'lucide-react';
 import { fmt, fmtDate } from '../data/mockData';
 import { useApp } from '../context/AppContext';
 import { PageHeader, Table, Badge, Modal, FormField } from '../components/ui/index';
 
 export default function Prets() {
-  const { membres, prets, comptesBanque, addPret, rembourserPret, distribuerInteretsPret } = useApp();
+  const { membres, prets, comptesBanque, caisses, addPret, rembourserPret, distribuerInteretsPret } = useApp();
 
   const [add,        setAdd]        = useState(false);
   const [remModal,   setRemModal]   = useState(null);
   const [detailPret, setDetailPret] = useState(null);
   const [form,       setForm]       = useState({
-    idMembre: '', montantPret: '', tauxInteret: 10, dureeMois: 3,
+    idMembre: '', caisseId: '', montantPret: '', tauxInteret: 10, dureeMois: 3,
     datePret: new Date().toISOString().split('T')[0],
     dateEcheance: '', garantie: "Caution d'un membre", observation: '',
   });
@@ -23,12 +23,55 @@ export default function Prets() {
 
   const sMap = { en_cours: 'blue', en_retard: 'red', rembourse: 'green' };
   const sLbl = { en_cours: 'En cours', en_retard: 'En retard', rembourse: 'Remboursé' };
+  const formatAmortissement = (value) => (value === 'echelonne' ? 'Échelonné' : 'Remboursement unique');
 
   const calcEcheance = (datePret, dureeMois) => {
     if (!datePret || !dureeMois) return '';
     const d = new Date(datePret);
     d.setMonth(d.getMonth() + Number(dureeMois));
     return d.toISOString().split('T')[0];
+  };
+
+  const buildAmortization = (capitalValue, tauxValue, dureeValue, dateValue) => {
+    const capital = Number(capitalValue || 0);
+    const taux = Number(tauxValue || 0);
+    const duree = Math.max(1, Number(dureeValue || 0));
+    if (capital <= 0 || duree <= 0) return null;
+
+    const totalInteret = Math.round((capital * taux) / 100);
+    const montantTotal = capital + totalInteret;
+    const baseCapital = Math.floor(capital / duree);
+    const resteCapital = capital - baseCapital * duree;
+    const mensualiteBase = Math.floor(montantTotal / duree);
+    const resteMensualite = montantTotal - mensualiteBase * duree;
+
+    let soldeRestant = capital;
+    const ficheAmortissement = Array.from({ length: duree }, (_, index) => {
+      const capitalMois = baseCapital + (index < resteCapital ? 1 : 0);
+      const totalMois = mensualiteBase + (index < resteMensualite ? 1 : 0);
+      const interetMois = Math.max(0, totalMois - capitalMois);
+      soldeRestant = Math.max(0, soldeRestant - capitalMois);
+
+      return {
+        mois: index + 1,
+        dateEcheance: calcEcheance(dateValue, index + 1),
+        capital: capitalMois,
+        interet: interetMois,
+        total: totalMois,
+        reste: soldeRestant,
+      };
+    });
+
+    return {
+      capital,
+      taux,
+      duree,
+      totalInteret,
+      montantTotal,
+      mensualiteMoyenne: mensualiteBase + (resteMensualite > 0 ? 1 : 0),
+      dateEcheance: calcEcheance(dateValue, duree),
+      ficheAmortissement,
+    };
   };
 
   const onDureeChange = (val) => setForm(f => ({ ...f, dureeMois: val, dateEcheance: calcEcheance(f.datePret, val) }));
@@ -51,17 +94,37 @@ export default function Prets() {
     }));
   };
 
-  const montantInteret = form.montantPret
-    ? Math.round(Number(form.montantPret) * Number(form.tauxInteret) / 100)
-    : 0;
+  const pretSimule = useMemo(
+    () => buildAmortization(form.montantPret, form.tauxInteret, form.dureeMois, form.datePret),
+    [form.montantPret, form.tauxInteret, form.dureeMois, form.datePret]
+  );
+  const montantInteret = pretSimule?.totalInteret || 0;
   const repartitionSimulee = montantInteret > 0 ? simulerRepartition(montantInteret) : [];
+  const caissesPret = (caisses || []).filter((c) => c.pretAutorise);
+  const caisseSelectionnee = caissesPret.find((c) => c.id === form.caisseId);
 
   const handleAdd = () => {
-    if (!form.idMembre || !form.montantPret) return;
-    const m = membres.find(x => x.id === Number(form.idMembre));
-    addPret({ ...form, nomMembre: `${m.nom} ${m.prenom}`, idMembre: Number(form.idMembre) });
+    if (!form.idMembre || !form.montantPret || !form.caisseId) return;
+    if (!pretSimule) return;
+    const m = membres.find(x => x.id === form.idMembre);
+    addPret({
+      ...form,
+      montantPret: Number(form.montantPret),
+      tauxInteret: Number(form.tauxInteret),
+      dureeMois: Number(form.dureeMois),
+      nomMembre: `${m.nom} ${m.prenom}`,
+      idMembre: form.idMembre,
+      caisseId: form.caisseId,
+      dateEcheance: pretSimule.dateEcheance,
+      montantInteret: pretSimule.totalInteret,
+      montantTotal: pretSimule.montantTotal,
+      montantMensuel: pretSimule.mensualiteMoyenne,
+      ficheAmortissement: pretSimule.ficheAmortissement,
+      amortissementPret: caisseSelectionnee?.amortissementPret || 'unique',
+      echeancesPret: caisseSelectionnee?.echeancesPret || 'mensuel',
+    });
     setAdd(false);
-    setForm({ idMembre: '', montantPret: '', tauxInteret: 10, dureeMois: 3, datePret: new Date().toISOString().split('T')[0], dateEcheance: '', garantie: "Caution d'un membre", observation: '' });
+    setForm({ idMembre: '', caisseId: '', montantPret: '', tauxInteret: 10, dureeMois: 3, datePret: new Date().toISOString().split('T')[0], dateEcheance: '', garantie: "Caution d'un membre", observation: '' });
   };
 
   const handleRembourser = () => {
@@ -78,8 +141,27 @@ export default function Prets() {
   return (
     <div className="space-y-6">
       <PageHeader title="Prêts & Crédits"
-        subtitle="Intérêts distribués aux membres selon leurs parts en banque — système bancaire intelligent"
+        subtitle="Prêts ouverts uniquement depuis les caisses autorisées"
         action={<button onClick={() => setAdd(true)} className="btn-primary"><Plus size={15}/> Nouveau prêt</button>}/>
+
+      <div className="card border-l-4 border-l-primary-500">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-ink-900">Caisses autorisées au prêt</p>
+            <p className="text-xs text-ink-600/60 mt-1">Chaque caisse peut définir son taux, sa durée maximale et son mode d’amortissement.</p>
+          </div>
+          <p className="text-sm font-bold text-primary-700">{caissesPret.length} caisse(s)</p>
+        </div>
+        <div className="mt-4 grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {caissesPret.map((c) => (
+            <div key={c.id} className="rounded-2xl border border-surface-200 bg-surface-50 p-4">
+              <p className="font-semibold text-ink-900">{c.nom}</p>
+              <p className="text-xs text-ink-600/55 mt-1">Taux: {c.tauxInteretPret || 0}% · Durée max: {c.dureeMaxPretMois || 0} mois</p>
+              <p className="text-xs text-ink-600/55 mt-1">Amortissement: {formatAmortissement(c.amortissementPret)}</p>
+            </div>
+          ))}
+        </div>
+      </div>
 
       <div className="grid grid-cols-3 gap-4">
         <div className="card text-center border-t-4 border-t-primary-400">
@@ -190,7 +272,7 @@ export default function Prets() {
                             </p>
                           </div>
                           {(p.repartitionInterets || []).length === 0 ? (
-                            <p className="text-xs text-gray-400 italic">Aucune répartition — aucun membre avec solde en banque au moment du prêt.</p>
+                            <p className="text-xs text-gray-400 italic">Aucune répartition — aucun membre avec solde en caisse au moment du prêt.</p>
                           ) : (
                             <>
                               <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
@@ -218,6 +300,52 @@ export default function Prets() {
                               )}
                             </>
                           )}
+
+                          <div className="mt-4 pt-4 border-t border-purple-100">
+                            <div className="flex items-center justify-between gap-3 mb-2">
+                              <p className="text-xs font-bold text-purple-700 uppercase tracking-wide">Fiche d'amortissement</p>
+                              <p className="text-xs text-purple-500">
+                                {p.montantMensuel ? `${fmt(p.montantMensuel)} / mois` : `${fmt(Math.round((p.montantTotal || 0) / Math.max(1, p.dureeMois || 1)))} / mois`}
+                              </p>
+                            </div>
+                            {(() => {
+                              const fichePret = (p.ficheAmortissement && p.ficheAmortissement.length > 0)
+                                ? p.ficheAmortissement
+                                : (buildAmortization(p.montantPret, p.tauxInteret, p.dureeMois, p.datePret)?.ficheAmortissement || []);
+                              return fichePret.length > 0 ? (
+                                <div className="rounded-xl border border-purple-100 bg-white overflow-hidden">
+                                  <div className="overflow-x-auto max-h-56 overflow-y-auto">
+                                    <table className="w-full text-[11px]">
+                                      <thead className="bg-purple-50 sticky top-0 z-10">
+                                        <tr>
+                                          <th className="th">Mois</th>
+                                          <th className="th">Échéance</th>
+                                          <th className="th">Capital</th>
+                                          <th className="th">Intérêt</th>
+                                          <th className="th">Mensualité</th>
+                                          <th className="th">Reste</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody className="divide-y divide-purple-50">
+                                        {fichePret.map((ligne) => (
+                                          <tr key={ligne.mois} className="tr">
+                                            <td className="td font-semibold">{ligne.mois}</td>
+                                            <td className="td text-ink-600/70">{fmtDate(ligne.dateEcheance)}</td>
+                                            <td className="td font-medium">{fmt(ligne.capital)}</td>
+                                            <td className="td font-medium text-amber-600">{fmt(ligne.interet)}</td>
+                                            <td className="td font-semibold text-primary-700">{fmt(ligne.total)}</td>
+                                            <td className="td font-semibold text-ink-800">{fmt(ligne.reste)}</td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </div>
+                              ) : (
+                                <p className="text-xs text-purple-500 italic">Aucune fiche d'amortissement disponible.</p>
+                              );
+                            })()}
+                          </div>
                         </td>
                       </tr>
                     )}
@@ -270,6 +398,23 @@ export default function Prets() {
               ))}
             </select>
           </FormField>
+          <FormField label="Caisse source" required>
+            <select className="select" value={form.caisseId} onChange={e => {
+              const caisse = caissesPret.find((c) => c.id === e.target.value);
+              setForm(f => ({
+                ...f,
+                caisseId: e.target.value,
+                tauxInteret: caisse?.tauxInteretPret ?? f.tauxInteret,
+                dureeMois: caisse?.dureeMaxPretMois || f.dureeMois,
+                dateEcheance: caisse?.dureeMaxPretMois ? calcEcheance(f.datePret, caisse.dureeMaxPretMois) : f.dateEcheance,
+              }));
+            }}>
+              <option value="">Sélectionner une caisse…</option>
+              {caissesPret.map(c => (
+                <option key={c.id} value={c.id}>{c.nom} · {c.tauxInteretPret || 0}% · {c.dureeMaxPretMois || 0} mois</option>
+              ))}
+            </select>
+          </FormField>
           <div className="grid grid-cols-2 gap-3">
             <FormField label="Montant (FCFA)" required>
               <input type="number" className="input" placeholder="500000" value={form.montantPret}
@@ -285,11 +430,14 @@ export default function Prets() {
               <div className="flex justify-between text-sm"><span className="text-gray-600">Capital :</span><span className="font-medium">{fmt(Number(form.montantPret))}</span></div>
               <div className="flex justify-between text-sm"><span className="text-gray-600">Intérêts ({form.tauxInteret}%) :</span><span className="font-medium text-purple-600">{fmt(montantInteret)}</span></div>
               <div className="flex justify-between text-sm pt-1 border-t border-primary-200"><span className="font-bold text-gray-700">Total :</span><span className="font-bold text-primary-700">{fmt(Number(form.montantPret) + montantInteret)}</span></div>
+              {caisseSelectionnee && (
+                <p className="text-xs text-primary-700 mt-1">Caisse source: {caisseSelectionnee.nom}</p>
+              )}
             </div>
           )}
           {repartitionSimulee.length > 0 && (
             <div className="p-3 bg-purple-50 rounded-xl border border-purple-100">
-              <p className="text-xs font-bold text-purple-700 mb-2 flex items-center gap-1"><Coins size={12}/> Répartition des intérêts selon parts en banque</p>
+              <p className="text-xs font-bold text-purple-700 mb-2 flex items-center gap-1"><Coins size={12}/> Répartition des intérêts selon parts en caisse</p>
               <div className="space-y-1">
                 {repartitionSimulee.map((r, i) => (
                   <div key={i} className="flex justify-between text-xs">
@@ -302,7 +450,7 @@ export default function Prets() {
           )}
           {repartitionSimulee.length === 0 && form.montantPret && (
             <div className="p-3 bg-amber-50 rounded-xl border border-amber-100 text-xs text-amber-700">
-               Aucun membre avec solde en banque. Les intérêts ne seront pas distribués automatiquement.
+               Aucun membre avec solde en caisse. Les intérêts ne seront pas distribués automatiquement.
             </div>
           )}
           <div className="grid grid-cols-2 gap-3">
@@ -318,6 +466,65 @@ export default function Prets() {
               onChange={e => setForm(f => ({ ...f, dateEcheance: e.target.value }))}/>
             {form.datePret && form.dureeMois && <p className="text-xs text-primary-600 mt-1"> Auto: {fmtDate(calcEcheance(form.datePret, form.dureeMois))}</p>}
           </FormField>
+          {pretSimule && (
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                <div className="p-3 bg-primary-50 rounded-xl border border-primary-100">
+                  <p className="text-[11px] uppercase tracking-wide text-primary-700 font-semibold">Montant du prêt</p>
+                  <p className="text-sm font-bold text-primary-800 mt-1">{fmt(pretSimule.capital)}</p>
+                </div>
+                <div className="p-3 bg-amber-50 rounded-xl border border-amber-100">
+                  <p className="text-[11px] uppercase tracking-wide text-amber-700 font-semibold">Total intérêts</p>
+                  <p className="text-sm font-bold text-amber-800 mt-1">{fmt(pretSimule.totalInteret)}</p>
+                </div>
+                <div className="p-3 bg-green-50 rounded-xl border border-green-100">
+                  <p className="text-[11px] uppercase tracking-wide text-green-700 font-semibold">Total à rembourser</p>
+                  <p className="text-sm font-bold text-green-800 mt-1">{fmt(pretSimule.montantTotal)}</p>
+                </div>
+                <div className="p-3 bg-surface-50 rounded-xl border border-surface-200">
+                  <p className="text-[11px] uppercase tracking-wide text-ink-600 font-semibold">Montant par mois</p>
+                  <p className="text-sm font-bold text-ink-900 mt-1">{fmt(pretSimule.mensualiteMoyenne)}</p>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-surface-200 overflow-hidden bg-white">
+                <div className="flex items-center justify-between px-3 py-2.5 bg-surface-50 border-b border-surface-200">
+                  <p className="text-xs font-bold uppercase tracking-wide text-ink-700">Fiche d'amortissement</p>
+                  <p className="text-[11px] text-ink-600/50">{pretSimule.duree} mois</p>
+                </div>
+                <div className="overflow-x-auto max-h-56 overflow-y-auto">
+                  <table className="w-full text-xs">
+                    <thead className="bg-white sticky top-0 z-10">
+                      <tr className="border-b border-surface-100">
+                        <th className="th">Mois</th>
+                        <th className="th">Échéance</th>
+                        <th className="th">Capital</th>
+                        <th className="th">Intérêt</th>
+                        <th className="th">Mensualité</th>
+                        <th className="th">Reste</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-surface-100">
+                      {pretSimule.ficheAmortissement.map((ligne) => (
+                        <tr key={ligne.mois} className="tr">
+                          <td className="td font-semibold">{ligne.mois}</td>
+                          <td className="td text-ink-600/70">{fmtDate(ligne.dateEcheance)}</td>
+                          <td className="td font-medium">{fmt(ligne.capital)}</td>
+                          <td className="td font-medium text-amber-600">{fmt(ligne.interet)}</td>
+                          <td className="td font-semibold text-primary-700">{fmt(ligne.total)}</td>
+                          <td className="td font-semibold text-ink-800">{fmt(ligne.reste)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {caisseSelectionnee && (
+                <p className="text-xs text-primary-700">Caisse source: {caisseSelectionnee.nom}</p>
+              )}
+            </div>
+          )}
           <FormField label="Garantie">
             <select className="select" value={form.garantie} onChange={e => setForm(f => ({ ...f, garantie: e.target.value }))}>
               <option>Caution d'un membre</option>

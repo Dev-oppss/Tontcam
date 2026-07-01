@@ -605,7 +605,7 @@ function RapportSeance({ reunion, transactions, membres, onClose }) {
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-box max-w-3xl w-full" onClick={e => e.stopPropagation()}>
+      <div className="modal-box max-w-[100rem] w-full" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
           <div className="flex items-center gap-2">
             <FileText size={18} className="text-primary-600"/>
@@ -621,7 +621,7 @@ function RapportSeance({ reunion, transactions, membres, onClose }) {
           </div>
         </div>
 
-        <div id="rapport-print" className="overflow-y-auto max-h-[80vh] p-6 space-y-5 text-sm">
+        <div id="rapport-print" className="flex-1 min-h-0 overflow-y-auto p-6 space-y-5 text-sm">
           {/* En-tête officiel */}
           <div className="text-center border-b-2 border-primary-200 pb-4">
             <p className="text-xs text-gray-400 uppercase tracking-widest mb-1">Procès-verbal de séance</p>

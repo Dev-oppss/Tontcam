@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { fmt, fmtDate } from '../data/mockData';
 import { useApp } from '../context/AppContext';
-import { PageHeader, Badge } from '../components/ui/index';
+import { PageHeader, Badge, Modal, FormField } from '../components/ui/index';
 import clsx from 'clsx';
 
 // ── Catégories de flux financiers (hors cotisations tontine) ──
@@ -17,8 +17,8 @@ const CAT_CFG = {
   remboursement_pret:{ label:'Remboursement prêt',  icon:'',  color:'blue',   dir:'entree', bg:'bg-blue-50',    text:'text-blue-700'   },
   remboursement:    { label:'Remboursement prêt',   icon:'',  color:'blue',   dir:'entree', bg:'bg-blue-50',    text:'text-blue-700'   },
   pret_accorde:     { label:'Prêt accordé',         icon:'',  color:'orange', dir:'sortie', bg:'bg-orange-50',  text:'text-orange-700' },
-  depot_banque:     { label:'Dépôt banque',         icon:'',  color:'teal',   dir:'entree', bg:'bg-teal-50',    text:'text-teal-700'   },
-  banque_libre:     { label:'Versement banque',     icon:'',  color:'teal',   dir:'entree', bg:'bg-teal-50',    text:'text-teal-700'   },
+  depot_banque:     { label:'Dépôt caisse',         icon:'',  color:'teal',   dir:'entree', bg:'bg-teal-50',    text:'text-teal-700'   },
+  banque_libre:     { label:'Versement caisse',     icon:'',  color:'teal',   dir:'entree', bg:'bg-teal-50',    text:'text-teal-700'   },
   aide_sociale:     { label:'Fond Assurance',       icon:'',  color:'pink',   dir:'sortie', bg:'bg-pink-50',    text:'text-pink-700'   },
   attribution_tour: { label:'Versement pot',        icon:'',  color:'green',  dir:'sortie', bg:'bg-green-50',   text:'text-green-700'  },
   divers_entree:    { label:'Autre recette',         icon:'',  color:'purple', dir:'entree', bg:'bg-purple-50',  text:'text-purple-700' },
@@ -26,7 +26,7 @@ const CAT_CFG = {
 };
 
 const FLUX_SECTIONS = [
-  { key:'banqueLibre',    label:'Banque Libre A',           icon: Building2,    color:'primary' },
+  { key:'banqueLibre',    label:'Caisse principale',        icon: Building2,    color:'primary' },
   { key:'amendes',        label:'Amendes & Sanctions',       icon: ShieldAlert,  color:'amber'   },
   { key:'encheres',       label:'Bénéfices Enchères',        icon: Gavel,        color:'yellow'  },
   { key:'prets',          label:'Prêts & Intérêts',         icon: HandCoins,    color:'blue'    },
@@ -35,7 +35,7 @@ const FLUX_SECTIONS = [
 
 export default function Caisse() {
   const {
-    caisseJournal, banques, comptesBanque, operationsBanque,
+    caisseJournal, banques, comptesBanque, operationsBanque, transfertsCaisse, transfererCaisse,
     prets, sanctions, encheres, rotations, fondAssurance,
     seanceTransactions,
   } = useApp();
@@ -43,9 +43,18 @@ export default function Caisse() {
   const [activeSection, setActiveSection] = useState('apercu');
   const [filterCat,    setFilterCat]    = useState('tous');
   const [showJournal,  setShowJournal]  = useState(false);
+  const [showTransfer, setShowTransfer] = useState(false);
+  const [transferForm, setTransferForm] = useState({
+    caisseSourceId: '',
+    caisseDestinationId: '',
+    montant: '',
+    motif: '',
+    dateTransfert: new Date().toISOString().split('T')[0],
+  });
 
-  // ── Banque Libre A ──
-  const banqueLibre = banques.find(b => b.type === 'banque_libre') || banques[0];
+  // ── Caisse principale ──
+  const caisseCentrale = banques.find(b => b.type === 'centrale') || banques[0];
+  const banqueLibre = caisseCentrale;
   const soldesBanques = banques.map(b => ({ ...b, comptes: comptesBanque.filter(c => c.idBanque === b.id) }));
 
   // ── Flux amendes ──
@@ -88,6 +97,26 @@ export default function Caisse() {
   const totalDepotsBL  = opsBanqueLibre.filter(o => o.typeOperation === 'depot' || o.typeOperation === 'depot_collectif').reduce((s, o) => s + o.montant, 0);
   const totalRetraitBL = opsBanqueLibre.filter(o => o.typeOperation === 'retrait').reduce((s, o) => s + o.montant, 0);
 
+  const handleTransfer = () => {
+    if (!transferForm.caisseSourceId || !transferForm.caisseDestinationId || transferForm.caisseSourceId === transferForm.caisseDestinationId) return;
+    if (!transferForm.montant || Number(transferForm.montant) <= 0) return;
+    transfererCaisse({
+      caisseSourceId: transferForm.caisseSourceId,
+      caisseDestinationId: transferForm.caisseDestinationId,
+      montant: Number(transferForm.montant),
+      motif: transferForm.motif,
+      dateTransfert: transferForm.dateTransfert,
+    });
+    setShowTransfer(false);
+    setTransferForm({
+      caisseSourceId: '',
+      caisseDestinationId: '',
+      montant: '',
+      motif: '',
+      dateTransfert: new Date().toISOString().split('T')[0],
+    });
+  };
+
   const exportCSV = () => {
     const rows = [['Date','Opération','Catégorie','Entrée','Sortie','Solde cumulé']];
     let cumul = 0;
@@ -105,7 +134,8 @@ export default function Caisse() {
 
   const tabs = [
     { id:'apercu',    label:'Aperçu général',   icon: BarChart2   },
-    { id:'banque',    label:'Banque Libre A',    icon: Building2   },
+    { id:'banque',    label:'Caisse centrale',    icon: Building2   },
+    { id:'transferts', label:'Transferts',       icon: RefreshCw    },
     { id:'amendes',   label:'Amendes',           icon: ShieldAlert },
     { id:'prets',     label:'Prêts',             icon: HandCoins   },
     { id:'encheres',  label:'Enchères',          icon: Gavel       },
@@ -116,11 +146,16 @@ export default function Caisse() {
     <div className="space-y-6">
       <PageHeader
         title="Caisse Centrale"
-        subtitle="État financier global — hors cotisations tontine. Banque Libre A = caisse principale."
+        subtitle="État financier global — hors cotisations tontine. Caisse principale = vue centrale."
         action={
-          <button onClick={exportCSV} className="btn-secondary text-xs py-1.5 flex items-center gap-1.5">
-            <Download size={13}/> Exporter CSV
-          </button>
+          <div className="flex gap-2">
+            <button onClick={() => setShowTransfer(true)} className="btn-primary text-xs py-1.5 flex items-center gap-1.5">
+              <RefreshCw size={13}/> Transférer
+            </button>
+            <button onClick={exportCSV} className="btn-secondary text-xs py-1.5 flex items-center gap-1.5">
+              <Download size={13}/> Exporter CSV
+            </button>
+          </div>
         }
       />
 
@@ -129,7 +164,7 @@ export default function Caisse() {
         <div className="card text-center border-t-4 border-t-primary-500">
           <Building2 size={18} className="mx-auto mb-1 text-primary-500"/>
           <p className="text-xl font-black text-primary-600">{fmt(banqueLibre?.totalSolde || 0)}</p>
-          <p className="text-xs text-gray-400 mt-0.5">Banque Libre A</p>
+          <p className="text-xs text-gray-400 mt-0.5">Caisse centrale</p>
           <p className="text-xs text-gray-300 mt-0.5">Épargne + flux</p>
         </div>
         <div className="card text-center border-t-4 border-t-amber-400">
@@ -188,7 +223,7 @@ export default function Caisse() {
 
           {/* Toutes les banques */}
           <div className="card">
-            <h3 className="font-bold text-gray-800 mb-4 flex items-center gap-2"><Building2 size={16} className="text-primary-500"/> État des Banques</h3>
+            <h3 className="font-bold text-gray-800 mb-4 flex items-center gap-2"><Building2 size={16} className="text-primary-500"/> État des caisses</h3>
             <div className="space-y-3">
               {soldesBanques.map(b => {
                 const isLibre = b.type === 'banque_libre';
@@ -231,7 +266,7 @@ export default function Caisse() {
             <div className="card border-l-4 border-l-amber-400">
               <div className="flex items-center justify-between mb-3">
                 <p className="font-bold text-sm text-gray-800 flex items-center gap-1.5"><ShieldAlert size={14} className="text-amber-500"/>Amendes</p>
-                <span className="text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded-full">↓ Banque Libre</span>
+                <span className="text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded-full">↓ Caisse centrale</span>
               </div>
               <p className="text-2xl font-black text-amber-600">{fmt(totalAmendes)}</p>
               <p className="text-xs text-gray-400 mt-1">{sanctionsPayees.length} amende(s) payée(s)</p>
@@ -242,7 +277,7 @@ export default function Caisse() {
             <div className="card border-l-4 border-l-yellow-400">
               <div className="flex items-center justify-between mb-3">
                 <p className="font-bold text-sm text-gray-800 flex items-center gap-1.5"><Gavel size={14} className="text-yellow-500"/>Bénéfices Enchères</p>
-                <span className="text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded-full">↓ Banque Libre</span>
+                <span className="text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded-full">↓ Caisse centrale</span>
               </div>
               <p className="text-2xl font-black text-yellow-600">{fmt(totalBenefEnchere)}</p>
               <p className="text-xs text-gray-400 mt-1">{rotationsAvecEnchere.length} enchère(s) attribuée(s)</p>
@@ -252,7 +287,7 @@ export default function Caisse() {
             <div className="card border-l-4 border-l-blue-400">
               <div className="flex items-center justify-between mb-3">
                 <p className="font-bold text-sm text-gray-800 flex items-center gap-1.5"><HandCoins size={14} className="text-blue-500"/>Prêts & Intérêts</p>
-                <span className="text-xs px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full">⇌ Banque Libre</span>
+                <span className="text-xs px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full">⇌ Caisse centrale</span>
               </div>
               <div className="space-y-1 text-xs">
                 <div className="flex justify-between"><span className="text-gray-500">Prêts accordés</span><span className="font-bold text-red-500">−{fmt(totalPretsAccordes)}</span></div>
@@ -393,7 +428,7 @@ export default function Caisse() {
               <p className="text-xs text-red-400">{sanctionsImpa.length} en attente</p>
             </div>
           </div>
-          <p className="text-xs text-gray-400 flex items-center gap-1.5 px-1"><CheckCircle size={11} className="text-green-500"/>Toutes les amendes payées sont versées automatiquement à la Banque Libre A</p>
+            <p className="text-xs text-gray-400 flex items-center gap-1.5 px-1"><CheckCircle size={11} className="text-green-500"/>Toutes les amendes payées sont versées automatiquement à la caisse centrale</p>
           <div className="card p-0 overflow-hidden">
             <div className="px-4 py-3 border-b border-gray-100"><h4 className="font-semibold text-sm text-gray-800">Détail des sanctions</h4></div>
             <div className="divide-y divide-gray-100 max-h-80 overflow-y-auto">
@@ -428,8 +463,8 @@ export default function Caisse() {
             <div className="card text-center"><p className="text-lg font-black text-blue-600">{fmt(totalInteretsEncaisses)}</p><p className="text-xs text-gray-400">Intérêts</p></div>
             <div className="card text-center"><p className="text-lg font-black text-orange-600">{fmt(totalRestantDu)}</p><p className="text-xs text-gray-400">Reste dû</p></div>
           </div>
-          <p className="text-xs text-gray-400 flex items-center gap-1.5 px-1">
-            <CheckCircle size={11} className="text-green-500"/>Prêts débités · Remboursements + intérêts crédités — tout passe par la Banque Libre A
+            <p className="text-xs text-gray-400 flex items-center gap-1.5 px-1">
+            <CheckCircle size={11} className="text-green-500"/>Prêts débités · Remboursements + intérêts crédités — tout passe par la caisse centrale
           </p>
           <div className="card p-0 overflow-hidden">
             <div className="px-4 py-3 border-b border-gray-100"><h4 className="font-semibold text-sm text-gray-800">Suivi des prêts</h4></div>
@@ -481,8 +516,8 @@ export default function Caisse() {
               <p className="text-xs text-gray-400 mt-1">Net versé aux bénéficiaires</p>
             </div>
           </div>
-          <p className="text-xs text-gray-400 flex items-center gap-1.5 px-1">
-            <CheckCircle size={11} className="text-green-500"/>Les mises d'enchères (bénéfices) sont versées automatiquement à la Banque Libre A
+            <p className="text-xs text-gray-400 flex items-center gap-1.5 px-1">
+            <CheckCircle size={11} className="text-green-500"/>Les mises d'enchères (bénéfices) sont versées automatiquement à la caisse centrale
           </p>
           <div className="card p-0 overflow-hidden">
             <div className="px-4 py-3 border-b border-gray-100"><h4 className="font-semibold text-sm text-gray-800">Historique des enchères</h4></div>
@@ -565,6 +600,91 @@ export default function Caisse() {
           </div>
         </div>
       )}
+
+      {activeSection === 'transferts' && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <div className="card text-center">
+              <p className="text-2xl font-black text-primary-600">{transfertsCaisse.length}</p>
+              <p className="text-xs text-gray-400 mt-1">Transferts</p>
+            </div>
+            <div className="card text-center">
+              <p className="text-2xl font-black text-green-600">{fmt(transfertsCaisse.reduce((s, t) => s + Number(t.montant || 0), 0))}</p>
+              <p className="text-xs text-gray-400 mt-1">Montant total</p>
+            </div>
+            <button onClick={() => setShowTransfer(true)} className="card text-left border-dashed border-primary-200 hover:border-primary-300 hover:bg-primary-50 transition-colors">
+              <p className="text-sm font-semibold text-primary-700">Nouveau transfert</p>
+              <p className="text-xs text-gray-500 mt-1">Déplacer des fonds d’une caisse à une autre.</p>
+            </button>
+          </div>
+
+          <div className="card p-0 overflow-hidden">
+            <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+              <h4 className="font-semibold text-sm text-gray-800">Historique des transferts</h4>
+              <span className="text-xs text-gray-400">{transfertsCaisse.length} ligne(s)</span>
+            </div>
+            <div className="divide-y divide-gray-100 max-h-80 overflow-y-auto">
+              {transfertsCaisse.length === 0 ? (
+                <p className="text-center py-12 text-xs text-gray-400">Aucun transfert enregistré</p>
+              ) : [...transfertsCaisse].reverse().map((t) => (
+                <div key={t.id} className="flex items-center gap-3 px-4 py-3">
+                  <div className="w-8 h-8 rounded-lg bg-primary-50 flex items-center justify-center text-primary-600 shrink-0">
+                    <RefreshCw size={14} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-gray-800">
+                      {banques.find((b) => b.id === t.caisseSourceId)?.nom || 'Source'} → {banques.find((b) => b.id === t.caisseDestinationId)?.nom || 'Destination'}
+                    </p>
+                    <p className="text-xs text-gray-400">{fmtDate(t.dateTransfert)} · {t.motif || 'Transfert interne'}</p>
+                  </div>
+                  <p className="font-bold text-primary-600">{fmt(t.montant)}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <Modal
+        open={showTransfer}
+        onClose={() => setShowTransfer(false)}
+        title="Nouveau transfert de caisse"
+        footer={
+          <>
+            <button onClick={() => setShowTransfer(false)} className="btn-secondary">Annuler</button>
+            <button onClick={handleTransfer} className="btn-primary"><RefreshCw size={14}/> Transférer</button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-xl p-3">
+            Opération réservée à la caisse centrale.
+          </p>
+          <FormField label="Caisse source" required>
+            <select className="select" value={transferForm.caisseSourceId} onChange={(e) => setTransferForm((f) => ({ ...f, caisseSourceId: e.target.value }))}>
+              <option value="">Sélectionner…</option>
+              {banques.map((b) => <option key={b.id} value={b.id}>{b.nom}</option>)}
+            </select>
+          </FormField>
+          <FormField label="Caisse destination" required>
+            <select className="select" value={transferForm.caisseDestinationId} onChange={(e) => setTransferForm((f) => ({ ...f, caisseDestinationId: e.target.value }))}>
+              <option value="">Sélectionner…</option>
+              {banques.map((b) => <option key={b.id} value={b.id}>{b.nom}</option>)}
+            </select>
+          </FormField>
+          <div className="grid grid-cols-2 gap-3">
+            <FormField label="Montant (FCFA)" required>
+              <input type="number" className="input" min="1" value={transferForm.montant} onChange={(e) => setTransferForm((f) => ({ ...f, montant: e.target.value }))} />
+            </FormField>
+            <FormField label="Date">
+              <input type="date" className="input" value={transferForm.dateTransfert} onChange={(e) => setTransferForm((f) => ({ ...f, dateTransfert: e.target.value }))} />
+            </FormField>
+          </div>
+          <FormField label="Motif">
+            <input className="input" value={transferForm.motif} onChange={(e) => setTransferForm((f) => ({ ...f, motif: e.target.value }))} placeholder="Ex : soutien caisse sociale" />
+          </FormField>
+        </div>
+      </Modal>
     </div>
   );
 }
