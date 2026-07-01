@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Building2, Sparkles, ArrowRight, Layers3, ShieldCheck, BadgeCheck } from 'lucide-react';
+import { Building2, ArrowRight, Layers3, ShieldCheck, BadgeCheck } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 
 const flow = [
   { title: '1. Association', desc: 'Fiche complète, contacts, siège et devise.' },
-  { title: '2. Membres', desc: 'Adhésions, statuts, rôles et historiques.' },
+  { title: '2. Membres', desc: 'Président, trésorier, secrétaire et conseillers.' },
   { title: '3. Réunions', desc: 'Présences, PV, décisions et signatures.' },
   { title: '4. Tontines', desc: 'Parts, cycles, tours et enchères.' },
   { title: '5. Finance', desc: 'Caisse, banques, prêts, sanctions et social.' },
@@ -13,21 +13,21 @@ const flow = [
 ];
 
 const EMPTY_FORM = {
-  nom: 'Union des Femmes de Bonanjo',
-  abrege: 'UFB',
-  ville: 'Douala',
-  pays: 'Cameroun',
-  siege: 'Bonanjo, Douala',
-  telephone: '+237 699 100 200',
-  email: 'contact@ufb-cm.org',
+  nom: '',
+  abrege: '',
+  ville: '',
+  pays: '',
+  siege: '',
+  telephone: '',
+  email: '',
   devise: 'XAF',
 };
 
 export default function Setup() {
-  const { createAssociation, loadDemoWorkspace, resetWorkspace, currentAssociation } = useApp();
+  const { createAssociation, currentAssociation } = useApp();
   const navigate = useNavigate();
   const [form, setForm] = useState(EMPTY_FORM);
-  const [busy, setBusy] = useState(null);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     if (currentAssociation) {
@@ -44,20 +44,14 @@ export default function Setup() {
     }
   }, [currentAssociation]);
 
-  const submit = async (mode) => {
+  const submit = async () => {
     if (busy) return;
-    setBusy(mode);
+    setBusy(true);
     try {
-      if (mode === 'demo') {
-        await loadDemoWorkspace();
-        navigate('/');
-        return;
-      }
-      const next = await createAssociation(form);
+      await createAssociation(form);
       navigate('/login');
-      return next;
     } finally {
-      setBusy(null);
+      setBusy(false);
     }
   };
 
@@ -71,7 +65,7 @@ export default function Setup() {
             <img src="/tontix-logo.jpeg" alt="TONTIX" className="h-16 w-auto rounded-[18px] bg-white p-1 shadow-[0_12px_30px_rgba(0,0,0,.18)]" />
             <div>
               <p className="text-white font-display text-xl font-semibold">TONTIX</p>
-              <p className="text-white/70 text-xs">Gestion des associations, tontines et caisses</p>
+              <p className="text-white/70 text-xs">Gestion des associations, tontines, caisses et rapports</p>
             </div>
           </div>
 
@@ -81,7 +75,7 @@ export default function Setup() {
           <div className="africa-band mt-5 max-w-[240px]" />
           <p className="mt-4 text-white/[0.75] max-w-2xl leading-relaxed">
             Membres, réunions, tontines, caisse, prêts, sanctions, social et rapports sont rattachés à une seule structure.
-            Cette interface sert à vérifier le parcours complet avant le branchement backend.
+            Cette interface sert à préparer l’enregistrement de l’association, puis l’ajout du bureau exécutif et des membres.
           </p>
 
           <div className="grid sm:grid-cols-3 gap-3 mt-6">
@@ -98,7 +92,7 @@ export default function Setup() {
             <div className="rounded-[24px] bg-white/10 border border-white/10 p-4">
               <ShieldCheck size={18} className="text-[#f0d48e]" />
               <p className="mt-3 text-sm font-semibold text-white">Traçabilité</p>
-              <p className="text-xs text-white/65 mt-1">Historique local pour test</p>
+              <p className="text-xs text-white/65 mt-1">Suivi complet des actions</p>
             </div>
           </div>
 
@@ -116,16 +110,16 @@ export default function Setup() {
           <div className="flex items-center justify-between gap-4">
             <div>
               <span className="hero-chip bg-[#e7efff] text-[#1f4aa6] border-[#cfdcff]">Initialiser l’association</span>
-              <h2 className="mt-4 text-2xl font-display font-semibold text-ink-900">Démarrer le workspace</h2>
+              <h2 className="mt-4 text-2xl font-display font-semibold text-ink-900">Créer l’association</h2>
               <p className="text-sm text-ink-600/70 mt-1">
-                Renseigne la structure de base, puis ouvre le parcours complet avec des données de prévisualisation.
+                Renseignez la structure de base pour activer l’espace de gestion complet.
               </p>
             </div>
             <div className="hidden md:flex items-center gap-3 rounded-[24px] bg-[#eef4ff] border border-[#cfdcff] px-4 py-3">
               <BadgeCheck size={18} className="text-[#1f4aa6]" />
               <div>
                 <p className="text-xs uppercase tracking-[0.14em] font-bold text-[#1f4aa6]">Statut</p>
-                <p className="text-sm font-semibold text-[#173374]">Prévisualisation locale</p>
+                <p className="text-sm font-semibold text-[#173374]">Espace de travail</p>
               </div>
             </div>
           </div>
@@ -152,11 +146,11 @@ export default function Setup() {
             <div className="grid sm:grid-cols-2 gap-4">
               <div>
                 <label className="label">Ville</label>
-                <input className="input" value={form.ville} onChange={(e) => setForm({ ...form, ville: e.target.value })} />
+                <input className="input" value={form.ville} onChange={(e) => setForm({ ...form, ville: e.target.value })} placeholder="Douala" />
               </div>
               <div>
                 <label className="label">Pays</label>
-                <input className="input" value={form.pays} onChange={(e) => setForm({ ...form, pays: e.target.value })} />
+                <input className="input" value={form.pays} onChange={(e) => setForm({ ...form, pays: e.target.value })} placeholder="Cameroun" />
               </div>
             </div>
 
@@ -176,29 +170,16 @@ export default function Setup() {
               </div>
             </div>
 
-            <div className="grid sm:grid-cols-2 gap-3 pt-2">
-              <button type="button" disabled={busy} onClick={() => submit('blank')} className="btn-primary justify-center">
+            <div className="pt-2">
+              <button type="button" disabled={busy} onClick={submit} className="btn-primary justify-center w-full">
                 <ArrowRight size={14} />
-                Enregistrer et ouvrir la connexion
-              </button>
-              <button type="button" disabled={busy} onClick={() => submit('demo')} className="btn-secondary justify-center">
-                <Sparkles size={14} />
-                Ouvrir l’exemple préchargé
+                Enregistrer et ouvrir l’espace
               </button>
             </div>
-
-            <button
-              type="button"
-              disabled={busy}
-              onClick={resetWorkspace}
-              className="text-xs text-ink-500 hover:text-ink-800 hover:underline self-start"
-            >
-              Vider la prévisualisation locale
-            </button>
           </div>
 
           <p className="mt-6 text-xs text-ink-500 leading-relaxed">
-            Les données saisies restent dans ce navigateur pour permettre les tests du front sans base de données.
+            Ces informations pourront être modifiées à tout moment depuis les paramètres de l’association.
           </p>
         </section>
       </div>

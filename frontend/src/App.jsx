@@ -1,6 +1,5 @@
-import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
-import { AppProvider } from './context/AppContext';
-import { useApp } from './context/AppContext';
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { AppProvider, useApp } from './context/AppContext';
 import Layout        from './components/layout/Layout';
 import Login         from './pages/Login';
 import Setup         from './pages/Setup';
@@ -20,11 +19,14 @@ import Rapports      from './pages/Rapports';
 import Utilisateurs  from './pages/Utilisateurs';
 
 function WorkspaceGate({ children }) {
-  const { currentAssociation } = useApp();
-  const location = useLocation();
+  const { currentAssociation, setupComplete, user } = useApp();
 
-  if (!currentAssociation && location.pathname !== '/setup') {
+  if (!setupComplete || !currentAssociation) {
     return <Navigate to="/setup" replace />;
+  }
+
+  if (!user) {
+    return <Navigate to="/login" replace />;
   }
 
   return children;
@@ -36,7 +38,7 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/setup" element={<Setup />} />
-          <Route path="/login" element={<WorkspaceGate><Login /></WorkspaceGate>} />
+          <Route path="/login" element={<Login />} />
           <Route path="/" element={<WorkspaceGate><Layout /></WorkspaceGate>}>
             <Route index                 element={<Dashboard />}     />
             <Route path="membres"         element={<Membres />}       />
@@ -44,7 +46,8 @@ export default function App() {
             <Route path="tontines"        element={<Tontines />}      />
             <Route path="rotations"       element={<Rotations />}     />
             <Route path="encheres"        element={<Encheres />}      />
-            <Route path="banques"         element={<Banques />}       />
+            <Route path="caisses"         element={<Banques />}       />
+            <Route path="banques"         element={<Navigate to="/caisses" replace />} />
             <Route path="prets"           element={<Prets />}         />
             <Route path="caisse-sociale"  element={<CaisseSociale />} />
             <Route path="fond-assurance"  element={<FondAssurance />} />

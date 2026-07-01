@@ -1,6 +1,7 @@
 import { useLocation } from 'react-router-dom';
 import { CalendarDays, Search } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
+import { roleLabel } from '../../data/mockData';
 
 const names = {
   '/':                { title: 'Tableau de bord',   sub: 'Vue globale du système' },
@@ -9,7 +10,7 @@ const names = {
   '/tontines':        { title: 'Tontines actives',  sub: 'Gestion des cycles et parts' },
   '/rotations':       { title: 'Rotations',         sub: 'Attribution des tours' },
   '/encheres':        { title: 'Enchères',          sub: 'Système d\'enchères' },
-  '/banques':         { title: 'Finance',           sub: 'Banques et opérations' },
+  '/caisses':         { title: 'Finance',           sub: 'Caisses et opérations' },
   '/prets':           { title: 'Prêts & Crédits',   sub: 'Gestion des prêts membres' },
   '/caisse':          { title: 'Caisse Centrale',   sub: 'Journal et mouvements' },
   '/caisse-sociale':  { title: 'Caisse sociale',    sub: 'Aides et soutien social' },
@@ -21,12 +22,12 @@ const names = {
 
 export default function Header() {
   const { pathname } = useLocation();
-  const { apiStatus, user, currentAssociation } = useApp();
+  const { user, currentAssociation } = useApp();
   const meta = names[pathname] || { title: 'Page', sub: '' };
   const today = new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 
   return (
-    <header className="h-[78px] bg-white/[0.82] border-b border-white/70 flex items-center px-5 gap-4 shrink-0 sticky top-0 z-30 backdrop-blur-xl shadow-[0_12px_30px_-24px_rgba(16,24,39,.22)]">
+    <header className="min-h-[78px] bg-white/[0.82] border-b border-white/70 flex items-center px-5 py-3 gap-4 shrink-0 sticky top-0 z-30 backdrop-blur-xl shadow-[0_12px_30px_-24px_rgba(16,24,39,.22)]">
 
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-1">
@@ -36,7 +37,6 @@ export default function Header() {
               {currentAssociation.abrege}
             </span>
           )}
-          <span className="hero-chip text-[10px] uppercase tracking-[0.16em]">Mode {apiStatus === 'disabled' ? 'local' : apiStatus}</span>
           <span className="hidden sm:inline-flex hero-chip text-[10px] uppercase tracking-[0.16em]">
             <CalendarDays size={12} />
             {today}
@@ -62,12 +62,12 @@ export default function Header() {
       </div>
 
       <div className="flex items-center gap-3 pl-4 border-l border-surface-200/80">
-        <div className="avatar-soft">A</div>
+        <div className="avatar-soft">{(user?.name || 'A')[0].toUpperCase()}</div>
         <div className="hidden sm:block min-w-0">
           <p className="text-sm font-semibold text-ink-900 truncate">
             {user?.name || 'Administration'}
           </p>
-          <p className="text-xs text-ink-600/70 truncate">Accès local · prêt pour backend</p>
+          <p className="text-xs text-ink-600/70 truncate">{roleLabel[user?.role] || 'Accès administrateur'}</p>
         </div>
       </div>
     </header>

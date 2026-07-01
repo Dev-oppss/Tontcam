@@ -1,8 +1,9 @@
-import { NavLink, useLocation } from 'react-router-dom';
-import { ChevronRight, PanelLeftClose, PanelLeft } from 'lucide-react';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
+import { ChevronRight, PanelLeftClose, PanelLeft, LogOut } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import clsx from 'clsx';
 import { useApp } from '../../context/AppContext';
+import { roleLabel } from '../../data/mockData';
 
 const nav = [
   { label: 'Tableau de bord', path: '/' },
@@ -18,13 +19,14 @@ const nav = [
     children: [
       { label: 'Tontines actives', path: '/tontines' },
       { label: 'Rotations', path: '/rotations' },
+      { label: 'Tirage au sort', path: '/tontines?type=tirage' },
       { label: 'Enchères', path: '/encheres' },
     ],
   },
   {
     label: 'Finance',
     children: [
-      { label: 'Banques', path: '/banques' },
+      { label: 'Caisses', path: '/caisses' },
       { label: 'Caisse centrale', path: '/caisse' },
       { label: 'Prêts & crédits', path: '/prets' },
     ],
@@ -100,7 +102,8 @@ function Section({ item, collapsed }) {
 }
 
 export default function Sidebar({ collapsed, setCollapsed }) {
-  const { currentAssociation } = useApp();
+  const { currentAssociation, user, logout } = useApp();
+  const navigate = useNavigate();
   return (
     <aside
       className={clsx(
@@ -168,15 +171,29 @@ export default function Sidebar({ collapsed, setCollapsed }) {
 
       <div className={clsx('border-t border-white/10 relative z-10', collapsed ? 'px-2 py-3 flex justify-center' : 'px-3 py-3')}>
         {collapsed ? (
-          <div className="avatar-soft">T</div>
+          <button
+            type="button"
+            onClick={() => { logout(); navigate('/login'); }}
+            className="avatar-soft"
+            title="Se déconnecter"
+          >
+            {(user?.name || 'A')[0].toUpperCase()}
+          </button>
         ) : (
-          <div className="flex items-center gap-2.5 px-2 py-2 rounded-2xl hover:bg-white/[0.08] transition-colors cursor-pointer">
-            <div className="avatar-soft">T</div>
+          <div className="flex items-center gap-2.5 px-2 py-2 rounded-2xl hover:bg-white/[0.08] transition-colors">
+            <div className="avatar-soft">{(user?.name || 'A')[0].toUpperCase()}</div>
             <div className="min-w-0 flex-1">
-              <p className="text-white text-xs font-semibold truncate leading-tight">Administration</p>
-              <p className="text-white/[0.48] text-[11px] mt-0.5">Mode local · prêt pour API</p>
+              <p className="text-white text-xs font-semibold truncate leading-tight">{user?.name || 'Administration'}</p>
+              <p className="text-white/[0.48] text-[11px] mt-0.5">{roleLabel[user?.role] || 'Accès administrateur'}</p>
             </div>
-            <div className="w-2 h-2 rounded-full bg-[#f0d48e] shrink-0 shadow-[0_0_0_3px_rgba(240,212,142,.16)]" title="En ligne" />
+            <button
+              type="button"
+              onClick={() => { logout(); navigate('/login'); }}
+              className="p-1.5 rounded-lg text-white/50 hover:text-white hover:bg-white/10 transition-colors shrink-0"
+              title="Se déconnecter"
+            >
+              <LogOut size={14} />
+            </button>
           </div>
         )}
       </div>

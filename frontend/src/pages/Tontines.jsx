@@ -8,7 +8,7 @@ import {
 import { fmt, fmtDate, typeAttrLabel, periodeLabel } from '../data/mockData';
 import { useApp } from '../context/AppContext';
 import { PageHeader, Badge, Modal, FormField } from '../components/ui/index';
-import { NavLink } from 'react-router-dom';
+import { NavLink, useSearchParams } from 'react-router-dom';
 import clsx from 'clsx';
 
 const TYPE_CONFIG = {
@@ -53,19 +53,23 @@ function calcDateFin(dateDebut, nbTours, periode) {
   return d.toISOString().split('T')[0];
 }
 
-const EMPTY_FORM = { nom:'', cotisation:'', periode:'mensuel', nbTours:12, typeAttribution:'rotation', dateDebut:'', dateFin:'' };
+const EMPTY_FORM = { nom:'', cotisation:'', caisseId:'', periode:'mensuel', nbTours:12, typeAttribution:'rotation', dateDebut:'', dateFin:'' };
 const EMPTY_MT   = { idMembre:'', nombreParts:'1', dateAdhesion: new Date().toISOString().split('T')[0] };
 
 export default function Tontines() {
   const {
-    tontines, addTontine, updateTontine,
+    tontines, caisses, addTontine, updateTontine,
     membres, membresParTontine, addMembreTontine, updateMembreTontine, removeMembreTontine,
     planningTours, addTourPlanning, marquerTourEncaisse, retirerTourPlanning, tirerAuSort,
     encheres, rotations, attribuerTour,
     genererBulletin, ouvrirBulletinPdf,
   } = useApp();
 
-  const [activeTab,       setActiveTab]       = useState('toutes');
+  const [searchParams] = useSearchParams();
+  const initialTab = ['toutes', 'rotation', 'tirage', 'enchere'].includes(searchParams.get('type'))
+    ? searchParams.get('type')
+    : 'toutes';
+  const [activeTab,       setActiveTab]       = useState(initialTab);
   const [showAdd,         setShowAdd]         = useState(false);
   const [showEdit,        setShowEdit]        = useState(null);
   const [showMembres,     setShowMembres]     = useState(null);
@@ -87,6 +91,7 @@ export default function Tontines() {
   const filteredTontines = tontines.filter(t =>
     activeTab === 'toutes' ? true : t.typeAttribution === activeTab
   );
+  const caissesMap = Object.fromEntries((caisses || []).map((c) => [c.id, c]));
 
   const getTourPlanning   = (id) => (planningTours || []).filter(p => p.idTontine === id).sort((a,b) => a.numeroTour - b.numeroTour);
   const getMembresActifs  = (id) => membresParTontine.filter(mt => mt.idTontine === id && mt.statut === 'actif');
@@ -94,14 +99,14 @@ export default function Tontines() {
   const getProchainTour   = (id, nb) => Math.min(getNbEncaisses(id) + 1, nb);
 
   const handleAdd = () => {
-    if (!form.nom.trim() || !form.cotisation) return;
+    if (!form.nom.trim() || !form.cotisation || !form.caisseId) return;
     const dateFin = form.dateFin || calcDateFin(form.dateDebut, form.nbTours, form.periode);
     addTontine({ ...form, cotisation: Number(form.cotisation), nbTours: Number(form.nbTours), dateFin });
     setShowAdd(false); setForm(EMPTY_FORM);
   };
 
   const handleEdit = () => {
-    if (!form.nom.trim() || !form.cotisation) return;
+    if (!form.nom.trim() || !form.cotisation || !form.caisseId) return;
     updateTontine({ ...showEdit, ...form, cotisation: Number(form.cotisation), nbTours: Number(form.nbTours) });
     setShowEdit(null);
   };
@@ -213,10 +218,11 @@ export default function Tontines() {
                     <div className="flex items-center gap-2 mt-0.5">
                       <Badge variant={cfg.badge}>{cfg.label}</Badge>
                       <span className="text-xs text-gray-400">{periodeLabel[t.periode]}</span>
+                      <span className="text-xs text-gray-400">· {caissesMap[t.caisseId]?.nom || 'Caisse non liée'}</span>
                     </div>
                   </div>
                 </div>
-                <button onClick={() => { setShowEdit(t); setForm({ nom:t.nom, cotisation:t.cotisation, periode:t.periode, nbTours:t.nbTours, typeAttribution:t.typeAttribution, dateDebut:t.dateDebut||''  , dateFin:t.dateFin||'' }); }}
+                <button onClick={() => { setShowEdit(t); setForm({ nom:t.nom, cotisation:t.cotisation, caisseId:t.caisseId||'', periode:t.periode, nbTours:t.nbTours, typeAttribution:t.typeAttribution, dateDebut:t.dateDebut||''  , dateFin:t.dateFin||'' }); }}
                   className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg">
                   <Pencil size={13}/>
                 </button>
@@ -720,6 +726,12 @@ export default function Tontines() {
               <FormField label="Cotisation / part (FCFA)" required><F k="cotisation" type="number" placeholder="50 000"/></FormField>
               <FormField label="Périodicité"><S k="periode"><option value="hebdomadaire">Hebdomadaire</option><option value="mensuel">Mensuelle</option><option value="bimestriel">Bimestrielle</option><option value="trimestriel">Trimestrielle</option></S></FormField>
             </div>
+            <FormField label="Caisse liée" required>
+              <S k="caisseId">
+                <option value="">Sélectionner une caisse…</option>
+                {(caisses || []).map((c) => <option key={c.id} value={c.id}>{c.nom}</option>)}
+              </S>
+            </FormField>
           </div>
           <div className="p-3 bg-gray-50 rounded-xl space-y-3">
             <p className="text-xs font-bold text-gray-500 uppercase">Mode d'attribution</p>
@@ -768,6 +780,12 @@ export default function Tontines() {
             <FormField label="Cotisation (FCFA)" required><F k="cotisation" type="number"/></FormField>
             <FormField label="Périodicité"><S k="periode"><option value="hebdomadaire">Hebdomadaire</option><option value="mensuel">Mensuelle</option><option value="bimestriel">Bimestrielle</option><option value="trimestriel">Trimestrielle</option></S></FormField>
           </div>
+          <FormField label="Caisse liée" required>
+            <S k="caisseId">
+              <option value="">Sélectionner une caisse…</option>
+              {(caisses || []).map((c) => <option key={c.id} value={c.id}>{c.nom}</option>)}
+            </S>
+          </FormField>
           <div className="grid grid-cols-2 gap-3">
             <FormField label="Nb tours"><F k="nbTours" type="number" min="1"/></FormField>
             <FormField label="Type"><S k="typeAttribution"><option value="rotation"> Rotation</option><option value="tirage"> Tirage</option><option value="enchere"> Enchère</option></S></FormField>

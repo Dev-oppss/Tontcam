@@ -22,6 +22,8 @@ export const encheres = [];
 export const banques = [];
 export const comptesBanque = [];
 export const operationsBanque = [];
+export const transfertsCaisse = [];
+export const typesSanction = [];
 export const prets = [];
 export const sanctions = [];
 export const fondAssurance = [];
@@ -58,8 +60,10 @@ export const typeEvtLabel = {
 };
 
 export const typeSancLabel = {
-  absence: 'Absence réunion',
-  retard: 'Retard',
+  retard_cotisation: 'Retard de cotisation',
+  absence_non_excusee: 'Absence non excusée',
+  insubordination: 'Insubordination',
+  insulte: 'Insulte',
   non_paiement: 'Non-paiement',
   autre: 'Autre',
 };

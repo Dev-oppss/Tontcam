@@ -262,21 +262,25 @@
   }
 
   .modal-overlay {
-    @apply fixed inset-0 z-50 flex items-center justify-center p-4;
-    background: rgba(7, 16, 12, 0.60);
+    @apply fixed bottom-0 z-50 flex items-center justify-center overflow-y-auto px-1.5 pt-1.5 pb-1.5 md:px-3 md:pt-3 md:pb-3;
+    left: var(--content-offset, 0px);
+    right: 0;
+    top: calc(var(--header-h) + 2px);
+    background: rgba(7, 16, 12, 0.78);
     backdrop-filter: blur(10px);
+    transition: left 300ms cubic-bezier(.4, 0, .2, 1);
   }
 
   .modal-box {
-    @apply bg-white w-full max-h-[90vh] flex flex-col overflow-hidden;
-    width: min(96vw, 56rem);
-    border-radius: 28px;
+    @apply bg-white w-full max-h-[calc(100vh-var(--header-h)-0.75rem)] flex flex-col overflow-hidden;
+    max-width: 100rem;
+    border-radius: 24px;
     border: 1px solid rgba(16, 24, 39, 0.08);
     box-shadow: 0 28px 70px rgba(16, 24, 39, 0.18);
   }
 
   .modal-body {
-    @apply flex-1 overflow-y-auto;
+    @apply flex-1 min-h-0 overflow-y-auto scroll-py-4;
   }
 
   .stat-icon-wrap {

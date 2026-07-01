@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { X, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import clsx from 'clsx';
 
@@ -53,19 +54,33 @@ export function Table({ headers, children, empty }) {
 
 /* ── Modal ──────────────────────────────────────────────────── */
 export function Modal({ open, onClose, title, children, footer }) {
+  const bodyRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    requestAnimationFrame(() => {
+      if (bodyRef.current) bodyRef.current.scrollTop = 0;
+    });
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [open]);
+
   if (!open) return null;
   return (
     <div className="modal-overlay scale-in" onClick={onClose}>
       <div className="modal-box" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-6 py-4 border-b border-surface-100">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-surface-100">
           <h3 className="font-semibold text-ink-900 text-base">{title}</h3>
           <button onClick={onClose} className="w-8 h-8 flex items-center justify-center text-ink-600/50 hover:text-ink-800 hover:bg-surface-100 rounded-lg transition-all">
             <X size={16} />
           </button>
         </div>
-        <div className="modal-body px-6 py-5">{children}</div>
+        <div ref={bodyRef} className="modal-body px-4 py-3.5">{children}</div>
         {footer && (
-          <div className="px-6 py-4 border-t border-surface-100 flex justify-end gap-3 bg-surface-50 rounded-b-[18px]">{footer}</div>
+          <div className="px-4 py-3 border-t border-surface-100 flex justify-end gap-3 bg-surface-50 rounded-b-[18px]">{footer}</div>
         )}
       </div>
     </div>

@@ -76,7 +76,7 @@ function FicheMembre({ membre, onClose, onEdit }) {
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-box max-w-2xl w-full" onClick={e => e.stopPropagation()}>
+      <div className="modal-box max-w-[100rem] w-full" onClick={e => e.stopPropagation()}>
 
         {/* En-tête membre */}
         <div className="px-6 py-5 bg-gradient-to-r from-primary-700 to-primary-500 text-white rounded-t-2xl">
@@ -133,7 +133,7 @@ function FicheMembre({ membre, onClose, onEdit }) {
           ))}
         </div>
 
-        <div className="overflow-y-auto max-h-[55vh] p-5 space-y-4">
+        <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-4">
 
           {/* ── IDENTITÉ ── */}
           {activeTab === 'identite' && (

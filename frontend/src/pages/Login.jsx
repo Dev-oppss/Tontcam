@@ -11,9 +11,9 @@ const pillars = [
 ];
 
 export default function Login() {
-  const { user, login, changePassword, apiStatus } = useApp();
+  const { user, login, changePassword } = useApp();
   const navigate = useNavigate();
-  const [form, setForm] = useState({ email: '', password: '' });
+  const [form, setForm] = useState({ name: '', email: '', password: '' });
   const [mustChange, setMustChange] = useState(false);
   const [passwordForm, setPasswordForm] = useState({ current_password: '', password: '', password_confirmation: '' });
   const [error, setError] = useState(null);
@@ -33,7 +33,7 @@ export default function Login() {
       }
       navigate('/');
     } catch {
-      setError('Connexion locale impossible');
+      setError('Connexion impossible. Vérifiez vos identifiants.');
     }
   };
 
@@ -95,15 +95,15 @@ export default function Login() {
           <div className="grid sm:grid-cols-3 gap-3 mt-8">
             <div className="rounded-[24px] bg-white/10 border border-white/10 p-4">
               <p className="text-[11px] uppercase tracking-[0.14em] text-white/55 font-bold">Statut</p>
-              <p className="text-sm text-white font-semibold mt-2">Mode {apiStatus === 'disabled' ? 'local' : apiStatus}</p>
+              <p className="text-sm text-white font-semibold mt-2">Accès sécurisé</p>
             </div>
             <div className="rounded-[24px] bg-white/10 border border-white/10 p-4">
               <p className="text-[11px] uppercase tracking-[0.14em] text-white/55 font-bold">Cible</p>
-              <p className="text-sm text-white font-semibold mt-2">Connexion API Laravel</p>
+              <p className="text-sm text-white font-semibold mt-2">Accès du bureau exécutif</p>
             </div>
             <div className="rounded-[24px] bg-white/10 border border-white/10 p-4">
               <p className="text-[11px] uppercase tracking-[0.14em] text-white/55 font-bold">Style</p>
-              <p className="text-sm text-white font-semibold mt-2">Afrique moderne</p>
+              <p className="text-sm text-white font-semibold mt-2">Image institutionnelle</p>
             </div>
           </div>
         </div>
@@ -115,12 +115,22 @@ export default function Login() {
               Se connecter
             </h2>
             <p className="text-sm text-ink-600/70 mt-1">
-              Entrez vos identifiants pour accéder au tableau de bord.
+              Entrez vos identifiants pour accéder à l’espace de gestion.
             </p>
           </div>
 
           {!mustChange ? (
             <form onSubmit={submit} className="space-y-4">
+              <div>
+                <label className="label">Nom complet</label>
+                <input
+                  type="text"
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  className="input"
+                  placeholder="Ex : Jean Mballa"
+                />
+              </div>
               <div>
                 <label className="label">Email</label>
                 <input
@@ -140,21 +150,7 @@ export default function Login() {
                 />
               </div>
               {error && <div className="text-sm text-[#a64734]">{error}</div>}
-              <div className="flex items-center justify-between gap-3">
-                <button type="submit" className="btn-primary">Se connecter</button>
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={() => {
-                    setForm({ email: 'admin@test.local', password: 'password' });
-                  }}
-                >
-                  Remplir
-                </button>
-              </div>
-              <p className="text-xs text-ink-500 leading-relaxed">
-                Le mot de passe oublié et la réinitialisation seront gérés par l’API Laravel.
-              </p>
+              <button type="submit" className="btn-primary w-full justify-center">Se connecter</button>
             </form>
           ) : (
             <form onSubmit={submitPassword} className="space-y-4">

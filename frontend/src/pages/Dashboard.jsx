@@ -25,7 +25,7 @@ const MODULES = [
   { title: 'Membres', desc: 'Fiches, statuts, rôles, assurance et historique.' },
   { title: 'Réunions', desc: 'Ordre du jour, présences, signatures et PV.' },
   { title: 'Tontines', desc: 'Parts, cycles, cotisations, gagnants et enchères.' },
-  { title: 'Finance', desc: 'Caisses, transactions, banques et rapprochements.' },
+  { title: 'Finance', desc: 'Caisses, transactions, transferts et rapprochements.' },
   { title: 'Prêts', desc: 'Demandes, validation, décaissement et remboursements.' },
   { title: 'Sanctions', desc: 'Absences, retards, sanctions automatiques et manuelles.' },
   { title: 'Social', desc: 'Aides sociales, événements et décisions AG.' },
@@ -65,7 +65,6 @@ function ModuleTile({ title, desc, index }) {
 
 export default function Dashboard() {
   const {
-    apiStatus,
     currentAssociation,
     dashboardStats,
     evolutionCaisse,
@@ -95,7 +94,6 @@ export default function Dashboard() {
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <span className="hero-chip">TONTIX</span>
-              <span className="hero-chip">Mode {apiStatus === 'disabled' ? 'local' : apiStatus}</span>
               <span className="hero-chip">Association au centre</span>
             </div>
             <h2 className="mt-4 text-3xl md:text-5xl font-display font-semibold max-w-3xl leading-[1.05]">
@@ -199,7 +197,7 @@ export default function Dashboard() {
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
         <StatCard icon={Users} label="Membres actifs" value={dashboardStats.membresActifs} sub={`sur ${dashboardStats.totalMembres} membres`} iconBg="bg-[#e7efff]" iconColor="text-[#2147a6]" accent="var(--brand)" />
         <StatCard icon={Wallet} label="Solde caisse" value={fmt(dashboardStats.soldeCaisse)} sub="Caisse centrale" iconBg="bg-[#fff3d1]" iconColor="text-[#b57f13]" accent="var(--brand-dark)" />
-        <StatCard icon={Building2} label="Total banques" value={fmt(dashboardStats.totalBanques)} sub="Épargnes internes" iconBg="bg-[#eef4ff]" iconColor="text-[#2147a6]" accent="var(--brand-soft)" />
+        <StatCard icon={Building2} label="Total caisses" value={fmt(dashboardStats.totalBanques)} sub="Épargnes internes" iconBg="bg-[#eef4ff]" iconColor="text-[#2147a6]" accent="var(--brand-soft)" />
         <StatCard icon={HandCoins} label="Prêts en cours" value={dashboardStats.pretsEnCours} sub={`Restant : ${fmt(dashboardStats.totalPretsRestants)}`} iconBg="bg-[#f2f0eb]" iconColor="text-[#55617c]" accent="var(--brand-pale)" />
       </div>
 
@@ -212,7 +210,7 @@ export default function Dashboard() {
 
       <SectionCard
         title="Couverture fonctionnelle"
-        subtitle="Le front est déjà aligné sur les modules métier du backend à venir."
+        subtitle="Tous les modules métier de l’association, organisés en un seul espace."
       >
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
           {MODULES.map((module, index) => (
@@ -230,8 +228,8 @@ export default function Dashboard() {
           <EmptyState
             icon={RefreshCw}
             title="Aucune tontine active"
-            description="Les tontines et les cycles viendront du backend dès la liaison API."
-            action={<NavLink to="/tontines" className="btn-secondary">Préparer le module</NavLink>}
+            description="Créez votre première tontine pour lancer un cycle de cotisation."
+            action={<NavLink to="/tontines" className="btn-secondary">Créer une tontine</NavLink>}
           />
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
@@ -302,7 +300,7 @@ export default function Dashboard() {
             <EmptyState
               icon={TrendingUp}
               title="Aucune donnée de caisse"
-              description="Le graphique prendra vie quand la source backend sera branchée."
+              description="Les mouvements de caisse apparaîtront ici dès la première opération."
             />
           ) : (
             <ResponsiveContainer width="100%" height={230}>
@@ -329,13 +327,13 @@ export default function Dashboard() {
         </div>
 
         <div className="card">
-          <h3 className="font-display font-semibold text-ink-900 mb-1">Répartition banques</h3>
+          <h3 className="font-display font-semibold text-ink-900 mb-1">Répartition des caisses</h3>
           <p className="text-xs text-ink-500 mb-3">Soldes actuels</p>
           {repartitionBanques.length === 0 ? (
             <EmptyState
               icon={Building2}
-              title="Aucune banque"
-              description="Le composant est prêt pour les comptes et opérations dès la connexion API."
+              title="Aucune caisse"
+              description="Créez une caisse pour commencer à suivre les soldes."
             />
           ) : (
             <>
@@ -373,7 +371,7 @@ export default function Dashboard() {
             <EmptyState
               icon={CheckCircle}
               title="Aucune attribution effectuée"
-              description="Les bénéficiaires et tours seront injectés depuis les cycles backend."
+              description="Les bénéficiaires apparaîtront ici après le premier tour attribué."
             />
           ) : (
             <div className="space-y-2">
@@ -405,7 +403,7 @@ export default function Dashboard() {
             <EmptyState
               icon={Clock}
               title="Aucun prêt actif"
-              description="La gestion complète des prêts sera branchée sur le backend Laravel."
+              description="Les prêts accordés aux membres apparaîtront ici."
             />
           ) : (
             <div className="space-y-3">

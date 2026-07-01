@@ -98,6 +98,11 @@ const EMPTY_BANQUE = {
   nom: '', description: '',
   montantCotisation: '',
   operationsAutorisees: ['epargne'],
+  pretAutorise: false,
+  tauxInteretPret: 10,
+  dureeMaxPretMois: 6,
+  amortissementPret: 'lineaire',
+  echeancesPret: 'mensuel',
 };
 
 export default function Banques() {
@@ -165,7 +170,16 @@ export default function Banques() {
   const handleAddBanque = () => {
     if (!newBanque.nom.trim()) return;
     if (!newBanque.operationsAutorisees?.length) return;
-    addBanque({ ...newBanque, totalSolde: 0 });
+    const pretAutorise = newBanque.operationsAutorisees.includes('pret');
+    addBanque({
+      ...newBanque,
+      pretAutorise,
+      tauxInteretPret: pretAutorise ? Number(newBanque.tauxInteretPret || 0) : 0,
+      dureeMaxPretMois: pretAutorise ? Number(newBanque.dureeMaxPretMois || 0) : 0,
+      amortissementPret: pretAutorise ? newBanque.amortissementPret || 'lineaire' : 'lineaire',
+      echeancesPret: pretAutorise ? newBanque.echeancesPret || 'mensuel' : 'mensuel',
+      totalSolde: 0,
+    });
     setAddModal(false);
     setNewBanque(EMPTY_BANQUE);
     setStep(1);
@@ -194,20 +208,21 @@ export default function Banques() {
       </span>
     );
   };
+  const pretAutorise = newBanque.operationsAutorisees?.includes('pret');
 
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Banques internes"
-        subtitle={`${banques.length} banque${banques.length > 1 ? 's' : ''} — Solde global : ${fmt(totalGlobal)}`}
+        title="Caisses internes"
+        subtitle={`${banques.length} caisse${banques.length > 1 ? 's' : ''} — Solde global : ${fmt(totalGlobal)}`}
         action={
           <button onClick={openAddModal} className="btn-primary">
-            <Plus size={15} /> Nouvelle banque
+            <Plus size={15} /> Nouvelle caisse
           </button>
         }
       />
 
-      {/* ── Cartes banques ───────────────────────────────────── */}
+      {/* ── Cartes caisses ───────────────────────────────────── */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 stagger">
         {banques.map(b => {
           const comptes = comptesDeBanque(b.id);
@@ -220,7 +235,7 @@ export default function Banques() {
                   
                 </div>
                 <Badge variant={typeColors[b.type] || 'gray'}>
-                  {typeLabels[b.type] || b.type || 'Banque'}
+                  {typeLabels[b.type] || b.type || 'Caisse'}
                 </Badge>
               </div>
 
@@ -269,7 +284,7 @@ export default function Banques() {
           <div className="w-10 h-10 rounded-xl border-2 border-dashed border-current flex items-center justify-center group-hover:scale-110 transition-transform">
             <Plus size={18} />
           </div>
-          <span className="text-xs font-semibold">Nouvelle banque</span>
+          <span className="text-xs font-semibold">Nouvelle caisse</span>
         </button>
       </div>
 
@@ -279,7 +294,7 @@ export default function Banques() {
         subtitle={`${comptesBanque.length} compte(s) au total`}
         className="p-0 overflow-hidden"
       >
-        <Table headers={['Membre','Banque','Solde','Statut','Actions']}>
+        <Table headers={['Membre','Caisse','Solde','Statut','Actions']}>
           {comptesBanque.map(c => (
             <tr key={c.id} className="tr">
               <td className="td">
@@ -327,7 +342,7 @@ export default function Banques() {
         subtitle={`${operationsBanque.length} opération(s) enregistrée(s)`}
         className="p-0 overflow-hidden"
       >
-        <Table headers={['Date','Membre','Banque','Type','Montant','Observation']}>
+        <Table headers={['Date','Membre','Caisse','Type','Montant','Observation']}>
           {[...operationsBanque].reverse().slice(0, 20).map(op => (
             <tr key={op.id} className="tr">
               <td className="td text-xs text-ink-600/50">{fmtDate(op.dateOperation)}</td>
@@ -365,7 +380,7 @@ export default function Banques() {
         onClose={() => { setAddModal(false); setStep(1); }}
         title={
           <div className="flex items-center gap-3">
-            <span>Nouvelle banque</span>
+            <span>Nouvelle caisse</span>
             <div className="flex items-center gap-1.5 ml-2">
               {[1, 2].map(s => (
                 <div key={s} className={clsx(
@@ -391,13 +406,13 @@ export default function Banques() {
           ) : (
             <>
               <button onClick={() => setStep(1)} className="btn-secondary">- Retour</button>
-              <button
-                onClick={handleAddBanque}
-                disabled={!newBanque.operationsAutorisees?.length}
-                className="btn-primary disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                <Plus size={14} /> Créer la banque
-              </button>
+            <button
+              onClick={handleAddBanque}
+              disabled={!newBanque.operationsAutorisees?.length}
+              className="btn-primary disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Plus size={14} /> Créer la caisse
+            </button>
             </>
           )
         }
@@ -410,11 +425,10 @@ export default function Banques() {
               <span>Étape 1 sur 2 — Informations générales</span>
             </div>
 
-            <FormField label="Nom de la banque" required>
+            <FormField label="Nom de la caisse" required>
               <input
                 className="input"
-                placeholder="Ex : Banque Scolaire 2025, Fond d'urgence…"
-                autoFocus
+                placeholder="Ex : Caisse scolaire 2025, fonds d'urgence…"
                 value={newBanque.nom}
                 onChange={e => setNewBanque(f => ({ ...f, nom: e.target.value }))}
               />
@@ -451,7 +465,7 @@ export default function Banques() {
             </div>
 
             <p className="text-sm text-ink-700 font-medium">
-              Quels types d'opérations cette banque peut-elle effectuer ?
+              Quels types d'opérations cette caisse peut-elle effectuer ?
             </p>
             <p className="text-xs text-ink-600/50 -mt-2">
               Sélectionnez une ou plusieurs options. Cela détermine les actions disponibles pour les membres.
@@ -510,9 +524,62 @@ export default function Banques() {
               </div>
             )}
 
+            {pretAutorise && (
+              <div className="p-4 rounded-2xl border border-blue-200 bg-blue-50/70 space-y-3">
+                <div>
+                  <p className="text-sm font-semibold text-blue-900">Paramètres de prêt</p>
+                  <p className="text-xs text-blue-700 mt-1">Cette caisse peut prêter. On configure ici les règles de remboursement.</p>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <FormField label="Taux de remboursement (%)">
+                    <input
+                      type="number"
+                      className="input"
+                      min="0"
+                      max="100"
+                      value={newBanque.tauxInteretPret}
+                      onChange={e => setNewBanque(f => ({ ...f, tauxInteretPret: e.target.value }))}
+                    />
+                  </FormField>
+                  <FormField label="Durée max (mois)">
+                    <input
+                      type="number"
+                      className="input"
+                      min="1"
+                      value={newBanque.dureeMaxPretMois}
+                      onChange={e => setNewBanque(f => ({ ...f, dureeMaxPretMois: e.target.value }))}
+                    />
+                  </FormField>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <FormField label="Amortissement">
+                    <select
+                      className="select"
+                      value={newBanque.amortissementPret}
+                      onChange={e => setNewBanque(f => ({ ...f, amortissementPret: e.target.value }))}
+                    >
+                      <option value="lineaire">Linéaire</option>
+                      <option value="echelonne">Échelonné</option>
+                    </select>
+                  </FormField>
+                  <FormField label="Échéances">
+                    <select
+                      className="select"
+                      value={newBanque.echeancesPret}
+                      onChange={e => setNewBanque(f => ({ ...f, echeancesPret: e.target.value }))}
+                    >
+                      <option value="mensuel">Mensuelles</option>
+                      <option value="bimestriel">Bimestrielles</option>
+                      <option value="trimestriel">Trimestrielles</option>
+                    </select>
+                  </FormField>
+                </div>
+              </div>
+            )}
+
             {newBanque.operationsAutorisees?.length === 0 && (
               <p className="text-xs text-red-500 flex items-center gap-1">
-                 Sélectionnez au moins une opération pour créer la banque.
+               Sélectionnez au moins une opération pour créer la caisse.
               </p>
             )}
           </div>
@@ -569,7 +636,7 @@ export default function Banques() {
               {comptes.length === 0 ? (
                 <div className="text-center py-8 text-ink-600/40">
                   <Landmark size={28} className="mx-auto mb-2 opacity-30" />
-                  <p className="text-sm">Aucun membre inscrit dans cette banque</p>
+                  <p className="text-sm">Aucun membre inscrit dans cette caisse</p>
                 </div>
               ) : (
                 <div className="space-y-1.5 max-h-64 overflow-y-auto">
@@ -626,7 +693,7 @@ export default function Banques() {
           ) : (
             <>
               <div className="p-3 bg-blue-50 rounded-xl text-xs text-blue-700 border border-blue-100">
-                 Un membre peut être inscrit dans plusieurs banques différentes. Chaque compte est géré indépendamment.
+                 Un membre peut être inscrit dans plusieurs caisses différentes. Chaque compte est géré indépendamment.
               </div>
               <FormField label="Membre à inscrire" required>
                 <select className="select" value={enrollForm.idMembre}
