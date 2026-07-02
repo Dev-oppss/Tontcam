@@ -27,7 +27,7 @@ export default function Header() {
   const today = new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 
   return (
-    <header className="min-h-[78px] bg-white/[0.82] border-b border-white/70 flex items-center px-5 py-3 gap-4 shrink-0 sticky top-0 z-30 backdrop-blur-xl shadow-[0_12px_30px_-24px_rgba(16,24,39,.22)]">
+    <header className="min-h-[74px] bg-white/55 border-b border-white/60 flex items-center px-5 py-3 gap-4 shrink-0 sticky top-0 z-30 backdrop-blur-xl backdrop-saturate-150 shadow-[0_8px_24px_-20px_rgba(11,13,18,.3)]">
 
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-1">
@@ -53,7 +53,7 @@ export default function Header() {
         )}
       </div>
 
-      <div className="hidden lg:flex items-center gap-2 bg-white/85 border border-surface-200 rounded-full px-4 py-2.5 w-[320px] transition-all focus-within:border-primary-300 focus-within:shadow-[0_0_0_4px_rgba(33,71,166,.08)]">
+      <div className="hidden lg:flex items-center gap-2 bg-white/70 backdrop-blur border border-white/60 rounded-full px-4 py-2.5 w-[320px] transition-all focus-within:border-indigo-300 focus-within:shadow-glow-indigo">
         <Search size={16} className="text-ink-500/70 shrink-0" />
         <input
           placeholder="Rechercher un membre, une tontine, un prêt..."

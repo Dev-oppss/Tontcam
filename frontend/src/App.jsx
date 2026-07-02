@@ -17,6 +17,14 @@ import Caisse        from './pages/Caisse';
 import Sanctions     from './pages/Sanctions';
 import Rapports      from './pages/Rapports';
 import Utilisateurs  from './pages/Utilisateurs';
+import Parametres    from './pages/Parametres';
+import Postes        from './pages/Postes';
+import PortailMembre from './pages/PortailMembre';
+import DecisionsAG   from './pages/DecisionsAG';
+import Social        from './pages/Social';
+import RapprochementBancaire from './pages/RapprochementBancaire';
+import AuditLog from './pages/AuditLog';
+import ReglementInterieur from './pages/ReglementInterieur';
 
 function WorkspaceGate({ children }) {
   const { currentAssociation, setupComplete, user } = useApp();
@@ -55,6 +63,14 @@ export default function App() {
             <Route path="sanctions"       element={<Sanctions />}     />
             <Route path="rapports"        element={<Rapports />}      />
             <Route path="utilisateurs"    element={<Utilisateurs />}  />
+            <Route path="parametres"      element={<Parametres />}    />
+            <Route path="postes"          element={<Postes />}        />
+            <Route path="mon-espace"      element={<PortailMembre />} />
+            <Route path="decisions-ag"    element={<DecisionsAG />}   />
+            <Route path="social"          element={<Social />}        />
+            <Route path="rapprochement"   element={<RapprochementBancaire />} />
+            <Route path="audit"           element={<AuditLog />}       />
+            <Route path="reglement"       element={<ReglementInterieur />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

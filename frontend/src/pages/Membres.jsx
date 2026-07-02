@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef } from 'react';
 import {
   UserPlus, Search, Eye, Pencil, Trash2, Users, Plus, Minus,
   Phone, MapPin, Briefcase, Calendar, CreditCard,
@@ -453,8 +453,9 @@ export default function Membres() {
   const handleAdd  = () => { if (!form.nom.trim()||!form.prenom.trim()) return; addMembre({...form}); setAdd(false); };
   const handleEdit = () => { if (!form.nom.trim()||!form.prenom.trim()) return; updateMembre({...edit,...form}); setEdit(null); };
 
-  const F = ({k,...p}) => <input className="input" value={form[k]||''} onChange={e=>setForm(f=>({...f,[k]:e.target.value}))} {...p}/>;
-  const S = ({k,children}) => <select className="select" value={form[k]||''} onChange={e=>setForm(f=>({...f,[k]:e.target.value}))}>{children}</select>;
+  const formRef = useRef(form); formRef.current = form;
+  const F = useRef(({k,...p}) => <input className="input" value={formRef.current[k]||''} onChange={e=>setForm(f=>({...f,[k]:e.target.value}))} {...p}/>).current;
+  const S = useRef(({k,children}) => <select className="select" value={formRef.current[k]||''} onChange={e=>setForm(f=>({...f,[k]:e.target.value}))}>{children}</select>).current;
 
   const getTontinesDuMembre  = id => membresParTontine.filter(mt=>mt.idMembre===id).map(mt=>({...mt,tontine:tontines.find(t=>t.id===mt.idTontine)}));
   const getTontinesDisponibles = id => tontines.filter(t=>!membresParTontine.some(mt=>mt.idMembre===id&&mt.idTontine===t.id));

@@ -11,6 +11,8 @@ const nav = [
     label: 'Organisation',
     children: [
       { label: 'Membres', path: '/membres' },
+      { label: 'Postes & mandats', path: '/postes' },
+      { label: 'Règlement intérieur', path: '/reglement' },
       { label: 'Réunions', path: '/reunions' },
     ],
   },
@@ -29,6 +31,7 @@ const nav = [
       { label: 'Caisses', path: '/caisses' },
       { label: 'Caisse centrale', path: '/caisse' },
       { label: 'Prêts & crédits', path: '/prets' },
+      { label: 'Rapprochement bancaire', path: '/rapprochement' },
     ],
   },
   {
@@ -36,11 +39,16 @@ const nav = [
     children: [
       { label: 'Caisse sociale', path: '/caisse-sociale' },
       { label: 'Fonds assurance', path: '/fond-assurance' },
+      { label: 'Volet social', path: '/social' },
+      { label: 'Décisions AG', path: '/decisions-ag' },
     ],
   },
   { label: 'Sanctions', path: '/sanctions' },
   { label: 'Rapports', path: '/rapports' },
   { label: 'Sécurité', path: '/utilisateurs' },
+  { label: "Journal d'audit", path: '/audit' },
+  { label: 'Paramètres', path: '/parametres' },
+  { label: 'Mon espace', path: '/mon-espace' },
 ];
 
 function Section({ item, collapsed }) {
@@ -107,8 +115,8 @@ export default function Sidebar({ collapsed, setCollapsed }) {
   return (
     <aside
       className={clsx(
-        'h-screen flex flex-col transition-all duration-300 shrink-0 relative overflow-hidden',
-        collapsed ? 'w-[72px]' : 'w-[286px]',
+        'sticky top-0 h-screen flex flex-col transition-all duration-300 shrink-0 relative overflow-hidden',
+        collapsed ? 'w-[72px]' : 'w-[276px]',
         'gradient-sidebar'
       )}
     >
@@ -119,14 +127,15 @@ export default function Sidebar({ collapsed, setCollapsed }) {
       <div className={clsx('relative z-10 border-b border-white/10', collapsed ? 'px-2 py-3' : 'px-4 py-5')}>
         <div className={clsx('flex items-center gap-3', collapsed && 'justify-center')}>
           {collapsed ? (
-            <div className="w-12 h-12 rounded-[20px] bg-white shadow-[0_12px_30px_rgba(0,0,0,.18)] flex items-center justify-center overflow-hidden">
-              <img src="/tontix-logo.jpeg" alt="TONTIX" className="w-full h-full object-cover" />
+            <div className="w-11 h-11 rounded-2xl bg-white/8 border border-white/10 flex items-center justify-center overflow-hidden">
+              <img src="/tontix-mark.png" alt="TONTIX" className="w-8 h-8 object-contain" />
             </div>
           ) : (
             <>
-              <div className="w-[170px] max-w-full rounded-[18px] bg-white p-1 shadow-[0_12px_30px_rgba(0,0,0,.18)] overflow-hidden">
-                <img src="/tontix-logo.jpeg" alt="TONTIX" className="w-full h-auto object-contain" />
+              <div className="w-9 h-9 rounded-xl bg-white/8 border border-white/10 flex items-center justify-center overflow-hidden shrink-0">
+                <img src="/tontix-mark.png" alt="TONTIX" className="w-6 h-6 object-contain" />
               </div>
+              <p className="font-display text-base font-semibold text-white tracking-tight">TONTIX</p>
               <button
                 onClick={() => setCollapsed(true)}
                 className="text-white/35 hover:text-white/90 p-1 rounded-lg transition-colors ml-auto"
