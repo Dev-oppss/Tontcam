@@ -3,8 +3,11 @@
 use App\Http\Controllers\Api\AideSocialeController;
 use App\Http\Controllers\Api\AssociationController;
 use App\Http\Controllers\Api\AuditLogController;
+use App\Http\Controllers\Api\CompteBancaireController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\CaisseController;
+use App\Http\Controllers\Api\TypeAideSocialeController;
+use App\Http\Controllers\Api\TypeSanctionController;
 use App\Http\Controllers\Api\ExportController;
 use App\Http\Controllers\Api\CycleTontineController;
 use App\Http\Controllers\Api\PortalController;
@@ -47,22 +50,29 @@ Route::middleware(['auth:sanctum', SetAssociationContext::class])->group(functio
     Route::post('/reunions/{id}/pieces-jointes', [ReunionController::class, 'update']);
     Route::post('/reunions/{id}/soumettre-signature', [ReunionController::class, 'update']);
     Route::post('/reunions/{id}/signer', [ReunionController::class, 'update']);
+    Route::post('/reunions/{id}/cloturer', [ReunionController::class, 'update']);
+    Route::post('/reunions/{id}/reporter', [ReunionController::class, 'update']);
+    Route::post('/reunions/{id}/annuler', [ReunionController::class, 'update']);
+    Route::delete('/reunions/{reunion}/ordre-du-jour/{point}', [ReunionController::class, 'destroyPoint']);
     Route::get('/reunions/{id}/pv-pdf', [ReunionController::class, 'pvPdf']);
 
     Route::apiResource('tontines', TontineController::class);
-    Route::post('/tontines/{id}/parts', [TontineController::class, 'update']);
+    Route::post('/tontines/{id}/parts', [TontineController::class, 'parts']);
     Route::post('/tontines/{id}/cycles/ouvrir', [CycleTontineController::class, 'store']);
+    Route::post('/tontines/{id}/bulletin', [TontineController::class, 'update']);
     Route::post('/cycles/{id}/cotisations', [CycleTontineController::class, 'update']);
     Route::post('/cycles/{id}/designer-gagnant', [CycleTontineController::class, 'update']);
     Route::post('/cycles/{id}/cloturer', [CycleTontineController::class, 'update']);
     Route::post('/cycles/{id}/bulletin', [CycleTontineController::class, 'update']);
     Route::get('/bulletins/{id}/pdf', [CycleTontineController::class, 'bulletinPdf']);
 
+    Route::get('/caisses/journaux', [CaisseController::class, 'journaux']);
     Route::apiResource('caisses', CaisseController::class);
     Route::post('/caisses/{id}/transactions', [CaisseController::class, 'update']);
-    Route::post('/caisses/transferts', [CaisseController::class, 'store']);
+    Route::post('/caisses/transferts', [CaisseController::class, 'transfert']);
     Route::get('/caisses/{id}/journal', [CaisseController::class, 'show']);
     Route::get('/caisses/{id}/journal-pdf', [CaisseController::class, 'journalPdf']);
+    Route::apiResource('comptes-bancaires', CompteBancaireController::class);
 
     Route::apiResource('prets', PretController::class);
     Route::post('/prets/{id}/valider', [PretController::class, 'update']);
@@ -77,6 +87,8 @@ Route::middleware(['auth:sanctum', SetAssociationContext::class])->group(functio
     Route::apiResource('aides-sociales', AideSocialeController::class);
     Route::post('/aides-sociales/{id}/valider', [AideSocialeController::class, 'update']);
     Route::post('/aides-sociales/{id}/verser', [AideSocialeController::class, 'update']);
+    Route::apiResource('types-sanctions', TypeSanctionController::class);
+    Route::apiResource('types-aides-sociales', TypeAideSocialeController::class);
     Route::get('/portail/membre', [PortalController::class, 'show']);
 
     Route::middleware('role:super_admin,controleur,president,tresorier')->group(function () {

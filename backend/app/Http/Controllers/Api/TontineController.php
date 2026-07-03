@@ -2,7 +2,11 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Models\CycleTontine;
+use App\Models\TontinePart;
 use App\Models\Tontine;
+use App\Services\BulletinGainService;
+use App\Services\TontineCycleService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -40,10 +44,15 @@ class TontineController extends CrudController
 
         // RG-CAI-003 : vérifier que la caisse est de type TONTINE
         $caisse = \App\Models\Caisse::findOrFail($data['caisse_id']);
-        if ($caisse->type !== 'TONTINE') {
-            return response()->json([
-                'message' => 'La caisse associée doit être de type TONTINE.',
-            ], 422);
+        $caisseType = strtolower(trim((string) $caisse->type));
+        if ($caisseType !== 'tontine') {
+            if (! empty($caisse->tontine_id)) {
+                return response()->json([
+                    'message' => 'La caisse associée est déjà liée à une autre tontine.',
+                ], 422);
+            }
+
+            $caisse->forceFill(['type' => 'tontine'])->save();
         }
 
         // RG-CAI-003 : une caisse TONTINE ne peut être liée qu'à une seule tontine
@@ -56,6 +65,37 @@ class TontineController extends CrudController
 
         $tontine = Tontine::create($data);
         return response()->json($tontine, 201);
+    }
+
+    public function parts(Request $request, string $id): JsonResponse
+    {
+        $tontine = Tontine::findOrFail($id);
+        $data = $request->validate([
+            'membre_id' => ['required', 'uuid'],
+            'nombre_parts' => ['sometimes', 'integer', 'min:1'],
+            'avaliste_id' => ['nullable', 'uuid'],
+            'date_gain_calendrier' => ['nullable', 'date'],
+            'notes' => ['nullable', 'string'],
+        ]);
+
+        $count = max(1, (int) ($data['nombre_parts'] ?? 1));
+        $start = ((int) ($tontine->parts()->max('numero_part') ?? 0)) + 1;
+        $created = [];
+
+        for ($i = 0; $i < $count; $i++) {
+            $created[] = TontinePart::create([
+                'tontine_id' => $tontine->id,
+                'membre_id' => $data['membre_id'],
+                'numero_part' => $start + $i,
+                'ordre_rotation' => $start + $i,
+                'date_gain_calendrier' => $data['date_gain_calendrier'] ?? null,
+                'statut' => 'disponible',
+                'avaliste_id' => $data['avaliste_id'] ?? null,
+                'notes' => $data['notes'] ?? null,
+            ]);
+        }
+
+        return response()->json($created, 201);
     }
 
     /**
@@ -79,6 +119,28 @@ class TontineController extends CrudController
             ])->save();
 
             return response()->json($tontine->refresh());
+        }
+
+        if (str_ends_with($path, 'bulletin')) {
+            $cycle = $tontine->cycles()
+                ->whereIn('statut', ['ouvert', 'en_cours', 'clos'])
+                ->orderByDesc('numero_cycle')
+                ->first();
+
+            if (! $cycle) {
+                return response()->json(['message' => 'Aucun cycle trouvé pour cette tontine.'], 404);
+            }
+
+            $retenues = $request->input('retenues', []);
+            $bulletin = app(BulletinGainService::class)->generer($cycle, $retenues, $request->user()?->id);
+
+            return response()->json($bulletin, 201);
+        }
+
+        if (str_ends_with($path, 'cycles')) {
+            return response()->json(
+                $tontine->cycles()->latest('numero_cycle')->get()
+            );
         }
 
         // RG-TON-002 : blocage montant_part si cycles lancés

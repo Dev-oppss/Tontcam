@@ -75,15 +75,19 @@ class SanctionController extends CrudController
 
         // RG-SAN-012–014 : Paiement de la sanction via caisse
         if (str_ends_with($path, 'payer')) {
-            $data     = $request->validate(['caisse_id' => ['required', 'uuid']]);
+            $data     = $request->validate(['caisse_id' => ['nullable', 'uuid']]);
             $sanction = SanctionMembre::findOrFail($id);
 
             if ($sanction->statut === 'payee') {
                 return response()->json(['message' => 'Cette sanction est déjà payée.'], 422);
             }
 
+            $caisse = isset($data['caisse_id'])
+                ? Caisse::findOrFail($data['caisse_id'])
+                : Caisse::where('association_id', $sanction->association_id)->firstOrFail();
+
             $tx = app(CaisseService::class)->entree(
-                Caisse::findOrFail($data['caisse_id']),
+                $caisse,
                 (float) $sanction->montant,
                 'Paiement sanction',
                 [

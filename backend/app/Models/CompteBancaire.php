@@ -16,6 +16,7 @@ class CompteBancaire extends Model
         'solde_dernier_releve' => 'decimal:2',
         'date_dernier_releve' => 'date',
         'actif' => 'boolean',
+        'notes' => 'array',
     ];
 
     public function association(): BelongsTo { return $this->belongsTo(Association::class); }

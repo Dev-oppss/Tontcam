@@ -19,14 +19,18 @@ import Rapports      from './pages/Rapports';
 import Utilisateurs  from './pages/Utilisateurs';
 
 function WorkspaceGate({ children }) {
-  const { currentAssociation, setupComplete, user } = useApp();
+  const { currentAssociation, setupComplete, user, loading } = useApp();
 
-  if (!setupComplete || !currentAssociation) {
-    return <Navigate to="/setup" replace />;
+  if (loading) {
+    return null;
   }
 
   if (!user) {
     return <Navigate to="/login" replace />;
+  }
+
+  if (!setupComplete || !currentAssociation) {
+    return <Navigate to="/setup" replace />;
   }
 
   return children;

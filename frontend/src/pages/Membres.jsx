@@ -450,8 +450,8 @@ export default function Membres() {
 
   const openEdit = (m) => { setForm({ ...m }); setEdit(m); };
 
-  const handleAdd  = () => { if (!form.nom.trim()||!form.prenom.trim()) return; addMembre({...form}); setAdd(false); };
-  const handleEdit = () => { if (!form.nom.trim()||!form.prenom.trim()) return; updateMembre({...edit,...form}); setEdit(null); };
+  const handleAdd  = () => { if (!form.nom.trim()||!form.prenom.trim()||!form.telephone.trim()) return; addMembre({...form}); setAdd(false); };
+  const handleEdit = () => { if (!form.nom.trim()||!form.prenom.trim()||!form.telephone.trim()) return; updateMembre({...edit,...form}); setEdit(null); };
 
   const F = ({k,...p}) => <input className="input" value={form[k]||''} onChange={e=>setForm(f=>({...f,[k]:e.target.value}))} {...p}/>;
   const S = ({k,children}) => <select className="select" value={form[k]||''} onChange={e=>setForm(f=>({...f,[k]:e.target.value}))}>{children}</select>;
@@ -611,7 +611,7 @@ export default function Membres() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <FormField label="Sexe"><S k="sexe"><option value="M">Masculin</option><option value="F">Féminin</option></S></FormField>
-              <FormField label="Téléphone"><F k="telephone" placeholder="699 000 000"/></FormField>
+              <FormField label="Téléphone" required><F k="telephone" placeholder="699 000 000"/></FormField>
             </div>
             <FormField label="Adresse"><F k="adresse" placeholder="Douala, Akwa"/></FormField>
             <FormField label="Profession"><F k="profession" placeholder="Commerçant(e)"/></FormField>

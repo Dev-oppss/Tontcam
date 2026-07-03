@@ -54,7 +54,7 @@ class SensitiveResourcePolicy
 
     private function canManage(Authenticatable $user): bool
     {
-        return in_array($user->role ?? null, ['president', 'tresorier', 'controleur', 'super_admin'], true);
+        return in_array($user->role ?? null, ['admin', 'president', 'tresorier', 'controleur', 'super_admin'], true);
     }
 
     private function ownsAssociation(Authenticatable $user, object $model): bool

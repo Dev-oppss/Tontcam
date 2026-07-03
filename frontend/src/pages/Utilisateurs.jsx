@@ -71,13 +71,13 @@ export default function Utilisateurs() {
               <td className="td">
                 <div className="flex items-center gap-2">
                   <div className="w-8 h-8 rounded-xl gradient-primary flex items-center justify-center text-white text-xs font-bold shrink-0">
-                    {u.nomUtilisateur[0].toUpperCase()}
+                    {(u.nomUtilisateur || u.name || '?')[0].toUpperCase()}
                   </div>
                   <span className="font-mono text-sm font-medium text-gray-800">{u.nomUtilisateur}</span>
                 </div>
               </td>
               <td className="td text-gray-600">{u.nomMembre}</td>
-              <td className="td"><Badge variant={roleV[u.role]}>{roleLabel[u.role]}</Badge></td>
+              <td className="td"><Badge variant={roleV[u.role] || 'gray'}>{roleLabel[u.role] || u.role || '—'}</Badge></td>
               <td className="td text-gray-400 text-xs">{u.derniereConnexion}</td>
               <td className="td"><Badge variant={u.statut==='actif'?'green':'gray'}>{u.statut==='actif'?'Actif':'Inactif'}</Badge></td>
               <td className="td">

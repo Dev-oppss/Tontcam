@@ -3,6 +3,9 @@
 namespace App\Http\Controllers\Api;
 
 use App\Models\Membre;
+use App\Models\Pret;
+use App\Models\SanctionMembre;
+use App\Models\TontinePart;
 use App\Services\DocumentSignatureService;
 use App\Services\SimplePdfService;
 use Illuminate\Http\JsonResponse;
@@ -26,6 +29,22 @@ class MembreController extends CrudController
 
     /** Filtres autorisés sur l'index */
     protected array $filterable = ['association_id', 'statut'];
+
+    public function show(Request $request, string $id): JsonResponse
+    {
+        $membre = Membre::findOrFail($id);
+
+        if (str_ends_with($request->path(), 'situation')) {
+            return response()->json([
+                'membre' => $membre,
+                'parts' => TontinePart::where('membre_id', $membre->id)->get(),
+                'sanctions' => SanctionMembre::where('membre_id', $membre->id)->orderByDesc('created_at')->get(),
+                'prets' => Pret::where('emprunteur_id', $membre->id)->orderByDesc('created_at')->get(),
+            ]);
+        }
+
+        return response()->json($membre);
+    }
 
     public function importCsv(Request $request): JsonResponse
     {

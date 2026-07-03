@@ -28,6 +28,25 @@ class CaisseController extends CrudController
     protected string $model = Caisse::class;
     protected array $filterable = ['association_id', 'type'];
 
+    public function show(Request $request, string $id): JsonResponse
+    {
+        $caisse = Caisse::findOrFail($id);
+        if (str_ends_with($request->path(), 'journal')) {
+            $transactions = \App\Models\Transaction::where('caisse_id', $caisse->id)
+                ->orderByDesc('date_transaction')
+                ->limit(100)
+                ->get();
+
+            return response()->json([
+                'caisse' => $caisse,
+                'transactions' => $transactions,
+                'solde_actuel' => $caisse->solde_actuel,
+            ]);
+        }
+
+        return response()->json($caisse);
+    }
+
     public function journalPdf(Request $request, string $id): JsonResponse
     {
         $caisse = Caisse::findOrFail($id);
@@ -44,6 +63,23 @@ class CaisseController extends CrudController
             'caisse_id' => $caisse->id,
         ]);
         return response()->json(['pdf_url' => 'storage/journaux/'.$caisse->id.'.pdf']);
+    }
+
+    public function journaux(Request $request): JsonResponse
+    {
+        $caisses = Caisse::all();
+        $transactions = \App\Models\Transaction::whereIn('caisse_id', $caisses->pluck('id'))
+            ->orderByDesc('date_transaction')
+            ->get()
+            ->groupBy('caisse_id');
+
+        $payload = $caisses->map(fn (Caisse $caisse) => [
+            'caisse' => $caisse,
+            'transactions' => ($transactions[$caisse->id] ?? collect())->take(100)->values(),
+            'solde_actuel' => $caisse->solde_actuel,
+        ]);
+
+        return response()->json($payload);
     }
 
     /**
@@ -73,6 +109,34 @@ class CaisseController extends CrudController
 
         $caisse = Caisse::create($data);
         return response()->json($caisse, 201);
+    }
+
+    public function transfert(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'caisse_source_id' => ['required', 'uuid'],
+            'caisse_destination_id' => ['required', 'uuid', 'different:caisse_source_id'],
+            'montant' => ['required', 'numeric', 'min:1'],
+            'libelle' => ['required', 'string', 'max:255'],
+            'mode_paiement' => ['required', 'in:especes,cheque,virement,mobile_money,carte_bancaire'],
+        ]);
+
+        $source = Caisse::findOrFail($data['caisse_source_id']);
+        $destination = Caisse::findOrFail($data['caisse_destination_id']);
+
+        return response()->json(
+            app(CaisseService::class)->transfert(
+                $source,
+                $destination,
+                (float) $data['montant'],
+                $data['libelle'],
+                [
+                    'mode_paiement' => $data['mode_paiement'],
+                    'created_by' => $request->user()?->id,
+                ]
+            ),
+            201
+        );
     }
 
     /**

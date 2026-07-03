@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Models\OrdreDuJourItem;
 use App\Models\Reunion;
 use App\Services\NotificationService;
 use App\Services\ReunionService;
@@ -33,6 +34,13 @@ class ReunionController extends CrudController
         return response()->json(['pdf_url' => $pdfUrl]);
     }
 
+    public function destroyPoint(Request $request, string $reunionId, string $pointId): JsonResponse
+    {
+        $point = OrdreDuJourItem::where('reunion_id', $reunionId)->findOrFail($pointId);
+        $point->delete();
+        return response()->json(['deleted' => true]);
+    }
+
     /**
      * RG-REU-001 : Validation des champs obligatoires.
      * RG-REU-002 : Date ≥ maintenant + 24h.
@@ -50,7 +58,7 @@ class ReunionController extends CrudController
             'lieu'           => ['required', 'string', 'max:255'],
             'est_domicile_membre' => ['sometimes', 'boolean'],
             'hote_membre_id' => ['nullable', 'uuid'],
-            'quorum_requis'  => ['sometimes', 'integer', 'min:0'],
+            'quorum_requis'  => ['nullable', 'integer', 'min:0'],
             'notes'          => ['nullable', 'string'],
         ]);
 
@@ -105,7 +113,45 @@ class ReunionController extends CrudController
                 $request->only(['motif_absence', 'heure_arrivee'])
             ),
             201
-        );
+            );
+        }
+
+        // RG-REU-015 : ordre du jour / rapports / pièces jointes
+        if (str_ends_with($path, 'ordre-du-jour') || str_ends_with($path, 'rapports') || str_ends_with($path, 'pieces-jointes')) {
+            $data = $request->validate([
+                'item_id'        => ['nullable', 'uuid'],
+                'rubrique_id'    => ['nullable', 'uuid'],
+                'libelle_libre'  => ['nullable', 'string', 'max:300'],
+                'ordre'          => ['nullable', 'integer', 'min:1'],
+                'rapporteur_id'  => ['nullable', 'uuid'],
+                'contenu_rapport'=> ['nullable', 'string'],
+                'rapport_valide' => ['sometimes', 'boolean'],
+                'pieces_jointes' => ['nullable', 'array'],
+            ]);
+
+            $item = $data['item_id'] ? OrdreDuJourItem::findOrFail($data['item_id']) : new OrdreDuJourItem();
+            $item->fill([
+                'reunion_id' => $reunion->id,
+                'rubrique_id' => $data['rubrique_id'] ?? $item->rubrique_id ?? null,
+                'libelle_libre' => $data['libelle_libre'] ?? $item->libelle_libre ?? null,
+                'ordre' => $data['ordre'] ?? $item->ordre ?? 99,
+                'rapporteur_id' => $data['rapporteur_id'] ?? $item->rapporteur_id ?? null,
+            ]);
+
+            if (str_ends_with($path, 'rapports')) {
+                $item->contenu_rapport = $data['contenu_rapport'] ?? $item->contenu_rapport;
+                if (array_key_exists('rapport_valide', $data)) {
+                    $item->rapport_valide = (bool) $data['rapport_valide'];
+                }
+            }
+
+            if (str_ends_with($path, 'pieces-jointes')) {
+                $current = json_decode((string) ($item->pieces_jointes ?? '[]'), true) ?: [];
+                $item->pieces_jointes = array_values(array_merge($current, $data['pieces_jointes'] ?? []));
+            }
+
+            $item->save();
+            return response()->json($item->refresh(), $data['item_id'] ? 200 : 201);
         }
 
         // RG-REU-022–023 : Signature du PV
@@ -128,6 +174,17 @@ class ReunionController extends CrudController
                 $service->verifierRapportsObligatoires($reunion);
             }
             return response()->json(['message' => 'PV soumis pour signature', 'reunion_id' => $reunion->id]);
+        }
+
+        if (str_ends_with($path, 'cloturer')) {
+            if (method_exists($service, 'verifierRapportsObligatoires')) {
+                $service->verifierRapportsObligatoires($reunion);
+            }
+            $reunion->forceFill([
+                'statut' => 'tenue',
+                'heure_fin_reelle' => now()->format('H:i:s'),
+            ])->save();
+            return response()->json($reunion->refresh());
         }
 
         // RG-REU-006 : Report d'une réunion (≤ 24h avant)

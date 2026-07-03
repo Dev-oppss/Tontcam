@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Models\Caisse;
+use App\Models\EcheancePret;
 use App\Models\Pret;
 use App\Services\CaisseService;
 use App\Services\PretService;
@@ -33,6 +34,19 @@ class PretController extends CrudController
 {
     protected string $model = Pret::class;
     protected array $filterable = ['caisse_id', 'emprunteur_id', 'statut'];
+
+    public function show(Request $request, string $id): JsonResponse
+    {
+        $pret = Pret::findOrFail($id);
+        if (str_ends_with($request->path(), 'echeances')) {
+            return response()->json([
+                'pret' => $pret,
+                'echeances' => EcheancePret::where('pret_id', $pret->id)->orderBy('numero_echeance')->get(),
+            ]);
+        }
+
+        return response()->json($pret->load(['echeances', 'emprunteur', 'caisse']));
+    }
 
     /**
      * Demande de prêt.
