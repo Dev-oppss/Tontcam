@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { X, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import clsx from 'clsx';
 
@@ -77,23 +78,31 @@ export function Modal({ open, onClose, title, children, footer, size = 'md' }) {
   }, [open]);
 
   if (!open) return null;
-  return (
-    <div className="modal-overlay scale-in" onClick={onClose}>
-      <div className="modal-box" style={sizeStyle} onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-4 py-3 border-b border-surface-100">
+  return createPortal(
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 md:p-8 bg-[rgba(11,13,18,.6)] backdrop-blur-md"
+      onClick={onClose}
+    >
+      <div
+        className="w-full flex flex-col my-4 md:my-8 relative rounded-3xl border border-white/60 bg-white/45 backdrop-blur-2xl backdrop-saturate-150 shadow-[0_30px_90px_rgba(11,13,18,.3)]"
+        style={{ ...sizeStyle, maxHeight: 'calc(100dvh - 4rem)' }}
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="shrink-0 flex items-center justify-between px-5 py-4 border-b border-white/40">
           <h3 className="font-semibold text-ink-900 text-base">{title}</h3>
-          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center text-ink-600/50 hover:text-ink-800 hover:bg-surface-100 rounded-lg transition-all">
+          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center text-ink-600/60 hover:text-ink-900 hover:bg-white/60 rounded-lg transition-all">
             <X size={16} />
           </button>
         </div>
-        <div ref={bodyRef} className="modal-body px-4 py-3.5">{children}</div>
+        <div ref={bodyRef} className="flex-1 min-h-0 overflow-y-auto px-5 py-4">{children}</div>
         {footer && (
-          <div className="sticky bottom-0 z-10 px-4 py-3 border-t border-surface-100 flex justify-end gap-3 bg-surface-50 rounded-b-[18px] shadow-[0_-8px_24px_rgba(16,24,39,0.06)]">
+          <div className="shrink-0 px-5 py-4 border-t border-white/40 flex justify-end gap-3 bg-white/30 rounded-b-3xl">
             {footer}
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 

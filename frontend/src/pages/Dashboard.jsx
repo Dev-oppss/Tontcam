@@ -8,8 +8,8 @@ import clsx from 'clsx';
 
 const TYPE_COLORS = {
   rotation: 'var(--brand)',
-  tirage: 'var(--brand-soft)',
-  enchere: 'var(--brand-pale)',
+  tirage: '#8D98EA',
+  enchere: '#D9BA79',
 };
 
 const TYPE_ICONS = {
@@ -18,7 +18,7 @@ const TYPE_ICONS = {
   enchere: Award,
 };
 
-const BANK_COLORS = ['#2147a6', '#d9a629', '#10224d', '#55617c', '#c7921f'];
+const BANK_COLORS = ['#4C5FD6', '#B08A3E', '#171A22', '#8D98EA', '#1F8A6F'];
 
 const MODULES = [
   { title: 'Organisation', desc: 'Associations, postes, règlement intérieur, paramètres.' },
@@ -74,6 +74,7 @@ export default function Dashboard() {
     tontines,
     membresParTontine,
     planningTours,
+    user,
   } = useApp();
 
   const alertPrets = prets.filter((p) => p.statut === 'en_retard');
@@ -88,103 +89,39 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
-      <section className="hero-panel rounded-[30px] p-6 md:p-8 relative overflow-hidden">
-        <div className="absolute inset-0 opacity-20 surface-pattern pointer-events-none" />
-        <div className="relative grid gap-6 lg:grid-cols-[1.4fr_.9fr]">
-          <div>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="hero-chip">TONTIX</span>
-              <span className="hero-chip">Association au centre</span>
-            </div>
-            <h2 className="mt-4 text-3xl md:text-5xl font-display font-semibold max-w-3xl leading-[1.05]">
-              Une plateforme de tontine qui respire la rigueur, la solidarité et la culture.
-            </h2>
-            <div className="africa-band mt-5 max-w-[220px]" />
-            <p className="mt-4 text-white/[0.74] max-w-2xl leading-relaxed">
-              Chaque association a son espace, puis ses membres, réunions, tontines, finances, prêts, sanctions,
-              social et rapports. Le front est déjà pensé dans cet ordre métier.
-            </p>
-
-            {currentAssociation && (
-              <div className="mt-5 rounded-[24px] border border-white/12 bg-white/[0.08] p-4 max-w-2xl">
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="text-[11px] uppercase tracking-[0.16em] text-white/55 font-bold">Association active</p>
-                    <p className="text-lg md:text-xl font-display font-semibold mt-1">{currentAssociation.nom}</p>
-                    <p className="text-sm text-white/[0.70] mt-1">
-                      {currentAssociation.siege} · {currentAssociation.ville}, {currentAssociation.pays}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-[11px] uppercase tracking-[0.16em] text-white/55 font-bold">Code</p>
-                    <p className="text-lg font-display font-semibold mt-1">{currentAssociation.abrege}</p>
-                  </div>
-                </div>
-                <div className="mt-4 flex flex-wrap gap-2">
-                  {['Association', 'Membres', 'Réunions', 'Tontines', 'Finance', 'Rapports'].map((step, index) => (
-                    <span key={step} className="hero-chip">
-                      {String(index + 1).padStart(2, '0')} · {step}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <div className="flex flex-wrap gap-2 mt-5">
-              {MODULES.slice(0, 6).map((module) => (
-                <span key={module.title} className="hero-chip">
-                  {module.title}
-                </span>
-              ))}
-            </div>
+      <section className="card flex flex-wrap items-center justify-between gap-4 py-4">
+        <div className="min-w-0">
+          <p className="text-xs text-ink-600/60">
+            Bonjour, <span className="font-semibold text-ink-900">{user?.name || 'Président'}</span>
+          </p>
+          <h2 className="font-display text-lg font-semibold text-ink-900 mt-0.5 truncate">
+            {currentAssociation?.nom || 'Association'}
+            {currentAssociation?.ville && <span className="text-ink-600/50 font-normal text-sm"> · {currentAssociation.ville}, {currentAssociation.pays}</span>}
+          </h2>
+        </div>
+        <div className="flex gap-2 flex-wrap">
+          <div className="rounded-xl bg-white/40 border border-white/50 px-3 py-2 text-center min-w-[76px]">
+            <p className="text-[9px] font-bold uppercase tracking-wider text-ink-600/50">Membres</p>
+            <p className="font-mono text-base font-semibold text-ink-900">{dashboardStats.membresActifs}</p>
           </div>
-
-          <div className="grid gap-3">
-            {currentAssociation && (
-              <div className="rounded-[24px] bg-white/10 border border-white/10 p-4">
-                <div className="flex items-center gap-3">
-                  <img src="/tontix-logo.jpeg" alt="TONTIX" className="h-14 w-14 rounded-[18px] bg-white p-1 shrink-0 object-cover" />
-                  <div className="min-w-0 flex-1">
-                    <p className="text-white/60 text-xs uppercase tracking-[0.14em] font-bold">Association racine</p>
-                    <p className="text-lg font-display font-semibold mt-1 truncate">{currentAssociation.nom}</p>
-                    <p className="text-sm text-white/[0.72] mt-1">
-                      {currentAssociation.ville}, {currentAssociation.pays}
-                    </p>
-                  </div>
-                </div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <span className="hero-chip">ID · {currentAssociation.id}</span>
-                  <span className="hero-chip">Devise · {currentAssociation.devise}</span>
-                  <span className="hero-chip">Siège · {currentAssociation.siege}</span>
-                </div>
-              </div>
-            )}
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="rounded-[24px] bg-white/10 border border-white/10 p-4">
-                <p className="text-white/60 text-xs uppercase tracking-[0.14em] font-bold">Membres actifs</p>
-                <p className="text-2xl font-display font-semibold mt-2">{dashboardStats.membresActifs}</p>
-              </div>
-              <div className="rounded-[24px] bg-white/10 border border-white/10 p-4">
-                <p className="text-white/60 text-xs uppercase tracking-[0.14em] font-bold">Tontines</p>
-                <p className="text-2xl font-display font-semibold mt-2">{dashboardStats.tontinesActives}</p>
-              </div>
-              <div className="rounded-[24px] bg-white/10 border border-white/10 p-4">
-                <p className="text-white/60 text-xs uppercase tracking-[0.14em] font-bold">Prêts</p>
-                <p className="text-2xl font-display font-semibold mt-2">{dashboardStats.pretsEnCours}</p>
-              </div>
-              <div className="rounded-[24px] bg-white/10 border border-white/10 p-4">
-                <p className="text-white/60 text-xs uppercase tracking-[0.14em] font-bold">Caisse</p>
-                <p className="text-2xl font-display font-semibold mt-2">{fmt(dashboardStats.soldeCaisse)}</p>
-              </div>
-            </div>
+          <div className="rounded-xl bg-white/40 border border-white/50 px-3 py-2 text-center min-w-[76px]">
+            <p className="text-[9px] font-bold uppercase tracking-wider text-ink-600/50">Tontines</p>
+            <p className="font-mono text-base font-semibold text-ink-900">{dashboardStats.tontinesActives}</p>
+          </div>
+          <div className="rounded-xl bg-white/40 border border-white/50 px-3 py-2 text-center min-w-[76px]">
+            <p className="text-[9px] font-bold uppercase tracking-wider text-ink-600/50">Prêts</p>
+            <p className="font-mono text-base font-semibold text-ink-900">{dashboardStats.pretsEnCours}</p>
+          </div>
+          <div className="rounded-xl bg-indigo-50 border border-indigo-100 px-3 py-2 text-center min-w-[92px]">
+            <p className="text-[9px] font-bold uppercase tracking-wider text-indigo-600/70">Caisse</p>
+            <p className="font-mono text-base font-semibold text-indigo-700">{fmt(dashboardStats.soldeCaisse)}</p>
           </div>
         </div>
       </section>
 
       {alertPrets.length > 0 && (
         <div className="bg-[#fff3d1] border border-[#edd399] rounded-2xl px-4 py-3 flex items-center gap-3 text-sm text-[#84590e]">
-          <ShieldAlert size={18} className="text-[#d9a629] shrink-0" />
+          <ShieldAlert size={18} className="text-[#B08A3E] shrink-0" />
           <span>
             <strong>{alertPrets.length} prêt(s) en retard</strong> - relancer les membres concernés.
           </span>
@@ -195,17 +132,17 @@ export default function Dashboard() {
       )}
 
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
-        <StatCard icon={Users} label="Membres actifs" value={dashboardStats.membresActifs} sub={`sur ${dashboardStats.totalMembres} membres`} iconBg="bg-[#e7efff]" iconColor="text-[#2147a6]" accent="var(--brand)" />
+        <StatCard icon={Users} label="Membres actifs" value={dashboardStats.membresActifs} sub={`sur ${dashboardStats.totalMembres} membres`} iconBg="bg-[#e7efff]" iconColor="text-[#4C5FD6]" accent="var(--brand)" />
         <StatCard icon={Wallet} label="Solde caisse" value={fmt(dashboardStats.soldeCaisse)} sub="Caisse centrale" iconBg="bg-[#fff3d1]" iconColor="text-[#b57f13]" accent="var(--brand-dark)" />
-        <StatCard icon={Building2} label="Total caisses" value={fmt(dashboardStats.totalBanques)} sub="Épargnes internes" iconBg="bg-[#eef4ff]" iconColor="text-[#2147a6]" accent="var(--brand-soft)" />
-        <StatCard icon={HandCoins} label="Prêts en cours" value={dashboardStats.pretsEnCours} sub={`Restant : ${fmt(dashboardStats.totalPretsRestants)}`} iconBg="bg-[#f2f0eb]" iconColor="text-[#55617c]" accent="var(--brand-pale)" />
+        <StatCard icon={Building2} label="Total caisses" value={fmt(dashboardStats.totalBanques)} sub="Épargnes internes" iconBg="bg-[#eef4ff]" iconColor="text-[#4C5FD6]" accent="#8D98EA" />
+        <StatCard icon={HandCoins} label="Prêts en cours" value={dashboardStats.pretsEnCours} sub={`Restant : ${fmt(dashboardStats.totalPretsRestants)}`} iconBg="bg-[#f2f0eb]" iconColor="text-[#55617c]" accent="#D9BA79" />
       </div>
 
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
-        <StatCard icon={RefreshCw} label="Tontines actives" value={dashboardStats.tontinesActives} iconBg="bg-[#e7efff]" iconColor="text-[#2147a6]" accent="var(--brand)" />
-        <StatCard icon={Heart} label="Fond assurance" value={fmt(dashboardStats.fondAssurance || dashboardStats.caisseSociale)} iconBg="bg-[#fff3d1]" iconColor="text-[#d9a629]" accent="var(--brand-dark)" />
+        <StatCard icon={RefreshCw} label="Tontines actives" value={dashboardStats.tontinesActives} iconBg="bg-[#e7efff]" iconColor="text-[#4C5FD6]" accent="var(--brand)" />
+        <StatCard icon={Heart} label="Fond assurance" value={fmt(dashboardStats.fondAssurance || dashboardStats.caisseSociale)} iconBg="bg-[#fff3d1]" iconColor="text-[#B08A3E]" accent="var(--brand-dark)" />
         <StatCard icon={ShieldAlert} label="Sanctions impayées" value={dashboardStats.sanctionsImpayees} iconBg="bg-[#fff3d1]" iconColor="text-[#b57f13]" accent="var(--brand-dark)" />
-        <StatCard icon={CalendarDays} label="Prochaine réunion" value={dashboardStats.prochaineReunion ? fmtDate(dashboardStats.prochaineReunion) : '—'} sub="Agenda à venir" iconBg="bg-[#eef4ff]" iconColor="text-[#2147a6]" accent="var(--brand-soft)" />
+        <StatCard icon={CalendarDays} label="Prochaine réunion" value={dashboardStats.prochaineReunion ? fmtDate(dashboardStats.prochaineReunion) : '—'} sub="Agenda à venir" iconBg="bg-[#eef4ff]" iconColor="text-[#4C5FD6]" accent="#8D98EA" />
       </div>
 
       <SectionCard
@@ -222,7 +159,7 @@ export default function Dashboard() {
       <SectionCard
         title="Tontines actives"
         subtitle="Vue des groupes en circulation et de leur progression."
-        action={<NavLink to="/tontines" className="text-xs text-[#2147a6] hover:underline flex items-center gap-1">Gérer <ArrowRight size={12} /></NavLink>}
+        action={<NavLink to="/tontines" className="text-xs text-[#4C5FD6] hover:underline flex items-center gap-1">Gérer <ArrowRight size={12} /></NavLink>}
       >
         {tontines.filter((t) => t.statut === 'active').length === 0 ? (
           <EmptyState
@@ -244,7 +181,7 @@ export default function Dashboard() {
               return (
                 <NavLink key={t.id} to="/tontines" className="module-tile block">
                   <div className="flex items-center gap-2 mb-3">
-                    <TypeIcon size={18} className="text-[#2147a6]" />
+                    <TypeIcon size={18} className="text-[#4C5FD6]" />
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-display font-semibold text-ink-900 truncate">{t.nom}</p>
                       <p className="text-xs text-ink-500 mt-0.5">
@@ -255,10 +192,10 @@ export default function Dashboard() {
 
                   <div className="flex justify-between text-xs text-ink-500 mb-1">
                     <span>Pot / tour</span>
-                    <span className="font-semibold text-[#2147a6]">{fmt(potTour)}</span>
+                    <span className="font-semibold text-[#4C5FD6]">{fmt(potTour)}</span>
                   </div>
 
-                  <div className="h-1.5 bg-[#f2eadf] rounded-full overflow-hidden mb-1">
+                  <div className="h-1.5 bg-[#ECEEF2] rounded-full overflow-hidden mb-1">
                     <div
                       className="h-full rounded-full transition-all"
                       style={{ width: `${progress}%`, background: TYPE_COLORS[t.typeAttribution] || 'var(--brand)' }}
@@ -365,7 +302,7 @@ export default function Dashboard() {
         <SectionCard
           title="Dernières attributions"
           subtitle="Historique rapide des tours de tontine."
-          action={<NavLink to="/rotations" className="text-xs text-[#2147a6] hover:underline flex items-center gap-1">Voir tout <ArrowRight size={12} /></NavLink>}
+          action={<NavLink to="/rotations" className="text-xs text-[#4C5FD6] hover:underline flex items-center gap-1">Voir tout <ArrowRight size={12} /></NavLink>}
         >
           {lastRotations.length === 0 ? (
             <EmptyState
@@ -377,7 +314,7 @@ export default function Dashboard() {
             <div className="space-y-2">
               {lastRotations.map((r) => (
                 <div key={r.id} className="flex items-center gap-3 p-3 bg-white/70 border border-surface-200 rounded-2xl">
-                  <div className="w-10 h-10 rounded-2xl bg-[linear-gradient(135deg,#10224d_0%,#2147a6_100%)] flex items-center justify-center text-white text-xs font-bold shrink-0">
+                  <div className="w-10 h-10 rounded-2xl bg-[linear-gradient(135deg,#171A22_0%,#4C5FD6_100%)] flex items-center justify-center text-white text-xs font-bold shrink-0">
                     T{r.numeroTour}
                   </div>
                   <div className="flex-1 min-w-0">
@@ -386,7 +323,7 @@ export default function Dashboard() {
                   </div>
                   <div className="text-right">
                     <p className="text-sm font-semibold text-ink-800">{fmt(r.montantRecu)}</p>
-                    {r.enchere > 0 && <p className="text-xs text-[#d9a629]">Enchère : {fmt(r.enchere)}</p>}
+                    {r.enchere > 0 && <p className="text-xs text-[#B08A3E]">Enchère : {fmt(r.enchere)}</p>}
                   </div>
                 </div>
               ))}
@@ -397,7 +334,7 @@ export default function Dashboard() {
         <SectionCard
           title="Prêts en cours"
           subtitle="Suivi des remboursements et des retards."
-          action={<NavLink to="/prets" className="text-xs text-[#2147a6] hover:underline flex items-center gap-1">Voir tout <ArrowRight size={12} /></NavLink>}
+          action={<NavLink to="/prets" className="text-xs text-[#4C5FD6] hover:underline flex items-center gap-1">Voir tout <ArrowRight size={12} /></NavLink>}
         >
           {prets.filter((p) => p.statut !== 'rembourse').length === 0 ? (
             <EmptyState
@@ -421,9 +358,9 @@ export default function Dashboard() {
                       <span>{fmt(p.montantRembourse)} remboursés</span>
                       <span>{pct}%</span>
                     </div>
-                    <div className="w-full bg-[#f2eadf] rounded-full h-1.5">
+                    <div className="w-full bg-[#ECEEF2] rounded-full h-1.5">
                       <div
-                        className={clsx('h-1.5 rounded-full', p.statut === 'en_retard' ? 'bg-[#c7563a]' : 'bg-[#2147a6]')}
+                        className={clsx('h-1.5 rounded-full', p.statut === 'en_retard' ? 'bg-[#C24E33]' : 'bg-[#4C5FD6]')}
                         style={{ width: `${pct}%` }}
                       />
                     </div>

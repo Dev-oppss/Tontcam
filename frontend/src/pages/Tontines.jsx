@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef } from 'react';
 import {
   Plus, RefreshCw, Calendar, Users, UserPlus, Trash2, Pencil,
   BadgeCheck, TrendingUp, Info, Trophy, Shuffle, ChevronRight,
@@ -54,7 +54,7 @@ function calcDateFin(dateDebut, nbTours, periode) {
 }
 
 const EMPTY_FORM = { nom:'', cotisation:'', caisseId:'', periode:'mensuel', nbTours:12, typeAttribution:'rotation', dateDebut:'', dateFin:'' };
-const EMPTY_MT   = { idMembre:'', nombreParts:'1', dateAdhesion: new Date().toISOString().split('T')[0] };
+const EMPTY_MT   = { idMembre:'', nombreParts:'1', dateAdhesion: new Date().toISOString().split('T')[0], idAvaliste:'' };
 
 export default function Tontines() {
   const {
@@ -116,7 +116,7 @@ export default function Tontines() {
 
   const handleAddMembre = () => {
     if (!formMT.idMembre || !showMembres) return;
-    addMembreTontine({ idTontine: showMembres.id, idMembre: Number(formMT.idMembre), nombreParts: Number(formMT.nombreParts) || 1, dateAdhesion: formMT.dateAdhesion });
+    addMembreTontine({ idTontine: showMembres.id, idMembre: Number(formMT.idMembre), nombreParts: Number(formMT.nombreParts) || 1, dateAdhesion: formMT.dateAdhesion, idAvaliste: formMT.idAvaliste ? Number(formMT.idAvaliste) : null });
     setShowAddMembre(false); setFormMT(EMPTY_MT);
   };
 
@@ -147,8 +147,9 @@ export default function Tontines() {
     return rotation ? { rotation, bids: encheres.filter(e => e.idRotation === rotation.id) } : null;
   };
 
-  const F = ({ k, ...p }) => <input className="input" value={form[k]||''} onChange={e=>setForm(f=>({...f,[k]:e.target.value}))} {...p}/>;
-  const S = ({ k, children }) => <select className="select" value={form[k]||''} onChange={e=>setForm(f=>({...f,[k]:e.target.value}))}>{children}</select>;
+  const formRef = useRef(form); formRef.current = form;
+  const F = useRef(({ k, ...p }) => <input className="input" value={formRef.current[k]||''} onChange={e=>setForm(f=>({...f,[k]:e.target.value}))} {...p}/>).current;
+  const S = useRef(({ k, children }) => <select className="select" value={formRef.current[k]||''} onChange={e=>setForm(f=>({...f,[k]:e.target.value}))}>{children}</select>).current;
 
   const tabs = [
     { id:'toutes',   label:'Toutes',       count: tontines.length },
@@ -681,6 +682,14 @@ export default function Tontines() {
                   <span className="text-gray-600">Cotisation / tour :</span>
                   <span className="font-bold text-primary-700">{fmt(Number(showMembres.cotisation)*Number(formMT.nombreParts))}</span>
                 </div>
+              )}
+              {showMembres?.avalisteRequis && (
+                <FormField label="Avaliste" required hint="Requis par cette tontine — aucun gain ne peut être versé sans avaliste valide (RG-TON-006/011)">
+                  <select className="select" value={formMT.idAvaliste} onChange={e=>setFormMT(f=>({...f,idAvaliste:e.target.value}))}>
+                    <option value="">— Sélectionner —</option>
+                    {membres.filter(m=>m.id!==Number(formMT.idMembre)&&m.statut==='actif').map(m=><option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
+                  </select>
+                </FormField>
               )}
             </>
           )}

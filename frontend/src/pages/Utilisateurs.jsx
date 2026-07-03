@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { UserCog, Plus, ShieldCheck, Pencil, Power } from 'lucide-react';
 import { roleLabel } from '../data/mockData';
 import { useApp } from '../context/AppContext';
@@ -29,12 +29,13 @@ export default function Utilisateurs() {
     setConfirm(null);
   };
 
-  const F = ({ k, ...p }) => (
-    <input className="input" value={form[k]||''} onChange={e=>setForm(f=>({...f,[k]:e.target.value}))} {...p}/>
-  );
-  const S = ({ k, children }) => (
-    <select className="select" value={form[k]||''} onChange={e=>setForm(f=>({...f,[k]:e.target.value}))}>{children}</select>
-  );
+  const formRef = useRef(form); formRef.current = form;
+  const F = useRef(({ k, ...p }) => (
+    <input className="input" value={formRef.current[k]||''} onChange={e=>setForm(f=>({...f,[k]:e.target.value}))} {...p}/>
+  )).current;
+  const S = useRef(({ k, children }) => (
+    <select className="select" value={formRef.current[k]||''} onChange={e=>setForm(f=>({...f,[k]:e.target.value}))}>{children}</select>
+  )).current;
 
   return (
     <div className="space-y-6">
