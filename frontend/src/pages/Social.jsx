@@ -1,73 +1,68 @@
 import { useState, useMemo } from 'react';
-import { HeartHandshake, Plus, Paperclip, CheckCircle2, Clock } from 'lucide-react';
+import { HeartHandshake, Plus, Paperclip, CheckCircle2, XCircle, Clock, Wallet } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { fmt, fmtDate } from '../data/mockData';
 import { PageHeader, SectionCard, Table, Badge, Modal, FormField } from '../components/ui/index';
+import { ModePaiementFields, isModePaiementValid, ModePaiementBadge } from '../components/ui/ModePaiement';
 
-const LABELS_EVENEMENT = {
-  naissance: 'Naissance', mariage: 'Mariage', maladie: 'Maladie',
-  deces_membre: 'Décès (membre)', deces_famille: 'Décès (famille proche)', autre: 'Autre',
-};
+const CATEGORIES = [
+  { code: 'naissance',      label: 'Naissance',            delaiJours: 30, param: 'aideNaissance' },
+  { code: 'mariage',        label: 'Mariage',               delaiJours: 30, param: 'aideMariage' },
+  { code: 'maladie',        label: 'Maladie',                delaiJours: 15, param: null },
+  { code: 'deces_membre',   label: 'Décès (membre)',        delaiJours: 7,  param: 'aideDecesMembre' },
+  { code: 'deces_famille',  label: 'Décès (famille proche)', delaiJours: 7,  param: 'aideDecesFamille' },
+  { code: 'autre',          label: 'Autre',                  delaiJours: 30, param: null },
+];
 
-const EMPTY = { idMembre: '', categorie: '', montant: '', description: '', justificatif: '', dateDeclaration: new Date().toISOString().split('T')[0] };
-const EMPTY_TYPE = { libelle: '', typeEvenement: 'naissance', montantFixe: '', caisseSourceId: '', nbMaxParAn: 3 };
+const EMPTY = { idMembre: '', categorie: 'naissance', montant: '', description: '', justificatif: '', dateDeclaration: new Date().toISOString().split('T')[0] };
 
 export default function Social() {
-  const { membres = [], aidesSociales = [], addAideSociale, addAide, validerAideSociale, typesAideSociale = [], addTypeAideSociale, caisses = [], parametres = {} } = useApp();
+  const { membres = [], aidesSociales = [], addAideSociale, validerAideSociale, verserAideSociale, parametres = {} } = useApp();
   const [add, setAdd] = useState(false);
-  const [addType, setAddType] = useState(false);
+  const [verserModal, setVerserModal] = useState(null);
+  const [verserMode, setVerserMode] = useState('especes');
+  const [verserDetails, setVerserDetails] = useState('');
   const [form, setForm] = useState(EMPTY);
-  const [typeForm, setTypeForm] = useState(EMPTY_TYPE);
 
-  const creerAide = addAideSociale || addAide;
   const maxParCategorieAn = Number(parametres.maxAidesParCategorieAn || 3);
   const anneeEnCours = new Date().getFullYear();
 
-  const nbDejaAccorde = (idMembre, typeId) =>
-    aidesSociales.filter((a) => a.idMembre === Number(idMembre) && a.typeEvenement === typeId && new Date(a.dateDeclaration).getFullYear() === anneeEnCours).length;
+  const nbDejaAccorde = (idMembre, categorie) =>
+    aidesSociales.filter((a) => a.idMembre === idMembre && a.categorie === categorie && new Date(a.dateDeclaration).getFullYear() === anneeEnCours).length;
 
-  const typeSelectionne = useMemo(() => typesAideSociale.find((t) => t.id === form.categorie), [form.categorie, typesAideSociale]);
-  const montantSuggere = typeSelectionne?.montantFixe || '';
+  const montantSuggere = useMemo(() => {
+    const cat = CATEGORIES.find((c) => c.code === form.categorie);
+    return cat?.param ? Number(parametres[cat.param] || 0) : '';
+  }, [form.categorie, parametres]);
 
   const enAttente = aidesSociales.filter((a) => a.statut === 'en_attente');
-  const versees = aidesSociales.filter((a) => a.statut === 'verse' || a.statut === 'versee');
-  const totalVerse = versees.reduce((s, a) => s + Number(a.montantAide || a.montant || 0), 0);
+  const versees = aidesSociales.filter((a) => a.statut === 'versee');
+  const totalVerse = versees.reduce((s, a) => s + Number(a.montant), 0);
 
   const handleAdd = () => {
     if (!form.idMembre || !form.categorie) return;
-    if (nbDejaAccorde(form.idMembre, form.categorie) >= (typeSelectionne?.nbMaxParAn || maxParCategorieAn)) return;
-    creerAide({ ...form, typeEvenement: form.categorie, montantAide: Number(form.montant || montantSuggere || 0) });
+    if (nbDejaAccorde(form.idMembre, form.categorie) >= maxParCategorieAn) return; // garde-fou RG-SOC-010
+    const m = membres.find((x) => x.id === form.idMembre);
+    addAideSociale?.({
+      ...form,
+      idMembre: form.idMembre,
+      nomMembre: `${m?.nom || ''} ${m?.prenom || ''}`.trim(),
+      montant: Number(form.montant || montantSuggere || 0),
+      statut: 'en_attente',
+    });
     setAdd(false);
     setForm(EMPTY);
   };
 
-  const handleAddType = () => {
-    if (!typeForm.libelle.trim() || !typeForm.caisseSourceId) return;
-    addTypeAideSociale(typeForm);
-    setAddType(false);
-    setTypeForm(EMPTY_TYPE);
-  };
-
-  const limiteAtteinte = form.idMembre && form.categorie && nbDejaAccorde(form.idMembre, form.categorie) >= (typeSelectionne?.nbMaxParAn || maxParCategorieAn);
+  const limiteAtteinte = form.idMembre && nbDejaAccorde(form.idMembre, form.categorie) >= maxParCategorieAn;
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Volet Social"
         subtitle="Barème des aides, déclaration et suivi (RG-SOC-001 à 010)"
-        action={
-          <div className="flex gap-2">
-            <button onClick={() => setAddType(true)} className="btn-secondary"><Plus size={15} />Nouveau barème</button>
-            <button onClick={() => setAdd(true)} className="btn-primary" disabled={typesAideSociale.length === 0}><Plus size={15} />Déclarer un événement</button>
-          </div>
-        }
+        action={<button onClick={() => setAdd(true)} className="btn-primary"><Plus size={15} />Déclarer un événement</button>}
       />
-
-      {typesAideSociale.length === 0 && (
-        <div className="card border-l-4 border-l-amber-400 text-sm text-ink-700">
-          Aucun barème configuré. Crée d'abord un type d'aide (ex: Naissance — 25 000 FCFA) avant de pouvoir déclarer un événement.
-        </div>
-      )}
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <div className="card text-center">
@@ -84,76 +79,83 @@ export default function Social() {
         </div>
       </div>
 
-      <SectionCard title="Barème par catégorie" subtitle="Défini en AG — chaque type est rattaché à une caisse source réelle">
-        {typesAideSociale.length === 0 ? (
-          <p className="text-sm text-ink-600/50 italic py-4 text-center">Aucun type d'aide créé pour le moment.</p>
-        ) : (
-          <div className="grid sm:grid-cols-3 gap-3">
-            {typesAideSociale.map((t) => (
-              <div key={t.id} className="rounded-xl bg-white/40 border border-white/50 p-3">
-                <p className="text-sm font-semibold text-ink-900">{t.libelle}</p>
-                <p className="text-xs text-ink-600/50 mt-1">{LABELS_EVENEMENT[t.typeEvenement] || t.typeEvenement} · Max {t.nbMaxParAn || 3}/an</p>
-                <p className="font-mono text-sm font-semibold text-indigo-700 mt-1">{fmt(t.montantFixe || 0)}</p>
-              </div>
-            ))}
-          </div>
-        )}
+      <SectionCard title="Barème par catégorie" subtitle="Défini en AG, modifiable dans Paramètres → Social">
+        <div className="grid sm:grid-cols-3 gap-3">
+          {CATEGORIES.map((c) => (
+            <div key={c.code} className="rounded-xl bg-white/40 border border-white/50 p-3">
+              <p className="text-sm font-semibold text-ink-900">{c.label}</p>
+              <p className="text-xs text-ink-600/50 mt-1">Délai max : {c.delaiJours}j · Max {maxParCategorieAn}/an</p>
+              {c.param && <p className="font-mono text-sm font-semibold text-indigo-700 mt-1">{fmt(parametres[c.param] || 0)}</p>}
+            </div>
+          ))}
+        </div>
       </SectionCard>
 
       <SectionCard title="Demandes" className="p-0 overflow-hidden">
-        <Table headers={['Membre', 'Catégorie', 'Montant', 'Justificatif', 'Date', 'Statut', 'Action']}>
+        <Table headers={['Membre', 'Catégorie', 'Montant', 'Justificatif', 'Date', 'Statut', 'Paiement', 'Action']}>
           {aidesSociales.map((a) => (
             <tr key={a.id} className="hover:bg-white/40 transition-colors">
               <td className="td font-medium">{a.nomMembre}</td>
-              <td className="td">{typesAideSociale.find((t) => t.id === a.typeEvenement)?.libelle || LABELS_EVENEMENT[a.typeEvenement] || a.typeEvenement}</td>
-              <td className="td num font-semibold">{fmt(a.montantAide)}</td>
+              <td className="td">{CATEGORIES.find((c) => c.code === a.categorie)?.label || a.categorie}</td>
+              <td className="td num font-semibold">{fmt(a.statut === 'approuvee' || a.statut === 'versee' ? (a.montantAccorde ?? a.montant) : a.montant)}</td>
               <td className="td">
                 {a.justificatif ? <span className="flex items-center gap-1 text-xs text-indigo-600"><Paperclip size={12} />Joint</span> : <span className="text-xs text-red-500">Manquant</span>}
               </td>
-              <td className="td text-ink-600/60">{fmtDate(a.dateEvenement)}</td>
-              <td className="td"><Badge variant={a.statut === 'verse' ? 'green' : 'amber'}>{a.statut === 'verse' ? 'Versée' : 'En attente'}</Badge></td>
+              <td className="td text-ink-600/60">{fmtDate(a.dateDeclaration)}</td>
               <td className="td">
-                {a.statut === 'en_attente' && validerAideSociale && (
-                  <button onClick={() => validerAideSociale(a.id)} className="btn-primary py-1 px-2.5 text-xs"><CheckCircle2 size={12} />Valider</button>
-                )}
+                <Badge variant={a.statut === 'versee' ? 'green' : a.statut === 'approuvee' ? 'blue' : a.statut === 'refusee' ? 'red' : 'amber'}>
+                  {a.statut === 'versee' ? 'Versée' : a.statut === 'approuvee' ? 'Approuvée' : a.statut === 'refusee' ? 'Refusée' : 'En attente'}
+                </Badge>
+              </td>
+              <td className="td">
+                {a.statut === 'versee'
+                  ? <ModePaiementBadge modePaiement={a.modePaiement} detailsPaiement={a.detailsPaiement} />
+                  : <span className="text-ink-600/30 text-xs">—</span>}
+              </td>
+              <td className="td">
+                <div className="flex items-center gap-1">
+                  {a.statut === 'en_attente' && (
+                    <>
+                      <button onClick={() => validerAideSociale?.(a.id, 'approuvee')} title="Approuver" className="btn-primary py-1 px-2.5 text-xs"><CheckCircle2 size={12} />Valider</button>
+                      <button onClick={() => validerAideSociale?.(a.id, 'refusee')} title="Refuser" className="p-1.5 hover:bg-red-50 rounded-lg"><XCircle size={14} className="text-red-400"/></button>
+                    </>
+                  )}
+                  {a.statut === 'approuvee' && (
+                    <button onClick={() => { setVerserModal(a); setVerserMode('especes'); setVerserDetails(''); }} className="btn-primary py-1 px-2.5 text-xs"><Wallet size={12} />Verser</button>
+                  )}
+                </div>
               </td>
             </tr>
           ))}
           {aidesSociales.length === 0 && (
-            <tr><td colSpan={7} className="td text-center text-ink-600/40 py-8">Aucune demande enregistrée</td></tr>
+            <tr><td colSpan={8} className="td text-center text-ink-600/40 py-8">Aucune demande enregistrée</td></tr>
           )}
         </Table>
       </SectionCard>
 
-      <Modal open={addType} onClose={() => setAddType(false)} title="Nouveau barème d'aide sociale"
+      <Modal open={!!verserModal} onClose={() => setVerserModal(null)} title="Verser l'aide sociale"
         footer={<>
-          <button onClick={() => setAddType(false)} className="btn-secondary">Annuler</button>
-          <button onClick={handleAddType} className="btn-primary"><HeartHandshake size={14} />Créer</button>
+          <button onClick={() => setVerserModal(null)} className="btn-secondary">Annuler</button>
+          <button
+            onClick={() => { verserAideSociale?.(verserModal.id, { modePaiement: verserMode, detailsPaiement: verserDetails }); setVerserModal(null); }}
+            disabled={!isModePaiementValid(verserMode, verserDetails)}
+            className={`btn-primary ${!isModePaiementValid(verserMode, verserDetails) ? 'opacity-40 cursor-not-allowed' : ''}`}
+          ><Wallet size={14}/>Confirmer le versement</button>
         </>}>
-        <div className="space-y-4">
-          <FormField label="Libellé" required>
-            <input className="input" value={typeForm.libelle} onChange={(e) => setTypeForm((f) => ({ ...f, libelle: e.target.value }))} placeholder="Ex : Aide naissance" />
-          </FormField>
-          <FormField label="Type d'événement" required>
-            <select className="select" value={typeForm.typeEvenement} onChange={(e) => setTypeForm((f) => ({ ...f, typeEvenement: e.target.value }))}>
-              {Object.entries(LABELS_EVENEMENT).map(([code, label]) => <option key={code} value={code}>{label}</option>)}
-            </select>
-          </FormField>
-          <FormField label="Caisse source" required>
-            <select className="select" value={typeForm.caisseSourceId} onChange={(e) => setTypeForm((f) => ({ ...f, caisseSourceId: e.target.value }))}>
-              <option value="">Sélectionner…</option>
-              {caisses.map((c) => <option key={c.id} value={c.id}>{c.nom}</option>)}
-            </select>
-          </FormField>
-          <div className="grid sm:grid-cols-2 gap-4">
-            <FormField label="Montant fixe (FCFA)">
-              <input type="number" className="input" value={typeForm.montantFixe} onChange={(e) => setTypeForm((f) => ({ ...f, montantFixe: e.target.value }))} />
-            </FormField>
-            <FormField label="Max par an">
-              <input type="number" className="input" value={typeForm.nbMaxParAn} onChange={(e) => setTypeForm((f) => ({ ...f, nbMaxParAn: e.target.value }))} />
-            </FormField>
+        {verserModal && (
+          <div className="space-y-4">
+            <div className="p-3 bg-indigo-50 rounded-xl border border-indigo-100">
+              <p className="text-sm font-semibold text-indigo-800">{verserModal.nomMembre}</p>
+              <p className="text-xs text-indigo-600 mt-0.5">{CATEGORIES.find((c) => c.code === verserModal.categorie)?.label} — <strong>{fmt(verserModal.montantAccorde ?? verserModal.montant)}</strong></p>
+            </div>
+            <ModePaiementFields
+              modePaiement={verserMode}
+              detailsPaiement={verserDetails}
+              onModeChange={(v) => { setVerserMode(v); setVerserDetails(''); }}
+              onDetailsChange={setVerserDetails}
+            />
           </div>
-        </div>
+        )}
       </Modal>
 
       <Modal open={add} onClose={() => setAdd(false)} title="Déclarer un événement social"
@@ -170,13 +172,12 @@ export default function Social() {
           </FormField>
           <FormField label="Catégorie" required>
             <select className="select" value={form.categorie} onChange={(e) => setForm((f) => ({ ...f, categorie: e.target.value }))}>
-              <option value="">Sélectionner…</option>
-              {typesAideSociale.map((t) => <option key={t.id} value={t.id}>{t.libelle}</option>)}
+              {CATEGORIES.map((c) => <option key={c.code} value={c.code}>{c.label}</option>)}
             </select>
           </FormField>
           {limiteAtteinte && (
             <div className="rounded-xl bg-red-50 border border-red-100 p-3 text-xs text-red-700 flex items-center gap-1.5">
-              <Clock size={12} /> Limite d'aides/an atteinte pour cette catégorie (RG-SOC-010).
+              <Clock size={12} /> Limite de {maxParCategorieAn} aides/an atteinte pour cette catégorie (RG-SOC-010).
             </div>
           )}
           <FormField label="Montant (FCFA)" hint={montantSuggere ? `Barème suggéré : ${fmt(montantSuggere)}` : 'Montant variable, à saisir'}>
