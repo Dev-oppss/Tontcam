@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { ShieldAlert, Plus, Settings2 } from 'lucide-react';
+import { ShieldAlert, Plus, Settings2, CreditCard } from 'lucide-react';
 import { fmt, fmtDate, typeSancLabel } from '../data/mockData';
 import { useApp } from '../context/AppContext';
 import { PageHeader, Table, Badge, Modal, FormField } from '../components/ui/index';
+import { ModePaiementFields, isModePaiementValid, ModePaiementBadge } from '../components/ui/ModePaiement';
 
 const PRESET_TYPES = [
   { code: 'retard_cotisation', libelle: 'Retard de cotisation', montantFixe: 2500 },
@@ -37,6 +38,17 @@ export default function Sanctions() {
     dateSanction: new Date().toISOString().split('T')[0],
   });
   const [customTypeForm, setCustomTypeForm] = useState(emptyCustomType());
+  const [payModal, setPayModal] = useState(null);
+  const [payModePaiement, setPayModePaiement] = useState('especes');
+  const [payDetailsPaiement, setPayDetailsPaiement] = useState('');
+
+  const handlePayer = () => {
+    if (!isModePaiementValid(payModePaiement, payDetailsPaiement)) return;
+    payerSanction(payModal.id, { modePaiement: payModePaiement, detailsPaiement: payDetailsPaiement });
+    setPayModal(null);
+    setPayModePaiement('especes');
+    setPayDetailsPaiement('');
+  };
 
   const impayees = sanctions.filter(s=>s.statut==='impayee');
   const payees   = sanctions.filter(s=>s.statut==='payee');
@@ -178,7 +190,7 @@ export default function Sanctions() {
       )}
 
       <div className="card p-0 overflow-hidden">
-        <Table headers={['Membre','Réunion','Type','Montant','Date','Statut','Action']}>
+        <Table headers={['Membre','Réunion','Type','Montant','Date','Statut','Paiement','Action']}>
           {sanctions.map(s=>(
             <tr key={s.id} className="hover:bg-gray-50 transition-colors">
               <td className="td font-medium text-gray-800">{s.nomMembre}</td>
@@ -188,8 +200,15 @@ export default function Sanctions() {
               <td className="td text-gray-500">{fmtDate(s.dateSanction)}</td>
               <td className="td"><Badge variant={s.statut==='payee'?'green':'red'}>{s.statut==='payee'?'Payée':'Impayée'}</Badge></td>
               <td className="td">
+                {s.statut === 'payee'
+                  ? <ModePaiementBadge modePaiement={s.modePaiement} detailsPaiement={s.detailsPaiement} />
+                  : <span className="text-ink-600/30 text-xs">—</span>}
+              </td>
+              <td className="td">
                 {s.statut==='impayee'&&(
-                  <button onClick={()=>payerSanction(s.id)} className="btn-primary py-1 px-2.5 text-xs">Marquer payée</button>
+                  <button onClick={()=>setPayModal(s)} className="btn-primary py-1 px-2.5 text-xs flex items-center gap-1">
+                    <CreditCard size={12}/>Marquer payée
+                  </button>
                 )}
               </td>
             </tr>
@@ -262,6 +281,30 @@ export default function Sanctions() {
             <input type="number" className="input" value={customTypeForm.montant} onChange={e=>setCustomTypeForm(f=>({...f,montant:e.target.value}))} />
           </FormField>
         </div>
+      </Modal>
+
+      <Modal open={!!payModal} onClose={()=>setPayModal(null)} title="Régler la sanction"
+        footer={<>
+          <button onClick={()=>setPayModal(null)} className="btn-secondary">Annuler</button>
+          <button onClick={handlePayer} disabled={!isModePaiementValid(payModePaiement, payDetailsPaiement)}
+            className={`btn-primary ${!isModePaiementValid(payModePaiement, payDetailsPaiement) ? 'opacity-40 cursor-not-allowed' : ''}`}>
+            <CreditCard size={14}/>Confirmer le paiement
+          </button>
+        </>}>
+        {payModal && (
+          <div className="space-y-4">
+            <div className="p-3 bg-red-50 rounded-xl border border-red-100">
+              <p className="text-sm font-semibold text-red-800">{payModal.nomMembre}</p>
+              <p className="text-xs text-red-600 mt-0.5">{payModal.motif || typeSancLabel[payModal.typeSanction] || payModal.typeSanction} — <strong>{fmt(payModal.montant)}</strong></p>
+            </div>
+            <ModePaiementFields
+              modePaiement={payModePaiement}
+              detailsPaiement={payDetailsPaiement}
+              onModeChange={(v)=>{ setPayModePaiement(v); setPayDetailsPaiement(''); }}
+              onDetailsChange={setPayDetailsPaiement}
+            />
+          </div>
+        )}
       </Modal>
     </div>
   );

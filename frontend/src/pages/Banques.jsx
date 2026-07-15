@@ -7,6 +7,7 @@ import {
 import { fmt, fmtDate } from '../data/mockData';
 import { useApp } from '../context/AppContext';
 import { PageHeader, Table, Badge, Modal, FormField, SectionCard } from '../components/ui/index';
+import { ModePaiementFields, isModePaiementValid } from '../components/ui/ModePaiement';
 import clsx from 'clsx';
 
 /* ─── Définition des types d'opérations disponibles ─────────── */
@@ -103,6 +104,8 @@ const createEmptyBanque = () => ({
   dureeMaxPretMois: 6,
   amortissementPret: 'unique',
   echeancesPret: 'mensuel',
+  penaliteRetardActive: false,
+  tauxPenalite: 5,
 });
 
 export default function Banques() {
@@ -117,7 +120,7 @@ export default function Banques() {
   const [showComptes, setShowComptes] = useState(null);
 
   const [newBanque,  setNewBanque]  = useState(createEmptyBanque());
-  const [opForm,     setOpForm]     = useState({ montant:'', observation:'', dateOperation: new Date().toISOString().split('T')[0] });
+  const [opForm,     setOpForm]     = useState({ montant:'', observation:'', dateOperation: new Date().toISOString().split('T')[0], modePaiement: 'especes', detailsPaiement: '' });
   const [enrollForm, setEnrollForm] = useState({ idMembre:'' });
 
   // ── Step du wizard création ─────────────────────────────────
@@ -153,12 +156,14 @@ export default function Banques() {
 
   /* ─── Opération ────────────────────────────────────────────── */
   const openOp = (compte, type) => {
-    setOpForm({ montant:'', observation:'', dateOperation: new Date().toISOString().split('T')[0] });
+    setOpForm({ montant:'', observation:'', dateOperation: new Date().toISOString().split('T')[0], modePaiement: 'especes', detailsPaiement: '' });
     setOpModal({ compte, type });
   };
 
   const handleOp = () => {
     if (!opForm.montant || Number(opForm.montant) <= 0) return;
+    if (!isModePaiementValid(opForm.modePaiement, opForm.detailsPaiement)) return;
+    if (opModal.type === 'retrait' && Number(opForm.montant) > Number(opModal.compte.solde || 0)) return; // RG-CAI-006
     doOperation({
       idMembre: opModal.compte.idMembre,
       idBanque: opModal.compte.idBanque,
@@ -166,6 +171,8 @@ export default function Banques() {
       montant: Number(opForm.montant),
       observation: opForm.observation,
       dateOperation: opForm.dateOperation,
+      modePaiement: opForm.modePaiement,
+      detailsPaiement: opForm.detailsPaiement,
     });
     setOpModal(null);
   };
@@ -182,6 +189,8 @@ export default function Banques() {
       dureeMaxPretMois: pretAutorise ? Number(newBanque.dureeMaxPretMois || 0) : 0,
       amortissementPret: pretAutorise ? newBanque.amortissementPret || 'unique' : 'unique',
       echeancesPret: pretAutorise ? newBanque.echeancesPret || 'mensuel' : 'mensuel',
+      penaliteRetardActive: pretAutorise ? Boolean(newBanque.penaliteRetardActive) : false,
+      tauxPenalite: pretAutorise && newBanque.penaliteRetardActive ? Number(newBanque.tauxPenalite || 0) : 0,
       totalSolde: 0,
     });
     setAddModal(false);
@@ -191,9 +200,9 @@ export default function Banques() {
   /* ─── Inscription membre ───────────────────────────────────── */
   const handleEnroll = () => {
     if (!enrollForm.idMembre || !enrollModal) return;
-    addMembreBanque({ idMembre: Number(enrollForm.idMembre), idBanque: enrollModal.id, nomBanque: enrollModal.nom,
-      nomMembre: membres.find(m => m.id === Number(enrollForm.idMembre))
-        ? `${membres.find(m => m.id === Number(enrollForm.idMembre)).nom} ${membres.find(m => m.id === Number(enrollForm.idMembre)).prenom}` : '—',
+    const mEnroll = membres.find(m => m.id === enrollForm.idMembre);
+    addMembreBanque({ idMembre: enrollForm.idMembre, idBanque: enrollModal.id, nomBanque: enrollModal.nom,
+      nomMembre: mEnroll ? `${mEnroll.nom} ${mEnroll.prenom}` : '—',
     });
     setEnrollForm({ idMembre:'' });
     setEnrollModal(null);
@@ -578,6 +587,36 @@ export default function Banques() {
                     </select>
                   </FormField>
                 </div>
+
+                <div className="pt-2 border-t border-blue-200">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={!!newBanque.penaliteRetardActive}
+                      onChange={e => setNewBanque(f => ({ ...f, penaliteRetardActive: e.target.checked }))}
+                      className="w-4 h-4 rounded"
+                    />
+                    <span className="text-sm font-semibold text-blue-900">Appliquer une pénalité de retard</span>
+                  </label>
+                  <p className="text-xs text-blue-700 mt-1 ml-6">
+                    Si activé, chaque échéance manquée accumule une pénalité en % du montant dû ce mois-là. Désactivé par défaut (comportement inchangé).
+                  </p>
+                  {newBanque.penaliteRetardActive && (
+                    <div className="mt-2 ml-6">
+                      <FormField label="Taux de pénalité par échéance manquée (%)">
+                        <input
+                          type="number"
+                          className="input"
+                          min="0"
+                          max="100"
+                          step="0.5"
+                          value={newBanque.tauxPenalite}
+                          onChange={e => setNewBanque(f => ({ ...f, tauxPenalite: e.target.value }))}
+                        />
+                      </FormField>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
@@ -720,7 +759,11 @@ export default function Banques() {
         title={opModal?.type === 'depot' ? `Dépôt — ${opModal?.compte.nomMembre}` : `Retrait — ${opModal?.compte.nomMembre}`}
         footer={<>
           <button onClick={() => setOpModal(null)} className="btn-secondary">Annuler</button>
-          <button onClick={handleOp} className="btn-primary">
+          <button
+            onClick={handleOp}
+            disabled={!opForm.montant || Number(opForm.montant) <= 0 || !isModePaiementValid(opForm.modePaiement, opForm.detailsPaiement) || (opModal?.type === 'retrait' && Number(opForm.montant) > Number(opModal?.compte.solde || 0))}
+            className={clsx('btn-primary', (!opForm.montant || Number(opForm.montant) <= 0 || !isModePaiementValid(opForm.modePaiement, opForm.detailsPaiement) || (opModal?.type === 'retrait' && Number(opForm.montant) > Number(opModal?.compte.solde || 0))) && 'opacity-40 cursor-not-allowed')}
+          >
             {opModal?.type === 'depot'
               ? <><ArrowDownCircle size={14} /> Enregistrer le dépôt</>
               : <><ArrowUpCircle size={14} /> Enregistrer le retrait</>}
@@ -737,11 +780,20 @@ export default function Banques() {
           <FormField label="Montant (FCFA)" required>
             <input type="number" className="input" placeholder="Ex : 50 000" min="1"
               value={opForm.montant} onChange={e => setOpForm(f => ({ ...f, montant: e.target.value }))} />
+            {opModal?.type === 'retrait' && Number(opForm.montant) > Number(opModal?.compte.solde || 0) && (
+              <p className="text-xs text-red-500 mt-1">Solde insuffisant — disponible : {fmt(opModal?.compte.solde || 0)} FCFA</p>
+            )}
           </FormField>
           <FormField label="Date de l'opération">
             <input type="date" className="input" value={opForm.dateOperation}
               onChange={e => setOpForm(f => ({ ...f, dateOperation: e.target.value }))} />
           </FormField>
+          <ModePaiementFields
+            modePaiement={opForm.modePaiement}
+            detailsPaiement={opForm.detailsPaiement}
+            onModeChange={(v) => setOpForm(f => ({ ...f, modePaiement: v, detailsPaiement: '' }))}
+            onDetailsChange={(v) => setOpForm(f => ({ ...f, detailsPaiement: v }))}
+          />
           <FormField label="Observation">
             <input className="input" placeholder="Ex : Dépôt séance juin 2025"
               value={opForm.observation} onChange={e => setOpForm(f => ({ ...f, observation: e.target.value }))} />

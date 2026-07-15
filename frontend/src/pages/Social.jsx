@@ -1,8 +1,9 @@
 import { useState, useMemo } from 'react';
-import { HeartHandshake, Plus, Paperclip, CheckCircle2, Clock } from 'lucide-react';
+import { HeartHandshake, Plus, Paperclip, CheckCircle2, XCircle, Clock, Wallet } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { fmt, fmtDate } from '../data/mockData';
 import { PageHeader, SectionCard, Table, Badge, Modal, FormField } from '../components/ui/index';
+import { ModePaiementFields, isModePaiementValid, ModePaiementBadge } from '../components/ui/ModePaiement';
 
 const CATEGORIES = [
   { code: 'naissance',      label: 'Naissance',            delaiJours: 30, param: 'aideNaissance' },
@@ -16,15 +17,18 @@ const CATEGORIES = [
 const EMPTY = { idMembre: '', categorie: 'naissance', montant: '', description: '', justificatif: '', dateDeclaration: new Date().toISOString().split('T')[0] };
 
 export default function Social() {
-  const { membres = [], aidesSociales = [], addAideSociale, validerAideSociale, parametres = {} } = useApp();
+  const { membres = [], aidesSociales = [], addAideSociale, validerAideSociale, verserAideSociale, parametres = {} } = useApp();
   const [add, setAdd] = useState(false);
+  const [verserModal, setVerserModal] = useState(null);
+  const [verserMode, setVerserMode] = useState('especes');
+  const [verserDetails, setVerserDetails] = useState('');
   const [form, setForm] = useState(EMPTY);
 
   const maxParCategorieAn = Number(parametres.maxAidesParCategorieAn || 3);
   const anneeEnCours = new Date().getFullYear();
 
   const nbDejaAccorde = (idMembre, categorie) =>
-    aidesSociales.filter((a) => a.idMembre === Number(idMembre) && a.categorie === categorie && new Date(a.dateDeclaration).getFullYear() === anneeEnCours).length;
+    aidesSociales.filter((a) => a.idMembre === idMembre && a.categorie === categorie && new Date(a.dateDeclaration).getFullYear() === anneeEnCours).length;
 
   const montantSuggere = useMemo(() => {
     const cat = CATEGORIES.find((c) => c.code === form.categorie);
@@ -38,10 +42,10 @@ export default function Social() {
   const handleAdd = () => {
     if (!form.idMembre || !form.categorie) return;
     if (nbDejaAccorde(form.idMembre, form.categorie) >= maxParCategorieAn) return; // garde-fou RG-SOC-010
-    const m = membres.find((x) => x.id === Number(form.idMembre));
+    const m = membres.find((x) => x.id === form.idMembre);
     addAideSociale?.({
       ...form,
-      idMembre: Number(form.idMembre),
+      idMembre: form.idMembre,
       nomMembre: `${m?.nom || ''} ${m?.prenom || ''}`.trim(),
       montant: Number(form.montant || montantSuggere || 0),
       statut: 'en_attente',
@@ -88,29 +92,71 @@ export default function Social() {
       </SectionCard>
 
       <SectionCard title="Demandes" className="p-0 overflow-hidden">
-        <Table headers={['Membre', 'Catégorie', 'Montant', 'Justificatif', 'Date', 'Statut', 'Action']}>
+        <Table headers={['Membre', 'Catégorie', 'Montant', 'Justificatif', 'Date', 'Statut', 'Paiement', 'Action']}>
           {aidesSociales.map((a) => (
             <tr key={a.id} className="hover:bg-white/40 transition-colors">
               <td className="td font-medium">{a.nomMembre}</td>
               <td className="td">{CATEGORIES.find((c) => c.code === a.categorie)?.label || a.categorie}</td>
-              <td className="td num font-semibold">{fmt(a.montant)}</td>
+              <td className="td num font-semibold">{fmt(a.statut === 'approuvee' || a.statut === 'versee' ? (a.montantAccorde ?? a.montant) : a.montant)}</td>
               <td className="td">
                 {a.justificatif ? <span className="flex items-center gap-1 text-xs text-indigo-600"><Paperclip size={12} />Joint</span> : <span className="text-xs text-red-500">Manquant</span>}
               </td>
               <td className="td text-ink-600/60">{fmtDate(a.dateDeclaration)}</td>
-              <td className="td"><Badge variant={a.statut === 'versee' ? 'green' : 'amber'}>{a.statut === 'versee' ? 'Versée' : 'En attente'}</Badge></td>
               <td className="td">
-                {a.statut === 'en_attente' && (
-                  <button onClick={() => validerAideSociale?.(a.id)} className="btn-primary py-1 px-2.5 text-xs"><CheckCircle2 size={12} />Valider</button>
-                )}
+                <Badge variant={a.statut === 'versee' ? 'green' : a.statut === 'approuvee' ? 'blue' : a.statut === 'refusee' ? 'red' : 'amber'}>
+                  {a.statut === 'versee' ? 'Versée' : a.statut === 'approuvee' ? 'Approuvée' : a.statut === 'refusee' ? 'Refusée' : 'En attente'}
+                </Badge>
+              </td>
+              <td className="td">
+                {a.statut === 'versee'
+                  ? <ModePaiementBadge modePaiement={a.modePaiement} detailsPaiement={a.detailsPaiement} />
+                  : <span className="text-ink-600/30 text-xs">—</span>}
+              </td>
+              <td className="td">
+                <div className="flex items-center gap-1">
+                  {a.statut === 'en_attente' && (
+                    <>
+                      <button onClick={() => validerAideSociale?.(a.id, 'approuvee')} title="Approuver" className="btn-primary py-1 px-2.5 text-xs"><CheckCircle2 size={12} />Valider</button>
+                      <button onClick={() => validerAideSociale?.(a.id, 'refusee')} title="Refuser" className="p-1.5 hover:bg-red-50 rounded-lg"><XCircle size={14} className="text-red-400"/></button>
+                    </>
+                  )}
+                  {a.statut === 'approuvee' && (
+                    <button onClick={() => { setVerserModal(a); setVerserMode('especes'); setVerserDetails(''); }} className="btn-primary py-1 px-2.5 text-xs"><Wallet size={12} />Verser</button>
+                  )}
+                </div>
               </td>
             </tr>
           ))}
           {aidesSociales.length === 0 && (
-            <tr><td colSpan={7} className="td text-center text-ink-600/40 py-8">Aucune demande enregistrée</td></tr>
+            <tr><td colSpan={8} className="td text-center text-ink-600/40 py-8">Aucune demande enregistrée</td></tr>
           )}
         </Table>
       </SectionCard>
+
+      <Modal open={!!verserModal} onClose={() => setVerserModal(null)} title="Verser l'aide sociale"
+        footer={<>
+          <button onClick={() => setVerserModal(null)} className="btn-secondary">Annuler</button>
+          <button
+            onClick={() => { verserAideSociale?.(verserModal.id, { modePaiement: verserMode, detailsPaiement: verserDetails }); setVerserModal(null); }}
+            disabled={!isModePaiementValid(verserMode, verserDetails)}
+            className={`btn-primary ${!isModePaiementValid(verserMode, verserDetails) ? 'opacity-40 cursor-not-allowed' : ''}`}
+          ><Wallet size={14}/>Confirmer le versement</button>
+        </>}>
+        {verserModal && (
+          <div className="space-y-4">
+            <div className="p-3 bg-indigo-50 rounded-xl border border-indigo-100">
+              <p className="text-sm font-semibold text-indigo-800">{verserModal.nomMembre}</p>
+              <p className="text-xs text-indigo-600 mt-0.5">{CATEGORIES.find((c) => c.code === verserModal.categorie)?.label} — <strong>{fmt(verserModal.montantAccorde ?? verserModal.montant)}</strong></p>
+            </div>
+            <ModePaiementFields
+              modePaiement={verserMode}
+              detailsPaiement={verserDetails}
+              onModeChange={(v) => { setVerserMode(v); setVerserDetails(''); }}
+              onDetailsChange={setVerserDetails}
+            />
+          </div>
+        )}
+      </Modal>
 
       <Modal open={add} onClose={() => setAdd(false)} title="Déclarer un événement social"
         footer={<>

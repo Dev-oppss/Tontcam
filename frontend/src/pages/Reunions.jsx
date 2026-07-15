@@ -8,9 +8,10 @@ import {
   BadgeDollarSign, TrendingUp, AlertTriangle, Banknote,
   Trophy, Dices, Gavel, RefreshCw, Star,
 } from 'lucide-react';
-import { fmtDate, typePointLabel, statutPointLabel, fmt, periodeLabel } from '../data/mockData';
+import { fmtDate, typePointLabel, statutPointLabel, fmt, periodeLabel, ACTEUR_ROLES, acteurRoleLabel, STATUTS_PRESENCE, statutPresenceLabel } from '../data/mockData';
 import { useApp, TX_TYPES, TX_LABELS } from '../context/AppContext';
 import { PageHeader, Badge, Modal, FormField } from '../components/ui/index';
+import { ModePaiementFields, isModePaiementValid, ModePaiementBadge } from '../components/ui/ModePaiement';
 import clsx from 'clsx';
 
 // ── Config statuts ────────────────────────────────────────────
@@ -37,8 +38,8 @@ const statutPointCfg = {
 const EMPTY_REUNION   = { date:'', lieu:'', numero:'', observation:'' };
 const EMPTY_OUVERTURE = { heureOuverture:'', presidentSeance:'', secretaireSeance:'', motOuverture:'' };
 const EMPTY_CLOTURE   = { heureCloture:'', presents:'', absents:'', membresAbsents:'', observation:'' };
-const EMPTY_POINT     = { titre:'', type:'administratif', description:'' };
-const EMPTY_TX        = { type:'cotisation', idMembre:'', montant:'', libelle:'', idSanction:'', idPret:'', idBanque:'', sousType:'', note:'' };
+const EMPTY_POINT     = { titre:'', type:'administratif', description:'', acteurRole:'' };
+const EMPTY_TX        = { type:'cotisation', idMembre:'', montant:'', libelle:'', idSanction:'', idPret:'', idBanque:'', sousType:'', note:'', modePaiement:'especes', detailsPaiement:'' };
 
 // ── Feuille de présence / cotisation tontine ─────────────────
 const STATUT_COTIS = { non_defini: null, cotise: 'cotise', defaillant: 'defaillant' };
@@ -67,7 +68,7 @@ function FeuillePresenceTontine({ reunion, onClose }) {
   const [miseGagnante,      setMiseGagnante]      = useState('');
   const [tirageEffectue,    setTirageEffectue]    = useState(false);
 
-  const tontineSelectee = tontines.find(t => t.id === Number(idTontineSelectee));
+  const tontineSelectee = tontines.find(t => t.id === idTontineSelectee);
   const typeAttr = tontineSelectee?.typeAttribution;
   const TYPE_ICONS  = { rotation:'', tirage:'', enchere:'' };
   const TYPE_LABELS = { rotation:'Rotation fixe', tirage:'Tirage au sort', enchere:'Enchère' };
@@ -93,7 +94,7 @@ function FeuillePresenceTontine({ reunion, onClose }) {
   const totalCollecte  = cotises.reduce((s, m) => s + m.montantDu, 0);
 
   // Bénéficiaire déjà enregistré pour cette tontine dans la séance
-  const benefDejaEnregistre = (reunion.beneficiairesSeance||[]).find(b => b.idTontine === Number(idTontineSelectee));
+  const benefDejaEnregistre = (reunion.beneficiairesSeance||[]).find(b => b.idTontine === idTontineSelectee);
 
   // Tour planifié rotation
   const tourPlanifieProchain = useMemo(() => {
@@ -213,7 +214,7 @@ function FeuillePresenceTontine({ reunion, onClose }) {
               const nbEncaisses = planningTours.filter(p => p.idTontine === t.id && p.statut === 'encaisse').length;
               const progressPct = t.nbTours > 0 ? Math.round(nbEncaisses / t.nbTours * 100) : 0;
               const dejaTraite  = (reunion.beneficiairesSeance||[]).some(b => b.idTontine === t.id);
-              const isSelected  = Number(idTontineSelectee) === t.id;
+              const isSelected  = idTontineSelectee === t.id;
               const tColor      = TYPE_COLORS[t.typeAttribution] || '';
               return (
                 <button key={t.id} type="button"
@@ -463,9 +464,9 @@ function FeuillePresenceTontine({ reunion, onClose }) {
                   {encheresEnAttente.map(e => (
                     <label key={e.id}
                       className={clsx('flex items-center gap-3 p-3 rounded-xl border-2 cursor-pointer transition-all',
-                        Number(enchereIdGagnant) === e.id ? 'border-amber-400 bg-amber-50' : 'border-gray-200 hover:border-amber-300')}>
+                        enchereIdGagnant === e.id ? 'border-amber-400 bg-amber-50' : 'border-gray-200 hover:border-amber-300')}>
                       <input type="radio" name="enc_gagnant" value={e.id}
-                        checked={Number(enchereIdGagnant) === e.id}
+                        checked={enchereIdGagnant === e.id}
                         onChange={() => { setEnchereIdGagnant(String(e.id)); setMiseGagnante(String(e.montantEnchere)); }}/>
                       <div className="flex-1">
                         <p className="font-bold text-gray-800">{e.nomMembre}</p>
@@ -481,7 +482,7 @@ function FeuillePresenceTontine({ reunion, onClose }) {
                         <div className="col-span-2 p-2 bg-green-50 rounded-lg"><span className="text-gray-400">Net versé au gagnant</span><br/><strong className="text-green-600 text-base">{fmt(montantPot - Number(miseGagnante))}</strong></div>
                       </div>
                       <button onClick={() => {
-                        const enc = encheres.find(e => e.id === Number(enchereIdGagnant));
+                        const enc = encheres.find(e => e.id === enchereIdGagnant);
                         if (enc) handleConfirmerEnchere(enc.nomMembre, enc.idMembre, miseGagnante);
                       }} className="btn-primary w-full justify-center">
                         <Trophy size={15}/> Confirmer le gagnant de l'enchère
@@ -500,7 +501,7 @@ function FeuillePresenceTontine({ reunion, onClose }) {
                   <input type="number" className="input" placeholder="Montant de la mise gagnante (FCFA)"
                     value={miseGagnante} onChange={e => setMiseGagnante(e.target.value)}/>
                   {enchereIdGagnant && miseGagnante && (() => {
-                    const m = membres.find(x => x.id === Number(enchereIdGagnant));
+                    const m = membres.find(x => x.id === enchereIdGagnant);
                     return m ? (
                       <button onClick={() => handleConfirmerEnchere(`${m.nom} ${m.prenom}`, m.id, miseGagnante)}
                         className="btn-primary w-full justify-center">
@@ -912,17 +913,22 @@ function TypePicker({ onSelect }) {
 // ── Wrapper formulaire intelligent (sans hook conditionnel) ────
 // Tous les états "extra" sont dans form._idTontine pour éviter
 // les hooks conditionnels (violation React)
-function SmartFormWrapper({ type, reunion, membres, banques, prets, sanctions, tontines, membresParTontine, onSubmit, onCancel }) {
+function SmartFormWrapper({ type, reunion, membres, banques, prets, sanctions, tontines, membresParTontine, soldeDisponible = Infinity, onSubmit, onCancel }) {
   const [form, setForm] = useState({
     type, montant: '', libelle: '', idMembre: '', idSanction: '', idPret: '',
     idBanque: '', sousType: 'autre',
+    modePaiement: 'especes', detailsPaiement: '',
     _idTontine: '',   // état partagé pour cotisation + attribution_tour
   });
   const sf = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const meta = TX_TYPES.find(t => t.value === type);
+  const estSortie = meta?.dir === 'sortie' || meta?.dir === 'banque';
+  const depasseSoldeCaisse = estSortie && Number(form.montant || 0) > soldeDisponible;
 
   const handleSubmit = () => {
     if (!form.montant || Number(form.montant) <= 0) return;
+    if (!isModePaiementValid(form.modePaiement, form.detailsPaiement)) return;
+    if (depasseSoldeCaisse) return; // RG-CAI-006 : solde caisse jamais négatif
     // Nettoyage des champs internes avant envoi
     const { _idTontine, ...cleanForm } = form;
     onSubmit(cleanForm);
@@ -931,6 +937,8 @@ function SmartFormWrapper({ type, reunion, membres, banques, prets, sanctions, t
   // Validation selon le type
   const isValid = (() => {
     if (!form.montant || Number(form.montant) <= 0) return false;
+    if (!isModePaiementValid(form.modePaiement, form.detailsPaiement)) return false;
+    if (depasseSoldeCaisse) return false;
     if (type === 'depot_banque' && !form.idBanque) return false;
     if (type === 'depot_banque' && !form.idMembre) return false;
     if (type === 'attribution_tour' && !form.idMembre) return false;
@@ -944,13 +952,28 @@ function SmartFormWrapper({ type, reunion, membres, banques, prets, sanctions, t
         membres={membres} banques={banques} prets={prets} sanctions={sanctions}
         tontines={tontines} membresParTontine={membresParTontine}
       />
+      <div className="pt-1 border-t border-gray-100">
+        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2 mt-3">Règlement — toute entrée/sortie de caisse (RG-CAI-011)</p>
+        <ModePaiementFields
+          modePaiement={form.modePaiement}
+          detailsPaiement={form.detailsPaiement}
+          onModeChange={(v) => setForm(f => ({ ...f, modePaiement: v, detailsPaiement: '' }))}
+          onDetailsChange={(v) => sf('detailsPaiement', v)}
+        />
+      </div>
       {form.montant && Number(form.montant) > 0 && (
         <div className={clsx('p-2.5 rounded-xl text-center border',
+          depasseSoldeCaisse ? 'bg-red-50 border-red-300 text-red-700' :
           meta?.dir === 'entree' ? 'bg-green-50 border-green-200 text-green-800' :
           meta?.dir === 'sortie' ? 'bg-red-50 border-red-200 text-red-800' :
           'bg-blue-50 border-blue-200 text-blue-800')}>
           <p className="text-xs">Montant à enregistrer</p>
           <p className="text-lg font-black">{fmt(Number(form.montant))} FCFA</p>
+          {depasseSoldeCaisse && (
+            <p className="text-xs font-semibold mt-1">
+              Solde de caisse insuffisant — disponible : {fmt(soldeDisponible)} FCFA
+            </p>
+          )}
         </div>
       )}
       <div className="flex gap-2 pt-1">
@@ -974,7 +997,7 @@ function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, san
 
   // ── Pré-calculs (sans hooks conditionnels) ──────────────────
   const tontinesActives   = tontines.filter(t => t.statut === 'active');
-  const tontineChoisie    = tontines.find(t => t.id === Number(form._idTontine));
+  const tontineChoisie    = tontines.find(t => t.id === form._idTontine);
   const pretsActifs       = prets.filter(p => ['en_cours', 'en_retard'].includes(p.statut));
   const sanctionsImpayees = sanctions.filter(s => s.statut === 'impayee');
 
@@ -986,7 +1009,7 @@ function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, san
     : membres;
 
   const membreDansTontine = tontineChoisie && form.idMembre
-    ? membresParTontine.find(mt => mt.idTontine === tontineChoisie.id && mt.idMembre === Number(form.idMembre) && mt.statut === 'actif')
+    ? membresParTontine.find(mt => mt.idTontine === tontineChoisie.id && mt.idMembre === form.idMembre && mt.statut === 'actif')
     : null;
 
   const membresAttrTour = tontineChoisie
@@ -994,8 +1017,8 @@ function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, san
         .map(mt => membres.find(x => x.id === mt.idMembre)).filter(Boolean)
     : [];
 
-  const pretChoisi        = form.idPret    ? prets.find(p => p.id === Number(form.idPret))        : null;
-  const sanctionsMembre   = form.idMembre  ? sanctionsImpayees.filter(s => s.idMembre === Number(form.idMembre)) : sanctionsImpayees;
+  const pretChoisi        = form.idPret    ? prets.find(p => p.id === form.idPret)        : null;
+  const sanctionsMembre   = form.idMembre  ? sanctionsImpayees.filter(s => s.idMembre === form.idMembre) : sanctionsImpayees;
 
   // ── Handlers ────────────────────────────────────────────────
   const onTontineChange = (val) => {
@@ -1003,55 +1026,55 @@ function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, san
   };
   const onMembreCotisChange = (val) => {
     sf('idMembre', val);
-    const t = tontines.find(x => x.id === Number(form._idTontine));
+    const t = tontines.find(x => x.id === form._idTontine);
     if (t && val) {
-      const mt = membresParTontine.find(x => x.idTontine === t.id && x.idMembre === Number(val) && x.statut === 'actif');
+      const mt = membresParTontine.find(x => x.idTontine === t.id && x.idMembre === val && x.statut === 'actif');
       if (mt) { sf('montant', String(t.cotisation * mt.nombreParts)); sf('libelle', `Cotisation ${t.nom} — ${mt.nombreParts} part(s) — Séance N°${reunion.numero}`); }
     }
   };
   const onSanctionChange = (val) => {
     sf('idSanction', val);
-    const s = sanctions.find(x => x.id === Number(val));
+    const s = sanctions.find(x => x.id === val);
     if (s) { sf('montant', String(s.montant)); sf('libelle', `Amende — ${s.typeSanction} — ${s.nomMembre}`); sf('idMembre', String(s.idMembre)); }
   };
   const onPretChange = (val) => {
     sf('idPret', val);
-    const p = prets.find(x => x.id === Number(val));
+    const p = prets.find(x => x.id === val);
     if (p) { sf('idMembre', String(p.idMembre)); sf('montant', String(p.resteAPayer)); sf('libelle', `Remboursement prêt — ${p.nomMembre}`); }
   };
   const onTontineAttrChange = (val) => {
     sf('_idTontine', val); sf('idMembre', '');
-    const t = tontines.find(x => x.id === Number(val));
+    const t = tontines.find(x => x.id === val);
     if (t) { sf('montant', String(t.cotisation * t.totalParts)); sf('libelle', `Versement pot — ${t.nom} — Séance N°${reunion.numero}`); }
   };
   const onBenefChange = (val) => {
     sf('idMembre', val);
-    const m = membres.find(x => x.id === Number(val));
+    const m = membres.find(x => x.id === val);
     if (m && tontineChoisie) sf('libelle', `Pot ${tontineChoisie.nom} - ${m.nom} ${m.prenom} — Séance N°${reunion.numero}`);
   };
   const onBanqueChange = (val) => {
     sf('idBanque', val);
-    const b = banques.find(x => x.id === Number(val));
-    const m = membres.find(x => x.id === Number(form.idMembre));
+    const b = banques.find(x => x.id === val);
+    const m = membres.find(x => x.id === form.idMembre);
     const depositaire = m ? `${m.nom} ${m.prenom}` : '';
     if (b) sf('libelle', `Dépôt ${b.nom}${depositaire ? ' — ' + depositaire : ''} — Séance N°${reunion.numero}`);
   };
   const onDeposantChange = (val) => {
     sf('idMembre', val);
-    const m = membres.find(x => x.id === Number(val));
-    const b = banques.find(x => x.id === Number(form.idBanque));
+    const m = membres.find(x => x.id === val);
+    const b = banques.find(x => x.id === form.idBanque);
     if (b && m) sf('libelle', `Dépôt ${b.nom} — ${m.nom} ${m.prenom} — Séance N°${reunion.numero}`);
   };
   const onAideEventChange = (val) => {
     sf('sousType', val);
     const def = AIDE_SOCIALE_MONTANTS[val] || 0;
     if (def > 0) sf('montant', String(def));
-    const m = membres.find(x => x.id === Number(form.idMembre));
+    const m = membres.find(x => x.id === form.idMembre);
     if (m) sf('libelle', `Aide sociale — ${AIDE_SOCIALE_LABELS[val]} — ${m.nom} ${m.prenom}`);
   };
   const onMembreAideChange = (val) => {
     sf('idMembre', val);
-    const m = membres.find(x => x.id === Number(val));
+    const m = membres.find(x => x.id === val);
     if (m && form.sousType) sf('libelle', `Aide sociale — ${AIDE_SOCIALE_LABELS[form.sousType] || ''} — ${m.nom} ${m.prenom}`);
   };
 
@@ -1178,7 +1201,7 @@ function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, san
         <div><p className="text-xs font-bold text-orange-800">Octroi de prêt</p><p className="text-xs text-orange-600">Décaissement — pensez à l'enregistrer dans Prêts</p></div>
       </div>
       <FormField label="Membre bénéficiaire" required>
-        <select className="select" value={form.idMembre} onChange={e => { sf('idMembre', e.target.value); const m = membres.find(x => x.id === Number(e.target.value)); if (m) sf('libelle', `Prêt accordé — ${m.nom} ${m.prenom}`); }}>
+        <select className="select" value={form.idMembre} onChange={e => { sf('idMembre', e.target.value); const m = membres.find(x => x.id === e.target.value); if (m) sf('libelle', `Prêt accordé — ${m.nom} ${m.prenom}`); }}>
           <option value="">— Sélectionner un membre —</option>
           {membres.map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
         </select>
@@ -1283,7 +1306,7 @@ function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, san
           {banques.map(b => (
             <button key={b.id} type="button" onClick={() => onBanqueChange(String(b.id))}
               className={clsx('p-3 rounded-xl border-2 text-left transition-all',
-                Number(form.idBanque) === b.id ? 'border-teal-400 bg-teal-50' : 'border-gray-200 bg-white hover:border-teal-200')}>
+                form.idBanque === b.id ? 'border-teal-400 bg-teal-50' : 'border-gray-200 bg-white hover:border-teal-200')}>
               <div className="flex items-center justify-between">
                 <p className="text-sm font-semibold text-gray-800">{b.nom}</p>
                 <p className="text-xs text-teal-600 font-bold">Solde : {fmt(b.totalSolde)}</p>
@@ -1304,7 +1327,7 @@ function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, san
       {form.idMembre && form.idBanque && (
         <div className="p-2.5 bg-teal-50 rounded-xl border border-teal-200 text-xs text-teal-800 flex items-center gap-1.5">
           <CheckCircle size={12}/>
-          Dépôt de <strong>{membres.find(m => m.id === Number(form.idMembre))?.nom} {membres.find(m => m.id === Number(form.idMembre))?.prenom}</strong> dans <strong>{banques.find(b => b.id === Number(form.idBanque))?.nom}</strong>
+          Dépôt de <strong>{membres.find(m => m.id === form.idMembre)?.nom} {membres.find(m => m.id === form.idMembre)?.prenom}</strong> dans <strong>{banques.find(b => b.id === form.idBanque)?.nom}</strong>
         </div>
       )}
     </div>
@@ -1357,7 +1380,7 @@ function BeneficiaireSeancePanel({ reunion }) {
   const locked = reunion.statutReunion === 'cloturee';
   const beneficiairesSeance = reunion.beneficiairesSeance || [];
 
-  const tontine = tontines.find(t => t.id === Number(idTontine));
+  const tontine = tontines.find(t => t.id === idTontine);
   const typeAttr = tontine?.typeAttribution;
   const montantPot = tontine ? tontine.cotisation * tontine.totalParts : 0;
 
@@ -1392,7 +1415,7 @@ function BeneficiaireSeancePanel({ reunion }) {
   }, [tontine, typeAttr, encheres, planningTours]);
 
   // Bénéficiaire déjà enregistré pour cette tontine dans la séance
-  const benefDejaEnregistre = beneficiairesSeance.find(b => b.idTontine === Number(idTontine));
+  const benefDejaEnregistre = beneficiairesSeance.find(b => b.idTontine === idTontine);
 
   const handleConfirmerRotation = () => {
     if (!tourPlanifieProchain || !tontine) return;
@@ -1433,7 +1456,7 @@ function BeneficiaireSeancePanel({ reunion }) {
 
   const handleConfirmerEnchere = () => {
     if (!enchereIdGagnant || !tontine) return;
-    const enc = encheres.find(e => e.id === Number(enchereIdGagnant));
+    const enc = encheres.find(e => e.id === enchereIdGagnant);
     if (!enc) return;
     const mise = Number(miseGagnante) || enc.montantEnchere;
     enregistrerBeneficiaireSeance(reunion.id, {
@@ -1496,7 +1519,7 @@ function BeneficiaireSeancePanel({ reunion }) {
                       disabled={dejaFait}
                       className={clsx('w-full p-3 rounded-xl border-2 text-left transition-all',
                         dejaFait ? 'border-green-300 bg-green-50 opacity-70 cursor-default' :
-                        Number(idTontine) === t.id ? 'border-primary-500 bg-primary-50' :
+                        idTontine === t.id ? 'border-primary-500 bg-primary-50' :
                         'border-gray-200 hover:border-primary-300'
                       )}>
                       <div className="flex items-center justify-between">
@@ -1588,9 +1611,9 @@ function BeneficiaireSeancePanel({ reunion }) {
                         {encheresEnAttente.map(e => (
                           <label key={e.id}
                             className={clsx('flex items-center gap-3 p-3 rounded-xl border-2 cursor-pointer transition-all',
-                              Number(enchereIdGagnant) === e.id ? 'border-amber-400 bg-amber-50' : 'border-gray-200 hover:border-amber-300')}>
+                              enchereIdGagnant === e.id ? 'border-amber-400 bg-amber-50' : 'border-gray-200 hover:border-amber-300')}>
                             <input type="radio" name="enchere_gagnante" value={e.id}
-                              checked={Number(enchereIdGagnant) === e.id}
+                              checked={enchereIdGagnant === e.id}
                               onChange={() => { setEnchereIdGagnant(String(e.id)); setMiseGagnante(String(e.montantEnchere)); }}/>
                             <div className="flex-1">
                               <p className="font-semibold text-gray-800">{e.nomMembre}</p>
@@ -1637,7 +1660,7 @@ function BeneficiaireSeancePanel({ reunion }) {
                       {enchereIdGagnant && miseGagnante && (
                         <button
                           onClick={() => {
-                            const mid = Number(enchereIdGagnant.replace('m', ''));
+                            const mid = enchereIdGagnant.slice(1);
                             const m = membres.find(x => x.id === mid);
                             if (!m) return;
                             enregistrerBeneficiaireSeance(reunion.id, {
@@ -1682,12 +1705,141 @@ function BeneficiaireSeancePanel({ reunion }) {
 }
 
 // ── Panneau transactions séance ───────────────────────────────
+// ── Panneau Présences (RG-REU-016 à 019) ──────────────────────
+function PanneauPresences({ reunion, membres }) {
+  const { presences, setPresenceMembre } = useApp();
+  const locked  = reunion.statutReunion === 'cloturee';
+  const notOpen = reunion.statutReunion === 'planifiee';
+
+  const presencesReunion = presences.filter(p => p.reunionId === reunion.id);
+  const getPresence = (idMembre) => presencesReunion.find(p => p.idMembre === idMembre);
+
+  const membresActifs = membres.filter(m => m.statut === 'actif');
+  const nbPresents = presencesReunion.filter(p => p.statut === 'present' || p.statut === 'en_retard').length;
+  const nbAbsentsExcuses = presencesReunion.filter(p => p.statut === 'absent_excuse').length;
+  const nbAbsents = presencesReunion.filter(p => p.statut === 'absent').length;
+  const nbNonPointes = membresActifs.length - presencesReunion.length;
+
+  const [motifModal, setMotifModal] = useState(null); // {idMembre}
+  const [motif, setMotif] = useState('');
+
+  if (notOpen) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12 text-center space-y-3">
+        <div className="w-14 h-14 rounded-2xl bg-amber-100 flex items-center justify-center">
+          <Lock size={28} className="text-amber-500"/>
+        </div>
+        <p className="font-bold text-gray-700">Séance non ouverte</p>
+        <p className="text-sm text-gray-400 max-w-xs">Le pointage des présences ne peut se faire qu'une fois la séance ouverte par le président.</p>
+      </div>
+    );
+  }
+
+  const handleStatut = (idMembre, statut) => {
+    if (statut === 'absent_excuse') {
+      setMotifModal({ idMembre });
+      setMotif('');
+      return;
+    }
+    setPresenceMembre(reunion.id, idMembre, { statut, heureArrivee: statut === 'present' || statut === 'en_retard' ? new Date().toTimeString().slice(0,5) : '' });
+  };
+
+  const confirmMotif = () => {
+    setPresenceMembre(reunion.id, motifModal.idMembre, { statut: 'absent_excuse', motifAbsence: motif });
+    setMotifModal(null);
+    setMotif('');
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-4 gap-2">
+        {[
+          { l:'Présents', v:nbPresents, c:'text-green-600', bg:'bg-green-50 border border-green-100' },
+          { l:'Excusés',  v:nbAbsentsExcuses, c:'text-amber-600', bg:'bg-amber-50 border border-amber-100' },
+          { l:'Absents',  v:nbAbsents, c:'text-red-500', bg:'bg-red-50 border border-red-100' },
+          { l:'Non pointés', v:Math.max(0,nbNonPointes), c:'text-gray-500', bg:'bg-gray-50 border border-gray-100' },
+        ].map(s => (
+          <div key={s.l} className={`p-2.5 rounded-xl text-center ${s.bg}`}>
+            <p className={`text-base font-bold ${s.c}`}>{s.v}</p>
+            <p className="text-[11px] text-gray-500">{s.l}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="space-y-1.5 max-h-96 overflow-y-auto">
+        {membresActifs.map(m => {
+          const p = getPresence(m.id);
+          const statut = p?.statut;
+          return (
+            <div key={m.id} className="flex items-center gap-3 p-2.5 bg-gray-50 rounded-xl">
+              <div className="w-8 h-8 rounded-lg gradient-primary flex items-center justify-center text-white text-xs font-bold shrink-0">
+                {m.nom?.[0]}{m.prenom?.[0]}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-gray-800 truncate">{m.nom} {m.prenom}</p>
+                {statut === 'absent_excuse' && p.motifAbsence && (
+                  <p className="text-[11px] text-amber-600 truncate">Motif : {p.motifAbsence}</p>
+                )}
+                {(statut === 'present' || statut === 'en_retard') && p.heureArrivee && (
+                  <p className="text-[11px] text-gray-400">Arrivée : {p.heureArrivee}</p>
+                )}
+              </div>
+              {statut && (
+                <Badge variant={STATUTS_PRESENCE.find(s => s.value === statut)?.color || 'gray'}>
+                  {statutPresenceLabel[statut] || statut}
+                </Badge>
+              )}
+              {!locked && (
+                <div className="flex gap-1 shrink-0">
+                  <button onClick={() => handleStatut(m.id, 'present')}
+                    className={clsx('p-1.5 rounded-lg border', statut === 'present' ? 'bg-green-500 border-green-500 text-white' : 'border-gray-200 text-gray-400 hover:border-green-300 hover:text-green-500')}>
+                    <CheckSquare size={14}/>
+                  </button>
+                  <button onClick={() => handleStatut(m.id, 'absent_excuse')}
+                    className={clsx('p-1.5 rounded-lg border', statut === 'absent_excuse' ? 'bg-amber-500 border-amber-500 text-white' : 'border-gray-200 text-gray-400 hover:border-amber-300 hover:text-amber-500')}>
+                    <MinusSquare size={14}/>
+                  </button>
+                  <button onClick={() => handleStatut(m.id, 'absent')}
+                    className={clsx('p-1.5 rounded-lg border', statut === 'absent' ? 'bg-red-500 border-red-500 text-white' : 'border-gray-200 text-gray-400 hover:border-red-300 hover:text-red-500')}>
+                    <XSquare size={14}/>
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {membresActifs.length === 0 && (
+          <p className="text-xs text-gray-400 text-center py-6">Aucun membre actif à pointer.</p>
+        )}
+      </div>
+
+      <Modal open={!!motifModal} onClose={() => setMotifModal(null)} title="Motif de l'absence excusée"
+        footer={<><button onClick={() => setMotifModal(null)} className="btn-secondary">Annuler</button><button onClick={confirmMotif} className="btn-primary">Confirmer</button></>}>
+        <FormField label="Motif" required>
+          <input className="input" placeholder="Ex : Maladie, voyage, empêchement professionnel…" value={motif} onChange={e => setMotif(e.target.value)} autoFocus/>
+        </FormField>
+      </Modal>
+    </div>
+  );
+}
+
+
+// ── Panneau transactions séance ───────────────────────────────
 function PanneauTransactions({ reunion, onClose }) {
   const {
     membres, banques, prets, sanctions,
     seanceTransactions, addSeanceTransaction, deleteSeanceTransaction,
-    tontines, membresParTontine,
+    tontines, membresParTontine, caisseJournal,
   } = useApp();
+
+  // Solde de caisse disponible, toutes séances confondues (RG-CAI-006 : le
+  // solde d'une caisse ne peut jamais devenir négatif).
+  const soldeDisponibleCaisse = (caisseJournal || []).reduce((s, t) => {
+    const dir = TX_TYPES.find(tt => tt.value === t.type)?.dir;
+    if (dir === 'entree') return s + Number(t.montant || 0);
+    if (dir === 'sortie' || dir === 'banque') return s - Number(t.montant || 0);
+    return s;
+  }, 0);
 
   const txs     = seanceTransactions.filter(t => t.reunionId === reunion.id);
   const locked  = reunion.statutReunion === 'cloturee';
@@ -1720,13 +1872,15 @@ function PanneauTransactions({ reunion, onClose }) {
 
   const handleSubmitTx = (form) => {
     if (!form.montant || Number(form.montant) <= 0) return;
+    const m = form.idMembre ? membres.find(x => x.id === form.idMembre) : null;
     addSeanceTransaction(reunion.id, {
       ...form,
-      idMembre:   form.idMembre   ? Number(form.idMembre)   : null,
-      idSanction: form.idSanction ? Number(form.idSanction) : null,
-      idPret:     form.idPret     ? Number(form.idPret)      : null,
-      idBanque:   form.idBanque   ? Number(form.idBanque)    : null,
-    }, banques, membres);
+      idMembre:   form.idMembre   || null,
+      idSanction: form.idSanction || null,
+      idPret:     form.idPret     || null,
+      idBanque:   form.idBanque   || null,
+      nomMembre:  m ? `${m.nom} ${m.prenom}` : (form.nomMembre || ''),
+    });
     setSelectedType(null);
   };
 
@@ -1800,6 +1954,7 @@ function PanneauTransactions({ reunion, onClose }) {
                 sanctions={sanctions}
                 tontines={tontines}
                 membresParTontine={membresParTontine}
+                soldeDisponible={soldeDisponibleCaisse}
                 onSubmit={handleSubmitTx}
                 onCancel={() => setSelectedType(null)}
               />
@@ -1834,6 +1989,9 @@ function PanneauTransactions({ reunion, onClose }) {
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold text-gray-800 truncate">{tx.libelle || meta?.label || tx.type}</p>
                   <p className="text-xs text-gray-400">{tx.nomMembre || '—'} · {tx.heure}</p>
+                </div>
+                <div className="shrink-0">
+                  <ModePaiementBadge modePaiement={tx.modePaiement} detailsPaiement={tx.detailsPaiement} />
                 </div>
                 <div className="text-right shrink-0">
                   <p className={clsx('text-sm font-bold',
@@ -1870,10 +2028,10 @@ function PanneauTransactions({ reunion, onClose }) {
 // ── Page principale ───────────────────────────────────────────
 export function Reunions() {
   const {
-    reunions, membres,
+    reunions, membres, user, presences,
     addReunion, updateReunion, ouvrirSeance,
-    addPointODJ, updatePointODJ, removePointODJ, cloturerSeance,
-    seanceTransactions,
+    addPointODJ, updatePointODJ, removePointODJ, movePointODJ, cloturerSeance,
+    seanceTransactions, showToast,
   } = useApp();
 
   const [showAdd,        setShowAdd]        = useState(false);
@@ -1893,22 +2051,27 @@ export function Reunions() {
 
   const membresNoms = membres.map(m => `${m.nom} ${m.prenom}`);
 
+  const dateMinReunion = new Date(Date.now() + 24 * 3600 * 1000).toISOString().split('T')[0]; // RG-REU-002 : J+1 minimum
+
   const handleAddReunion = () => {
     if (!formReunion.date || !formReunion.lieu) return;
+    if (formReunion.date < dateMinReunion) { showToast?.("La date doit être au moins 24h après aujourd'hui.", "error"); return; }
+    if (reunions.some(r => r.date === formReunion.date)) { showToast?.("Une réunion est déjà planifiée ce jour-là.", "error"); return; } // RG-REU-005
     addReunion({ ...formReunion });
     setShowAdd(false); setFormReunion(EMPTY_REUNION);
   };
 
   const handleEditReunion = () => {
     if (!formReunion.date || !formReunion.lieu) return;
+    if (reunions.some(r => r.date === formReunion.date && r.id !== showEdit.id)) { showToast?.("Une réunion est déjà planifiée ce jour-là.", "error"); return; }
     updateReunion({ ...showEdit, ...formReunion });
     setShowEdit(null);
   };
 
   const handleOuverture = () => {
     if (!formOuv.heureOuverture || !formOuv.presidentSeance) return;
-    ouvrirSeance(showOuverture.id, formOuv);
-    setShowOuverture(null); setFormOuv(EMPTY_OUVERTURE);
+    const ok = ouvrirSeance(showOuverture.id, formOuv);
+    if (ok !== false) { setShowOuverture(null); setFormOuv(EMPTY_OUVERTURE); }
   };
 
   const handleCloture = () => {
@@ -2063,6 +2226,7 @@ export function Reunions() {
         const locked = r.statutReunion === 'cloturee';
         const tabs = [
           { id:'info',              label:'Informations',       icon: ClipboardList  },
+          { id:'presences',         label:'Présences',           icon: Users          },
           { id:'feuille_cotisation',label:'Feuille Cotisation', icon: ClipboardCheck },
           { id:'beneficiaire',      label:'Bénéficiaire',       icon: Trophy         },
           { id:'transactions',      label:'Transactions',        icon: Receipt        },
@@ -2111,6 +2275,11 @@ export function Reunions() {
                     {tab.id==='beneficiaire' && (r.beneficiairesSeance||[]).length > 0 && (
                       <span className="ml-1 px-1.5 py-0.5 bg-amber-500 text-white rounded-full text-xs leading-none">
                         {(r.beneficiairesSeance||[]).length}
+                      </span>
+                    )}
+                    {tab.id==='presences' && r.statutReunion !== 'planifiee' && (
+                      <span className="ml-1 px-1.5 py-0.5 bg-primary-500 text-white rounded-full text-xs leading-none">
+                        {presences.filter(p=>p.reunionId===r.id).length}
                       </span>
                     )}
                   </button>
@@ -2164,20 +2333,39 @@ export function Reunions() {
                         </button>
                       )}
                     </div>
+                    {r.statutReunion === 'en_cours' && (
+                      <p className="text-[11px] text-amber-600 bg-amber-50 border border-amber-100 rounded-lg px-2 py-1 mb-2">
+                        Séance ouverte — chaque acteur assigné saisit sa rubrique dans l'onglet Transactions. Vous êtes connecté en tant que <strong>{acteurRoleLabel[user?.role] || user?.role || '—'}</strong>.
+                      </p>
+                    )}
                     <div className="space-y-1.5">
-                      {(r.pointsOrdreJour||[]).map((p,i)=>(
-                        <div key={p.id} className="flex items-start gap-2 p-2.5 bg-gray-50 rounded-lg group">
+                      {(r.pointsOrdreJour||[]).slice().sort((a,b)=>(a.ordre??0)-(b.ordre??0)).map((p,i,arr)=>{
+                        const acteurAssigne = p.acteurRole ? (acteurRoleLabel[p.acteurRole] || p.acteurRole) : null;
+                        const peutSaisir = !p.acteurRole || user?.role === p.acteurRole || user?.role === 'president';
+                        return (
+                        <div key={p.id} className={clsx('flex items-start gap-2 p-2.5 rounded-lg group', peutSaisir ? 'bg-gray-50' : 'bg-gray-50/60 opacity-70')}>
                           <span className="text-xs text-gray-400 font-mono mt-0.5 shrink-0">{String(i+1).padStart(2,'0')}.</span>
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium text-gray-800 truncate">{p.titre}</p>
                             {p.description && <p className="text-xs text-gray-500 truncate">{p.description}</p>}
+                            {acteurAssigne && (
+                              <p className="text-[11px] text-primary-600 flex items-center gap-1 mt-0.5">
+                                {!peutSaisir && <Lock size={10}/>} Acteur : {acteurAssigne}
+                              </p>
+                            )}
                           </div>
                           <div className="flex items-center gap-1 shrink-0">
                             <Badge variant={typeCfg[p.type]?.v||'gray'}>{typeCfg[p.type]?.label||p.type}</Badge>
                             <Badge variant={statutPointCfg[p.statut]?.v||'gray'}>{statutPointCfg[p.statut]?.label||p.statut}</Badge>
-                            {!locked && (
+                            {!locked && r.statutReunion === 'planifiee' && (
                               <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <button onClick={e=>{e.stopPropagation();setShowEditPoint({reunionId:r.id,point:p});setFormPoint({titre:p.titre,type:p.type,description:p.description||'',statut:p.statut});}} className="p-1 hover:bg-white rounded">
+                                <button onClick={e=>{e.stopPropagation();movePointODJ(r.id,p.id,'up');}} disabled={i===0} className="p-1 hover:bg-white rounded disabled:opacity-30">
+                                  <ChevronRight size={11} className="text-gray-400 -rotate-90"/>
+                                </button>
+                                <button onClick={e=>{e.stopPropagation();movePointODJ(r.id,p.id,'down');}} disabled={i===arr.length-1} className="p-1 hover:bg-white rounded disabled:opacity-30">
+                                  <ChevronRight size={11} className="text-gray-400 rotate-90"/>
+                                </button>
+                                <button onClick={e=>{e.stopPropagation();setShowEditPoint({reunionId:r.id,point:p});setFormPoint({titre:p.titre,type:p.type,description:p.description||'',statut:p.statut,acteurRole:p.acteurRole||''});}} className="p-1 hover:bg-white rounded">
                                   <Pencil size={11} className="text-gray-400"/>
                                 </button>
                                 <button onClick={e=>{e.stopPropagation();removePointODJ(r.id,p.id);}} className="p-1 hover:bg-white rounded">
@@ -2185,9 +2373,15 @@ export function Reunions() {
                                 </button>
                               </div>
                             )}
+                            {!locked && r.statutReunion === 'en_cours' && (
+                              <button onClick={e=>{e.stopPropagation();setShowEditPoint({reunionId:r.id,point:p});setFormPoint({titre:p.titre,type:p.type,description:p.description||'',statut:p.statut,acteurRole:p.acteurRole||''});}} className="p-1 hover:bg-white rounded opacity-0 group-hover:opacity-100 transition-opacity">
+                                <Pencil size={11} className="text-gray-400"/>
+                              </button>
+                            )}
                           </div>
                         </div>
-                      ))}
+                        );
+                      })}
                       {(!r.pointsOrdreJour||r.pointsOrdreJour.length===0) && (
                         <p className="text-xs text-gray-400 text-center py-3">Aucun point à l'ordre du jour</p>
                       )}
@@ -2234,6 +2428,11 @@ export function Reunions() {
                 <BeneficiaireSeancePanel reunion={r}/>
               )}
 
+              {/* Tab: Présences */}
+              {detailTab === 'presences' && (
+                <PanneauPresences reunion={r} membres={membres}/>
+              )}
+
               {/* Tab: Feuille de cotisation */}
               {detailTab === 'feuille_cotisation' && (
                 <FeuillePresenceTontine reunion={r} onClose={() => setShowDetail(null)}/>
@@ -2262,8 +2461,9 @@ export function Reunions() {
       <Modal open={showAdd} onClose={()=>setShowAdd(false)} title="Planifier une réunion"
         footer={<>
           <button onClick={()=>setShowAdd(false)} className="btn-secondary">Annuler</button>
-          <button onClick={handleAddReunion} disabled={!formReunion.date || !formReunion.lieu}
-            className={clsx('btn-primary', (!formReunion.date || !formReunion.lieu) && 'opacity-40 cursor-not-allowed')}>
+          <button onClick={handleAddReunion}
+            disabled={!formReunion.date || !formReunion.lieu || formReunion.date < dateMinReunion || reunions.some(r => r.date === formReunion.date)}
+            className={clsx('btn-primary', (!formReunion.date || !formReunion.lieu || formReunion.date < dateMinReunion || reunions.some(r => r.date === formReunion.date)) && 'opacity-40 cursor-not-allowed')}>
             <CalendarPlus size={14}/> Planifier la réunion
           </button>
         </>}>
@@ -2276,8 +2476,11 @@ export function Reunions() {
 
           {/* Date + N° (pré-remplis automatiquement) */}
           <div className="grid grid-cols-2 gap-3">
-            <FormField label="Date de la réunion" required>
-              <FR k="date" type="date"/>
+            <FormField label="Date de la réunion" required hint="Minimum 24h à l'avance (RG-REU-002)">
+              <FR k="date" type="date" min={dateMinReunion}/>
+              {formReunion.date && reunions.some(r => r.date === formReunion.date) && (
+                <p className="text-xs text-red-500 mt-1">Une réunion est déjà planifiée ce jour-là.</p>
+              )}
             </FormField>
             <FormField label="N° de séance">
               <div className="relative">
@@ -2422,6 +2625,12 @@ export function Reunions() {
               {Object.entries(typePointLabel).map(([k,l])=><option key={k} value={k}>{l}</option>)}
             </select>
           </FormField>
+          <FormField label="Acteur responsable" hint="Seule cette personne pourra saisir cette rubrique une fois la séance ouverte">
+            <select className="select" value={formPoint.acteurRole||''} onChange={e=>setFormPoint(f=>({...f,acteurRole:e.target.value}))}>
+              <option value="">— Non assigné (tous peuvent saisir) —</option>
+              {ACTEUR_ROLES.map(r=><option key={r.value} value={r.value}>{r.label}</option>)}
+            </select>
+          </FormField>
           <FormField label="Description">
             <textarea className="input h-20 resize-none" placeholder="Détails du point…"
               value={formPoint.description||''} onChange={e=>setFormPoint(f=>({...f,description:e.target.value}))}/>
@@ -2446,6 +2655,12 @@ export function Reunions() {
               </select>
             </FormField>
           </div>
+          <FormField label="Acteur responsable" hint="Seule cette personne pourra saisir cette rubrique une fois la séance ouverte">
+            <select className="select" value={formPoint.acteurRole||''} onChange={e=>setFormPoint(f=>({...f,acteurRole:e.target.value}))}>
+              <option value="">— Non assigné (tous peuvent saisir) —</option>
+              {ACTEUR_ROLES.map(r=><option key={r.value} value={r.value}>{r.label}</option>)}
+            </select>
+          </FormField>
           <FormField label="Description">
             <textarea className="input h-20 resize-none"
               value={formPoint.description||''} onChange={e=>setFormPoint(f=>({...f,description:e.target.value}))}/>

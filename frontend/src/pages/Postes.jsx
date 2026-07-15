@@ -28,11 +28,11 @@ export default function Postes() {
 
   const handleAssign = () => {
     if (!form.idMembre || !assignModal) return;
-    if (nbPostesMembre(Number(form.idMembre)) >= plafond) return; // garde-fou RG-ORG-010
-    const m = membres.find((x) => x.id === Number(form.idMembre));
+    if (nbPostesMembre(form.idMembre) >= plafond) return; // garde-fou RG-ORG-010
+    const m = membres.find((x) => x.id === form.idMembre);
     addMandat?.({
       poste: assignModal.poste,
-      idMembre: Number(form.idMembre),
+      idMembre: form.idMembre,
       nomMembre: `${m?.nom || ''} ${m?.prenom || ''}`.trim(),
       dateDebut: form.dateDebut,
       dateFin: null,

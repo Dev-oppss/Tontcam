@@ -8,6 +8,7 @@ import {
 import { fmt, fmtDate, typeAttrLabel, periodeLabel } from '../data/mockData';
 import { useApp } from '../context/AppContext';
 import { PageHeader, Badge, Modal, FormField } from '../components/ui/index';
+import { ModePaiementFields, isModePaiementValid } from '../components/ui/ModePaiement';
 import { NavLink, useSearchParams } from 'react-router-dom';
 import clsx from 'clsx';
 
@@ -87,6 +88,9 @@ export default function Tontines() {
   const [dragIdx,         setDragIdx]         = useState(null);
   const [showBulletin,    setShowBulletin]    = useState(null);
   const [bulletinForm,    setBulletinForm]    = useState({ idMembre:'', numeroCycle:1, retenueLibelle:'', retenueMontant:0 });
+  const [encaisseModal,   setEncaisseModal]   = useState(null); // tour planning à encaisser
+  const [encModePaiement, setEncModePaiement] = useState('especes');
+  const [encDetails,      setEncDetails]      = useState('');
 
   const filteredTontines = tontines.filter(t =>
     activeTab === 'toutes' ? true : t.typeAttribution === activeTab
@@ -104,31 +108,33 @@ export default function Tontines() {
   const getProchainTour   = (id, nb) => Math.min(getNbEncaisses(id) + 1, nb);
 
   const handleAdd = () => {
-    if (!form.nom.trim() || !form.cotisation || !form.caisseId) return;
+    if (!form.nom.trim() || !form.caisseId) return;
+    if (!form.cotisation || Number(form.cotisation) <= 0) return;
     const dateFin = form.dateFin || calcDateFin(form.dateDebut, form.nbTours, form.periode);
     addTontine({ ...form, cotisation: Number(form.cotisation), nbTours: Number(form.nbTours), dateFin });
     setShowAdd(false); setForm(EMPTY_FORM);
   };
 
   const handleEdit = () => {
-    if (!form.nom.trim() || !form.cotisation || !form.caisseId) return;
+    if (!form.nom.trim() || !form.caisseId) return;
+    if (!form.cotisation || Number(form.cotisation) <= 0) return;
     updateTontine({ ...showEdit, ...form, cotisation: Number(form.cotisation), nbTours: Number(form.nbTours) });
     setShowEdit(null);
   };
 
   const handleAddMembre = () => {
     if (!formMT.idMembre || !showMembres) return;
-    addMembreTontine({ idTontine: showMembres.id, idMembre: Number(formMT.idMembre), nombreParts: Number(formMT.nombreParts) || 1, dateAdhesion: formMT.dateAdhesion, idAvaliste: formMT.idAvaliste ? Number(formMT.idAvaliste) : null });
+    addMembreTontine({ idTontine: showMembres.id, idMembre: formMT.idMembre, nombreParts: Number(formMT.nombreParts) || 1, dateAdhesion: formMT.dateAdhesion, idAvaliste: formMT.idAvaliste || null });
     setShowAddMembre(false); setFormMT(EMPTY_MT);
   };
 
   const handleAddTour = (idTontine, nbTours) => {
     if (!formTour.idMembre) return;
     const t = tontines.find(x => x.id === idTontine);
-    const m = membres.find(x => x.id === Number(formTour.idMembre));
+    const m = membres.find(x => x.id === formTour.idMembre);
     const numeroTour = getProchainTour(idTontine, nbTours);
     addTourPlanning({
-      idTontine, idMembre: Number(formTour.idMembre),
+      idTontine, idMembre: formTour.idMembre,
       nomMembre: `${m?.nom} ${m?.prenom}`, numeroTour,
       datePrevue: formTour.datePrevue, note: formTour.note,
       montantPot: t ? t.cotisation * t.totalParts : 0,
@@ -356,7 +362,7 @@ export default function Tontines() {
                       <span className="text-xs font-bold text-gray-700 shrink-0">{fmt(p.montantPot)}</span>
                       <div className="flex flex-col gap-0.5 shrink-0">
                         {p.statut==='planifie'&&(
-                          <button onClick={()=>marquerTourEncaisse(p.id,'','')} title="Marquer encaissé" className="p-1 hover:bg-primary-100 rounded text-primary-600"><CheckCircle size={13}/></button>
+                          <button onClick={()=>{setEncaisseModal(p);setEncModePaiement('especes');setEncDetails('');}} title="Marquer encaissé" className="p-1 hover:bg-primary-100 rounded text-primary-600"><CheckCircle size={13}/></button>
                         )}
                         {p.statut!=='encaisse'&&(
                           <button onClick={()=>retirerTourPlanning(p.id)} title="Retirer" className="p-1 hover:bg-red-100 rounded text-red-400"><X size={12}/></button>
@@ -689,7 +695,7 @@ export default function Tontines() {
                 <FormField label="Avaliste" required hint="Requis par cette tontine — aucun gain ne peut être versé sans avaliste valide (RG-TON-006/011)">
                   <select className="select" value={formMT.idAvaliste} onChange={e=>setFormMT(f=>({...f,idAvaliste:e.target.value}))}>
                     <option value="">— Sélectionner —</option>
-                    {membres.filter(m=>m.id!==Number(formMT.idMembre)&&m.statut==='actif').map(m=><option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
+                    {membres.filter(m=>m.id!==formMT.idMembre&&m.statut==='actif').map(m=><option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
                   </select>
                 </FormField>
               )}
@@ -707,7 +713,7 @@ export default function Tontines() {
       </Modal>
 
       <Modal open={!!showBulletin} onClose={()=>setShowBulletin(null)} title={`Bulletin de gain — ${showBulletin?.nom || ''}`}
-        footer={<><button onClick={()=>setShowBulletin(null)} className="btn-secondary">Annuler</button><button onClick={async()=>{const retenues=bulletinForm.retenueMontant>0?[{libelle:bulletinForm.retenueLibelle||'Retenue',montant:Number(bulletinForm.retenueMontant)}]:[];const b=await genererBulletin({idTontine:showBulletin.id,idMembre:Number(bulletinForm.idMembre),numeroCycle:Number(bulletinForm.numeroCycle),retenues});if(b){ouvrirBulletinPdf(b.id);setShowBulletin(null);}}} className="btn-primary"><FileText size={14}/> Générer PDF</button></>}>
+        footer={<><button onClick={()=>setShowBulletin(null)} className="btn-secondary">Annuler</button><button onClick={async()=>{const retenues=bulletinForm.retenueMontant>0?[{libelle:bulletinForm.retenueLibelle||'Retenue',montant:Number(bulletinForm.retenueMontant)}]:[];const b=await genererBulletin({idTontine:showBulletin.id,idMembre:bulletinForm.idMembre,numeroCycle:Number(bulletinForm.numeroCycle),retenues});if(b){ouvrirBulletinPdf(b.id);setShowBulletin(null);}}} className="btn-primary"><FileText size={14}/> Générer PDF</button></>}>
         <div className="space-y-4">
           <FormField label="Bénéficiaire" required>
             <select className="select" value={bulletinForm.idMembre} onChange={e=>setBulletinForm(f=>({...f,idMembre:e.target.value}))}>
@@ -791,7 +797,9 @@ export default function Tontines() {
         <div className="space-y-4">
           <FormField label="Nom" required><F k="nom"/></FormField>
           <div className="grid grid-cols-2 gap-3">
-            <FormField label="Cotisation (FCFA)" required><F k="cotisation" type="number"/></FormField>
+            <FormField label="Cotisation (FCFA)" required hint={showEdit && getNbEncaisses(showEdit.id) > 0 ? "Immuable : au moins un cycle a déjà été encaissé (RG-TON-002)" : undefined}>
+              <F k="cotisation" type="number" disabled={showEdit && getNbEncaisses(showEdit.id) > 0}/>
+            </FormField>
             <FormField label="Périodicité"><S k="periode"><option value="hebdomadaire">Hebdomadaire</option><option value="mensuel">Mensuelle</option><option value="bimestriel">Bimestrielle</option><option value="trimestriel">Trimestrielle</option></S></FormField>
           </div>
           <FormField label="Caisse liée" required>
@@ -805,6 +813,32 @@ export default function Tontines() {
             <FormField label="Type"><S k="typeAttribution"><option value="rotation"> Rotation</option><option value="tirage"> Tirage</option><option value="enchere"> Enchère</option></S></FormField>
           </div>
         </div>
+      </Modal>
+
+      {/* Encaissement d'un tour — mode de paiement obligatoire (RG-TON-039) */}
+      <Modal open={!!encaisseModal} onClose={()=>setEncaisseModal(null)} title="Marquer le tour comme encaissé"
+        footer={<>
+          <button onClick={()=>setEncaisseModal(null)} className="btn-secondary">Annuler</button>
+          <button
+            onClick={()=>{ marquerTourEncaisse(encaisseModal.id, encModePaiement, encDetails); setEncaisseModal(null); }}
+            disabled={!isModePaiementValid(encModePaiement, encDetails)}
+            className={clsx('btn-primary', !isModePaiementValid(encModePaiement, encDetails) && 'opacity-40 cursor-not-allowed')}
+          ><CheckCircle size={14}/>Confirmer l'encaissement</button>
+        </>}>
+        {encaisseModal && (
+          <div className="space-y-4">
+            <div className="p-3 bg-primary-50 rounded-xl border border-primary-100">
+              <p className="text-sm font-semibold text-primary-800">{encaisseModal.nomMembre}</p>
+              <p className="text-xs text-primary-600 mt-0.5">Tour N°{encaisseModal.numeroTour} — <strong>{fmt(encaisseModal.montantPot)}</strong></p>
+            </div>
+            <ModePaiementFields
+              modePaiement={encModePaiement}
+              detailsPaiement={encDetails}
+              onModeChange={(v)=>{setEncModePaiement(v);setEncDetails('');}}
+              onDetailsChange={setEncDetails}
+            />
+          </div>
+        )}
       </Modal>
     </div>
   );

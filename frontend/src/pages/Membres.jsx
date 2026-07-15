@@ -6,14 +6,17 @@ import {
   TrendingUp, CheckCircle, AlertCircle, Clock, RefreshCw,
   ChevronDown, ChevronUp,
 } from 'lucide-react';
-import { fmtDate, fmt, periodeLabel, typeAttrLabel } from '../data/mockData';
+import { fmtDate, fmt, periodeLabel, typeAttrLabel, STATUTS_MEMBRE, statutMembreLabel, statutMembreColor } from '../data/mockData';
 import { useApp } from '../context/AppContext';
 import { PageHeader, Table, Badge, Modal, FormField } from '../components/ui/index';
 import clsx from 'clsx';
 
-const sMap = { actif:'green', suspendu:'amber', demissionnaire:'gray', decede:'red' };
-const sLbl = { actif:'Actif', suspendu:'Suspendu', demissionnaire:'Démissionnaire', décédé:'Décédé' };
-const EMPTY = { nom:'', prenom:'', sexe:'M', telephone:'', adresse:'', profession:'', statut:'actif', dateAdhesion: new Date().toISOString().split('T')[0] };
+// RG-MBR-003 : statut_membre = actif | suspendu | exclu | en_attente (ENUM DB).
+// Migration douce des anciennes valeurs locales pour ne pas casser les données déjà enregistrées.
+const migrerStatut = (s) => (s === 'demissionnaire' || s === 'decede' ? 'exclu' : (s || 'actif'));
+const sMap = statutMembreColor;
+const sLbl = statutMembreLabel;
+const EMPTY = { nom:'', prenom:'', sexe:'M', telephone:'', email:'', adresse:'', profession:'', statut:'actif', dateAdhesion: new Date().toISOString().split('T')[0] };
 
 // ── Fiche membre complète ─────────────────────────────────────
 function FicheMembre({ membre, onClose, onEdit }) {
@@ -90,7 +93,7 @@ function FicheMembre({ membre, onClose, onEdit }) {
                 <p className="text-sm opacity-80 mt-0.5">{membre.numero} · {membre.profession}</p>
                 <div className="flex items-center gap-2 mt-1.5">
                   <span className={clsx('text-xs px-2 py-0.5 rounded-full font-medium', membre.statut === 'actif' ? 'bg-primary-400/30 text-white' : 'bg-red-400/30 text-white')}>
-                    {sLbl[membre.statut] || membre.statut}
+                    {sLbl[migrerStatut(membre.statut)] || membre.statut}
                   </span>
                   <span className="text-xs opacity-70">Depuis {fmtDate(membre.dateAdhesion)}</span>
                 </div>
@@ -429,7 +432,7 @@ function FicheMembre({ membre, onClose, onEdit }) {
 
 // ── Page principale Membres ───────────────────────────────────
 export default function Membres() {
-  const { membres, tontines, membresParTontine, addMembre, updateMembre, deleteMembre, addMembreTontine, removeMembreTontine, updateMembreTontine } = useApp();
+  const { membres, tontines, membresParTontine, addMembre, updateMembre, deleteMembre, addMembreTontine, removeMembreTontine, updateMembreTontine, prets, sanctions } = useApp();
 
   const [search,     setSearch]     = useState('');
   const [filtre,     setFiltre]     = useState('tous');
@@ -441,17 +444,69 @@ export default function Membres() {
 
   const [showInscrit, setShowInscrit] = useState(null);
   const [formInscrit, setFormInscrit] = useState({ idTontine:'', nombreParts:1, dateAdhesion:'' });
+  const [errors, setErrors] = useState({});
 
   const list = membres.filter(m => {
     const q = search.toLowerCase();
     return `${m.nom} ${m.prenom} ${m.numero} ${m.telephone}`.toLowerCase().includes(q)
-      && (filtre === 'tous' || m.statut === filtre);
+      && (filtre === 'tous' || migrerStatut(m.statut) === filtre);
   });
 
-  const openEdit = (m) => { setForm({ ...m }); setEdit(m); };
+  const openEdit = (m) => { setForm({ ...m }); setErrors({}); setEdit(m); };
+  const openAdd  = () => { setForm(EMPTY); setErrors({}); setAdd(true); };
 
-  const handleAdd  = () => { if (!form.nom.trim()||!form.prenom.trim()) return; addMembre({...form}); setAdd(false); };
-  const handleEdit = () => { if (!form.nom.trim()||!form.prenom.trim()) return; updateMembre({...edit,...form}); setEdit(null); };
+  // RG-MBR-006 : un membre ayant au moins une transaction, un prêt ou une
+  // part de tontine ne peut pas être supprimé — seule l'exclusion est possible.
+  const hasDonneesFinancieres = (idMembre) =>
+    membresParTontine.some(mt => mt.idMembre === idMembre) ||
+    prets.some(p => p.idMembre === idMembre) ||
+    sanctions.some(s => s.idMembre === idMembre);
+
+  const today = new Date().toISOString().split('T')[0];
+  const RE_TEL   = /^(\+?237)?[\s.-]?[26]\d{2}[\s.-]?\d{3}[\s.-]?\d{3}$/; // Cameroun : 9 chiffres, débute par 2 ou 6
+  const RE_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  // RG-MBR-001 : nom, prénom + au moins un contact (tél OU email) obligatoires.
+  // RG-MBR-007 : date d'adhésion ≤ aujourd'hui. Claude.md : messages d'erreur sous les champs concernés.
+  const validate = (f, excludeId) => {
+    const e = {};
+    if (!f.nom?.trim())                    e.nom = "Le nom est obligatoire.";
+    else if (f.nom.length > 100)           e.nom = "100 caractères maximum.";
+    if (!f.prenom?.trim())                 e.prenom = "Le prénom est obligatoire.";
+    else if (f.prenom.length > 100)        e.prenom = "100 caractères maximum.";
+    if (!f.telephone?.trim() && !f.email?.trim()) {
+      e.telephone = "Renseignez au moins un moyen de contact (téléphone ou email).";
+    }
+    if (f.telephone?.trim() && !RE_TEL.test(f.telephone.trim())) {
+      e.telephone = "Format invalide. Ex : 6XX XXX XXX ou +237 6XX XXX XXX.";
+    }
+    if (f.email?.trim() && !RE_EMAIL.test(f.email.trim())) {
+      e.email = "Format d'adresse email invalide.";
+    }
+    if (f.telephone?.trim() && membres.some(m => m.id !== excludeId && m.telephone?.trim() === f.telephone.trim())) {
+      e.telephone = "Ce numéro est déjà utilisé par un autre membre.";
+    }
+    if (f.dateAdhesion && f.dateAdhesion > today) {
+      e.dateAdhesion = "La date d'adhésion ne peut pas être postérieure à aujourd'hui.";
+    }
+    if (f.profession && f.profession.length > 150) e.profession = "150 caractères maximum.";
+    return e;
+  };
+
+  const handleAdd = () => {
+    const e = validate(form, null);
+    setErrors(e);
+    if (Object.keys(e).length > 0) return;
+    addMembre({ ...form });
+    setAdd(false);
+  };
+  const handleEdit = () => {
+    const e = validate(form, edit.id);
+    setErrors(e);
+    if (Object.keys(e).length > 0) return;
+    updateMembre({ ...edit, ...form });
+    setEdit(null);
+  };
 
   const formRef = useRef(form); formRef.current = form;
   const F = useRef(({k,...p}) => <input className="input" value={formRef.current[k]||''} onChange={e=>setForm(f=>({...f,[k]:e.target.value}))} {...p}/>).current;
@@ -463,7 +518,7 @@ export default function Membres() {
 
   const handleInscrit = () => {
     if (!formInscrit.idTontine) return;
-    addMembreTontine({ idMembre:showInscrit.id, idTontine:Number(formInscrit.idTontine), nombreParts:Number(formInscrit.nombreParts)||1, dateAdhesion:formInscrit.dateAdhesion||new Date().toISOString().split('T')[0] });
+    addMembreTontine({ idMembre:showInscrit.id, idTontine:formInscrit.idTontine, nombreParts:Number(formInscrit.nombreParts)||1, dateAdhesion:formInscrit.dateAdhesion||new Date().toISOString().split('T')[0] });
     setFormInscrit({idTontine:'',nombreParts:1,dateAdhesion:''});
   };
 
@@ -472,14 +527,14 @@ export default function Membres() {
       <PageHeader
         title="Membres"
         subtitle={`${membres.length} membres — ${membresParTontine.reduce((s,mt)=>s+mt.nombreParts,0)} parts totales`}
-        action={<button onClick={()=>{setForm(EMPTY);setAdd(true);}} className="btn-primary"><UserPlus size={15}/> Nouveau membre</button>}
+        action={<button onClick={openAdd} className="btn-primary"><UserPlus size={15}/> Nouveau membre</button>}
       />
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
           {l:'Total',      v:membres.length,                                c:'text-gray-800'},
-          {l:'Actifs',     v:membres.filter(m=>m.statut==='actif').length,  c:'text-primary-600'},
-          {l:'Suspendus',  v:membres.filter(m=>m.statut==='suspendu').length,c:'text-amber-600'},
+          {l:'Actifs',     v:membres.filter(m=>migrerStatut(m.statut)==='actif').length,  c:'text-primary-600'},
+          {l:'Suspendus',  v:membres.filter(m=>migrerStatut(m.statut)==='suspendu').length,c:'text-amber-600'},
           {l:'Inscriptions',v:membresParTontine.length,                     c:'text-blue-600'},
         ].map(s=>(
           <div key={s.l} className="card py-3 text-center">
@@ -496,9 +551,7 @@ export default function Membres() {
         </div>
         <select value={filtre} onChange={e=>setFiltre(e.target.value)} className="select w-44">
           <option value="tous">Tous les statuts</option>
-          <option value="actif">Actifs</option>
-          <option value="suspendu">Suspendus</option>
-          <option value="demissionnaire">Démissionnaires</option>
+          {STATUTS_MEMBRE.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
         </select>
       </div>
 
@@ -532,13 +585,18 @@ export default function Membres() {
               </td>
               <td className="px-4 py-3 text-center font-bold text-primary-600">{totalParts}</td>
               <td className="px-4 py-3 text-sm text-gray-600">{m.telephone}</td>
-              <td className="px-4 py-3"><Badge variant={sMap[m.statut]||'gray'}>{sLbl[m.statut]||m.statut}</Badge></td>
+              <td className="px-4 py-3"><Badge variant={sMap[migrerStatut(m.statut)]||'gray'}>{sLbl[migrerStatut(m.statut)]||m.statut}</Badge></td>
               <td className="px-4 py-3" onClick={e=>e.stopPropagation()}>
                 <div className="flex gap-1">
                   <button onClick={()=>setView(m)} title="Fiche complète" className="p-1.5 hover:bg-primary-50 rounded-lg"><Eye size={14} className="text-primary-400"/></button>
                   <button onClick={()=>{setShowInscrit(m);setFormInscrit({idTontine:'',nombreParts:1,dateAdhesion:''}); }} title="Tontines" className="p-1.5 hover:bg-gray-100 rounded-lg"><Users size={14} className="text-gray-400"/></button>
                   <button onClick={()=>openEdit(m)} title="Modifier" className="p-1.5 hover:bg-blue-50 rounded-lg"><Pencil size={14} className="text-blue-400"/></button>
-                  <button onClick={()=>setConfirm(m.id)} title="Supprimer" className="p-1.5 hover:bg-red-50 rounded-lg"><Trash2 size={14} className="text-red-400"/></button>
+                  <button
+                    onClick={()=>!hasDonneesFinancieres(m.id) && setConfirm(m.id)}
+                    disabled={hasDonneesFinancieres(m.id)}
+                    title={hasDonneesFinancieres(m.id) ? "Suppression impossible : ce membre a des données financières (RG-MBR-006). Utilisez plutôt le statut « Exclu »." : "Supprimer"}
+                    className={clsx('p-1.5 rounded-lg', hasDonneesFinancieres(m.id) ? 'opacity-30 cursor-not-allowed' : 'hover:bg-red-50')}
+                  ><Trash2 size={14} className="text-red-400"/></button>
                 </div>
               </td>
             </tr>
@@ -600,25 +658,48 @@ export default function Membres() {
       </Modal>
 
       {/* ── Add / Edit ── */}
-      {[{open:add,onClose:()=>setAdd(false),title:'Nouveau membre',onSave:handleAdd,label:'Ajouter'},
-        {open:!!edit,onClose:()=>setEdit(null),title:'Modifier le membre',onSave:handleEdit,label:'Enregistrer'}
+      {[{open:add,onClose:()=>{setAdd(false);setErrors({});},title:'Nouveau membre',onSave:handleAdd,label:'Ajouter'},
+        {open:!!edit,onClose:()=>{setEdit(null);setErrors({});},title:'Modifier le membre',onSave:handleEdit,label:'Enregistrer'}
       ].map(({open,onClose,title,onSave,label})=>(
         <Modal key={title} open={open} onClose={onClose} title={title}
           footer={<><button onClick={onClose} className="btn-secondary">Annuler</button><button onClick={onSave} className="btn-primary">{label}</button></>}>
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
-              <FormField label="Nom" required><F k="nom" placeholder="NGONO"/></FormField>
-              <FormField label="Prénom" required><F k="prenom" placeholder="Élise"/></FormField>
+              <FormField label="Nom" required>
+                <F k="nom" placeholder="NGONO" maxLength={100}/>
+                {errors.nom && <p className="text-xs text-red-500 mt-1">{errors.nom}</p>}
+              </FormField>
+              <FormField label="Prénom" required>
+                <F k="prenom" placeholder="Élise" maxLength={100}/>
+                {errors.prenom && <p className="text-xs text-red-500 mt-1">{errors.prenom}</p>}
+              </FormField>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <FormField label="Sexe"><S k="sexe"><option value="M">Masculin</option><option value="F">Féminin</option></S></FormField>
-              <FormField label="Téléphone"><F k="telephone" placeholder="699 000 000"/></FormField>
+              <FormField label="Sexe">
+                <S k="sexe"><option value="M">Masculin</option><option value="F">Féminin</option><option value="A">Autre</option></S>
+              </FormField>
+              <FormField label="Téléphone" hint="Ou email — au moins un des deux est requis">
+                <F k="telephone" placeholder="6XX XXX XXX"/>
+                {errors.telephone && <p className="text-xs text-red-500 mt-1">{errors.telephone}</p>}
+              </FormField>
             </div>
+            <FormField label="Email">
+              <F k="email" type="email" placeholder="exemple@email.com"/>
+              {errors.email && <p className="text-xs text-red-500 mt-1">{errors.email}</p>}
+            </FormField>
             <FormField label="Adresse"><F k="adresse" placeholder="Douala, Akwa"/></FormField>
-            <FormField label="Profession"><F k="profession" placeholder="Commerçant(e)"/></FormField>
+            <FormField label="Profession">
+              <F k="profession" placeholder="Commerçant(e)" maxLength={150}/>
+              {errors.profession && <p className="text-xs text-red-500 mt-1">{errors.profession}</p>}
+            </FormField>
             <div className="grid grid-cols-2 gap-3">
-              <FormField label="Statut"><S k="statut"><option value="actif">Actif</option><option value="suspendu">Suspendu</option><option value="demissionnaire">Démissionnaire</option></S></FormField>
-              <FormField label="Date adhésion"><F k="dateAdhesion" type="date"/></FormField>
+              <FormField label="Statut">
+                <S k="statut">{STATUTS_MEMBRE.map(s=><option key={s.value} value={s.value}>{s.label}</option>)}</S>
+              </FormField>
+              <FormField label="Date adhésion">
+                <F k="dateAdhesion" type="date" max={today}/>
+                {errors.dateAdhesion && <p className="text-xs text-red-500 mt-1">{errors.dateAdhesion}</p>}
+              </FormField>
             </div>
           </div>
         </Modal>

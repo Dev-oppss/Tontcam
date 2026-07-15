@@ -16,8 +16,8 @@ export default function Utilisateurs() {
 
   const handleAdd = () => {
     if (!form.nomUtilisateur.trim() || !form.idMembre) return;
-    const m = membres.find(x=>x.id===Number(form.idMembre));
-    addUtilisateur({ ...form, idMembre: Number(form.idMembre), nomMembre:`${m.nom} ${m.prenom}` });
+    const m = membres.find(x=>x.id===form.idMembre);
+    addUtilisateur({ ...form, idMembre: form.idMembre, nomMembre:`${m.nom} ${m.prenom}` });
     setAdd(false);
     setForm(EMPTY);
   };

@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react';
-import { Plus, HandCoins, CreditCard, ChevronDown, ChevronUp, Coins, TrendingUp, Users, CheckCircle } from 'lucide-react';
+import { Plus, HandCoins, CreditCard, ChevronDown, ChevronUp, Coins, TrendingUp, Users, CheckCircle, AlertTriangle } from 'lucide-react';
 import { fmt, fmtDate } from '../data/mockData';
 import { useApp } from '../context/AppContext';
 import { PageHeader, Table, Badge, Modal, FormField } from '../components/ui/index';
+import { ModePaiementFields, isModePaiementValid } from '../components/ui/ModePaiement';
+import { computeEcheancesAvecPenalites, statutEcheanceLabel } from '../lib/penalites';
 
 export default function Prets() {
   const { membres, prets, comptesBanque, caisses, addPret, rembourserPret, distribuerInteretsPret } = useApp();
@@ -16,10 +18,12 @@ export default function Prets() {
     dateEcheance: '', garantie: "Caution d'un membre", observation: '',
   });
   const [remMontant, setRemMontant] = useState('');
+  const [remModePaiement, setRemModePaiement] = useState('especes');
+  const [remDetailsPaiement, setRemDetailsPaiement] = useState('');
 
-  const enCours   = prets.filter(p => p.statut === 'en_cours');
-  const enRetard  = prets.filter(p => p.statut === 'en_retard');
-  const rembourse = prets.filter(p => p.statut === 'rembourse');
+  const enCours   = pretsLive.filter(p => p.statut === 'en_cours');
+  const enRetard  = pretsLive.filter(p => p.statut === 'en_cours' && p.nbEcheancesEnRetard > 0);
+  const rembourse = pretsLive.filter(p => p.statut === 'rembourse');
 
   const sMap = { en_cours: 'blue', en_retard: 'red', rembourse: 'green' };
   const sLbl = { en_cours: 'En cours', en_retard: 'En retard', rembourse: 'Remboursé' };
@@ -102,6 +106,27 @@ export default function Prets() {
   const repartitionSimulee = montantInteret > 0 ? simulerRepartition(montantInteret) : [];
   const caissesPret = (caisses || []).filter((c) => c.pretAutorise);
   const caisseSelectionnee = caissesPret.find((c) => c.id === form.caisseId);
+  const caissesMap = Object.fromEntries((caisses || []).map((c) => [c.id, c]));
+
+  // Recalcul "live" des pénalités à l'affichage : ne dépend pas d'un
+  // remboursement pour refléter un retard qui vient d'apparaître (date dépassée).
+  const pretsLive = useMemo(() => prets.map((p) => {
+    const caisse = caissesMap[p.caisseId];
+    const penaliteActive = Boolean(caisse?.penaliteRetardActive);
+    const tauxPenalite = Number(caisse?.tauxPenalite || 0);
+    if (!Array.isArray(p.ficheAmortissement) || p.ficheAmortissement.length === 0 || p.statut === 'rembourse') {
+      return { ...p, resteActuel: p.resteAPayer, penaliteActuelle: 0, nbEcheancesEnRetard: 0, penaliteActive };
+    }
+    const calc = computeEcheancesAvecPenalites(p.ficheAmortissement, p.montantRembourse, tauxPenalite, penaliteActive);
+    return {
+      ...p,
+      resteActuel: calc.resteAPayer,
+      penaliteActuelle: calc.totalPenalites,
+      nbEcheancesEnRetard: calc.nbEcheancesEnRetard,
+      ficheAmortissementLive: calc.echeances,
+      penaliteActive,
+    };
+  }), [prets, caissesMap]);
 
   const handleAdd = () => {
     if (!form.idMembre || !form.montantPret || !form.caisseId) return;
@@ -129,13 +154,16 @@ export default function Prets() {
 
   const handleRembourser = () => {
     if (!remMontant || Number(remMontant) <= 0) return;
+    if (!isModePaiementValid(remModePaiement, remDetailsPaiement)) return;
     const reste = remModal.resteAPayer - Number(remMontant);
-    rembourserPret(remModal.id, Number(remMontant));
+    rembourserPret(remModal.id, Number(remMontant), { modePaiement: remModePaiement, detailsPaiement: remDetailsPaiement });
     if (reste <= 0 && !remModal.interetsDistribues) {
       setTimeout(() => distribuerInteretsPret(remModal.id), 200);
     }
     setRemModal(null);
     setRemMontant('');
+    setRemModePaiement('especes');
+    setRemDetailsPaiement('');
   };
 
   return (
@@ -188,7 +216,8 @@ export default function Prets() {
             <div key={p.id} className="flex items-center justify-between text-sm py-1.5 border-b border-red-100 last:border-0">
               <span className="font-medium text-red-800">{p.nomMembre}</span>
               <div className="flex items-center gap-3">
-                <span className="text-red-600 font-bold">{fmt(p.resteAPayer)} restant</span>
+                <span className="text-xs text-red-500">{p.nbEcheancesEnRetard} échéance(s) en retard</span>
+                <span className="text-red-600 font-bold">{fmt(p.resteActuel)} restant{p.penaliteActuelle > 0 ? ` (dont ${fmt(p.penaliteActuelle)} pénalité)` : ''}</span>
                 <button onClick={() => { setRemModal(p); setRemMontant(''); }} className="btn-primary py-1 px-2.5 text-xs">Rembourser</button>
               </div>
             </div>
@@ -205,9 +234,10 @@ export default function Prets() {
               ))}</tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {prets.map(p => {
+              {pretsLive.map(p => {
                 const pct = Math.round((p.montantRembourse / p.montantTotal) * 100);
                 const isOpen = detailPret === p.id;
+                const enRetardLive = p.statut === 'en_cours' && p.nbEcheancesEnRetard > 0;
                 return (
                   <>
                     <tr key={p.id} className="hover:bg-gray-50 transition-colors">
@@ -233,14 +263,25 @@ export default function Prets() {
                         <div>
                           <div className="flex justify-between text-xs text-gray-500 mb-1"><span>{fmt(p.montantRembourse)}</span><span>{pct}%</span></div>
                           <div className="w-28 bg-gray-200 rounded-full h-1.5">
-                            <div className={`h-1.5 rounded-full ${p.statut==='en_retard'?'bg-red-500':'bg-primary-500'}`} style={{width:`${pct}%`}}/>
+                            <div className={`h-1.5 rounded-full ${enRetardLive ? 'bg-red-500' : 'bg-primary-500'}`} style={{width:`${pct}%`}}/>
                           </div>
                         </div>
                       </td>
                       <td className="td font-bold text-gray-800">
-                        {p.resteAPayer > 0 ? fmt(p.resteAPayer) : <span className="text-primary-600">OK Soldé</span>}
+                        {p.resteActuel > 0 ? (
+                          <div>
+                            <p>{fmt(p.resteActuel)}</p>
+                            {p.penaliteActuelle > 0 && (
+                              <p className="text-[11px] text-red-500 font-normal flex items-center gap-0.5">
+                                <AlertTriangle size={10}/> dont {fmt(p.penaliteActuelle)} pénalité
+                              </p>
+                            )}
+                          </div>
+                        ) : <span className="text-primary-600">OK Soldé</span>}
                       </td>
-                      <td className="td"><Badge variant={sMap[p.statut]}>{sLbl[p.statut]}</Badge></td>
+                      <td className="td">
+                        <Badge variant={enRetardLive ? 'red' : sMap[p.statut]}>{enRetardLive ? 'En retard' : sLbl[p.statut]}</Badge>
+                      </td>
                       <td className="td">
                         <div className="flex items-center gap-1">
                           {p.statut !== 'rembourse' && (
@@ -309,7 +350,9 @@ export default function Prets() {
                               </p>
                             </div>
                             {(() => {
-                              const fichePret = (p.ficheAmortissement && p.ficheAmortissement.length > 0)
+                              const fichePret = (p.ficheAmortissementLive && p.ficheAmortissementLive.length > 0)
+                                ? p.ficheAmortissementLive
+                                : (p.ficheAmortissement && p.ficheAmortissement.length > 0)
                                 ? p.ficheAmortissement
                                 : (buildAmortization(p.montantPret, p.tauxInteret, p.dureeMois, p.datePret)?.ficheAmortissement || []);
                               return fichePret.length > 0 ? (
@@ -323,7 +366,9 @@ export default function Prets() {
                                           <th className="th">Capital</th>
                                           <th className="th">Intérêt</th>
                                           <th className="th">Mensualité</th>
+                                          {p.penaliteActive && <th className="th text-red-600">Pénalité</th>}
                                           <th className="th">Reste</th>
+                                          {p.penaliteActive && <th className="th">Statut</th>}
                                         </tr>
                                       </thead>
                                       <tbody className="divide-y divide-purple-50">
@@ -334,7 +379,21 @@ export default function Prets() {
                                             <td className="td font-medium">{fmt(ligne.capital)}</td>
                                             <td className="td font-medium text-amber-600">{fmt(ligne.interet)}</td>
                                             <td className="td font-semibold text-primary-700">{fmt(ligne.total)}</td>
+                                            {p.penaliteActive && (
+                                              <td className="td font-semibold text-red-600">
+                                                {ligne.montantPenalite > 0 ? fmt(ligne.montantPenalite) : '—'}
+                                              </td>
+                                            )}
                                             <td className="td font-semibold text-ink-800">{fmt(ligne.reste)}</td>
+                                            {p.penaliteActive && (
+                                              <td className="td">
+                                                {ligne.statut ? (
+                                                  <Badge variant={ligne.statut === 'payee' ? 'green' : ligne.estEnRetard ? 'red' : 'gray'}>
+                                                    {statutEcheanceLabel[ligne.statut] || ligne.statut}
+                                                  </Badge>
+                                                ) : '—'}
+                                              </td>
+                                            )}
                                           </tr>
                                         ))}
                                       </tbody>
@@ -359,31 +418,59 @@ export default function Prets() {
 
       {/* Modal remboursement */}
       <Modal open={!!remModal} onClose={() => setRemModal(null)} title="Enregistrer un remboursement"
-        footer={<><button onClick={() => setRemModal(null)} className="btn-secondary">Annuler</button><button onClick={handleRembourser} className="btn-primary"><CreditCard size={14}/>Valider</button></>}>
-        {remModal && (
+        footer={<>
+          <button onClick={() => setRemModal(null)} className="btn-secondary">Annuler</button>
+          <button
+            onClick={handleRembourser}
+            disabled={!remMontant || Number(remMontant) <= 0 || !isModePaiementValid(remModePaiement, remDetailsPaiement)}
+            className={`btn-primary ${(!remMontant || Number(remMontant) <= 0 || !isModePaiementValid(remModePaiement, remDetailsPaiement)) ? 'opacity-40 cursor-not-allowed' : ''}`}
+          ><CreditCard size={14}/>Valider</button>
+        </>}>
+        {remModal && (() => {
+          const caisseDuPret = caissesMap[remModal.caisseId];
+          const penaliteActive = Boolean(caisseDuPret?.penaliteRetardActive);
+          const live = Array.isArray(remModal.ficheAmortissement) && remModal.ficheAmortissement.length > 0
+            ? computeEcheancesAvecPenalites(remModal.ficheAmortissement, remModal.montantRembourse, Number(caisseDuPret?.tauxPenalite || 0), penaliteActive)
+            : null;
+          const resteActuel = live ? live.resteAPayer : remModal.resteAPayer;
+          const penaliteDue = live ? live.totalPenalites : 0;
+          return (
           <div className="space-y-4">
             <div className="p-4 bg-gray-50 rounded-xl space-y-1.5">
               <p className="text-sm font-semibold text-gray-800">{remModal.nomMembre}</p>
               <div className="flex justify-between text-sm"><span className="text-gray-500">Capital :</span><span>{fmt(remModal.montantPret)}</span></div>
               <div className="flex justify-between text-sm"><span className="text-gray-500">Intérêts ({remModal.tauxInteret}%) :</span><span className="text-purple-600 font-medium">{fmt(remModal.montantInteret)}</span></div>
+              {penaliteActive && penaliteDue > 0 && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-red-500 flex items-center gap-1"><AlertTriangle size={12}/>Pénalité de retard :</span>
+                  <span className="text-red-600 font-medium">{fmt(penaliteDue)}</span>
+                </div>
+              )}
               <div className="flex justify-between text-sm"><span className="text-gray-500">Déjà remboursé :</span><span className="text-primary-600 font-medium">{fmt(remModal.montantRembourse)}</span></div>
-              <div className="flex justify-between text-sm pt-2 border-t border-gray-200"><span className="font-semibold text-gray-700">Reste à payer :</span><span className="font-bold text-red-600">{fmt(remModal.resteAPayer)}</span></div>
+              <div className="flex justify-between text-sm pt-2 border-t border-gray-200"><span className="font-semibold text-gray-700">Reste à payer :</span><span className="font-bold text-red-600">{fmt(resteActuel)}</span></div>
             </div>
             <FormField label="Montant (FCFA)" required>
               <input type="number" className="input" value={remMontant}
-                onChange={e => setRemMontant(e.target.value)} min="1" max={remModal.resteAPayer}/>
+                onChange={e => setRemMontant(e.target.value)} min="1" max={resteActuel}/>
             </FormField>
-            <button onClick={() => setRemMontant(String(remModal.resteAPayer))} className="text-xs text-primary-600 hover:underline">
-              - Solder en totalité ({fmt(remModal.resteAPayer)})
+            <button onClick={() => setRemMontant(String(resteActuel))} className="text-xs text-primary-600 hover:underline">
+              - Solder en totalité ({fmt(resteActuel)})
             </button>
-            {(remModal.repartitionInterets || []).length > 0 && Number(remMontant) >= remModal.resteAPayer && !remModal.interetsDistribues && (
+            <ModePaiementFields
+              modePaiement={remModePaiement}
+              detailsPaiement={remDetailsPaiement}
+              onModeChange={(v) => { setRemModePaiement(v); setRemDetailsPaiement(''); }}
+              onDetailsChange={setRemDetailsPaiement}
+            />
+            {(remModal.repartitionInterets || []).length > 0 && Number(remMontant) >= resteActuel && !remModal.interetsDistribues && (
               <div className="p-3 bg-purple-50 rounded-xl border border-purple-100 text-xs">
                 <p className="font-semibold text-purple-700 flex items-center gap-1"><Coins size={12}/> Distribution automatique des intérêts</p>
                 <p className="text-purple-600 mt-1">{fmt(remModal.montantInteret)} répartis entre {remModal.repartitionInterets.length} membre(s) selon leurs parts.</p>
               </div>
             )}
           </div>
-        )}
+          );
+        })()}
       </Modal>
 
       {/* Modal nouveau prêt */}
@@ -432,6 +519,11 @@ export default function Prets() {
               <div className="flex justify-between text-sm pt-1 border-t border-primary-200"><span className="font-bold text-gray-700">Total :</span><span className="font-bold text-primary-700">{fmt(Number(form.montantPret) + montantInteret)}</span></div>
               {caisseSelectionnee && (
                 <p className="text-xs text-primary-700 mt-1">Caisse source: {caisseSelectionnee.nom}</p>
+              )}
+              {caisseSelectionnee?.penaliteRetardActive && (
+                <p className="text-xs text-red-600 mt-1 flex items-center gap-1">
+                  <AlertTriangle size={11}/> Pénalité de {caisseSelectionnee.tauxPenalite}% par échéance manquée sur cette caisse
+                </p>
               )}
             </div>
           )}

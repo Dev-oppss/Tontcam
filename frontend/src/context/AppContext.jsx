@@ -1,14 +1,21 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import * as mock from "../data/mockData";
+import { computeEcheancesAvecPenalites } from "../lib/penalites";
 
+// Les valeurs ci-dessous DOIVENT correspondre exactement à celles utilisées
+// dans TypePicker / SmartFormFields (Reunions.jsx) — c'est ce qui détermine
+// quels boutons de type de transaction apparaissent dans chaque groupe
+// (Entrées / Sorties / Opérations bancaires) lors de la saisie en séance.
 export const TX_TYPES = [
-  { value: "cotisation", label: "Cotisation", dir: "entree", icon: "" },
-  { value: "depot_banque", label: "Dépôt caisse", dir: "entree", icon: "" },
-  { value: "sanction", label: "Sanction", dir: "entree", icon: "" },
-  { value: "pret", label: "Prêt accordé", dir: "sortie", icon: "" },
-  { value: "remboursement", label: "Remboursement prêt", dir: "entree", icon: "" },
-  { value: "retrait", label: "Retrait", dir: "sortie", icon: "" },
-  { value: "autre", label: "Autre", dir: "entree", icon: "" },
+  { value: "cotisation",         label: "Cotisation",              dir: "entree", icon: "" },
+  { value: "amende",             label: "Règlement sanction",       dir: "entree", icon: "" },
+  { value: "remboursement_pret", label: "Remboursement prêt",       dir: "entree", icon: "" },
+  { value: "divers_entree",      label: "Autre recette",            dir: "entree", icon: "" },
+  { value: "pret_accorde",       label: "Prêt accordé",             dir: "sortie", icon: "" },
+  { value: "aide_sociale",       label: "Aide sociale",             dir: "sortie", icon: "" },
+  { value: "attribution_tour",   label: "Versement pot (tontine)",  dir: "sortie", icon: "" },
+  { value: "divers_sortie",      label: "Autre dépense",            dir: "sortie", icon: "" },
+  { value: "depot_banque",       label: "Dépôt en banque",          dir: "banque", icon: "" },
 ];
 
 export const TX_LABELS = TX_TYPES.reduce((acc, type) => ({ ...acc, [type.value]: type.label }), {});
@@ -49,6 +56,16 @@ const emptyWorkspace = () => ({
   planningTours: [],
   seanceTransactions: [],
   evolutionCaisse: [],
+  presences: [],
+  rubriquesModele: [], // gabarit des rubriques d'ODJ réutilisé à la création de chaque nouvelle réunion
+  aidesSociales: [],
+  parametres: {},
+  postes: [],
+  mandats: [],
+  decisionsAG: [],
+  reglements: [],
+  rapprochements: [],
+  auditLog: [],
 });
 
 const readWorkspace = () => {
@@ -87,6 +104,16 @@ export const AppProvider = ({ children }) => {
   const [planningTours, setPlanningTours] = useState(initial.planningTours);
   const [seanceTransactions, setSeanceTransactions] = useState(initial.seanceTransactions);
   const [evolutionCaisse, setEvolutionCaisse] = useState(initial.evolutionCaisse);
+  const [presences, setPresences] = useState(initial.presences || []);
+  const [rubriquesModele, setRubriquesModele] = useState(initial.rubriquesModele || []);
+  const [aidesSociales, setAidesSociales] = useState(initial.aidesSociales || []);
+  const [parametres, setParametres] = useState(initial.parametres || {});
+  const [postes, setPostes] = useState(initial.postes || []);
+  const [mandats, setMandats] = useState(initial.mandats || []);
+  const [decisionsAG, setDecisionsAG] = useState(initial.decisionsAG || []);
+  const [reglements, setReglements] = useState(initial.reglements || []);
+  const [rapprochements, setRapprochements] = useState(initial.rapprochements || []);
+  const [auditLog, setAuditLog] = useState(initial.auditLog || []);
   const [toast, setToast] = useState(null);
   const [user, setUser] = useState(initial.user);
   const currentAssociation = useMemo(
@@ -124,6 +151,16 @@ export const AppProvider = ({ children }) => {
       planningTours,
       seanceTransactions,
       evolutionCaisse,
+      presences,
+      rubriquesModele,
+      aidesSociales,
+      parametres,
+      postes,
+      mandats,
+      decisionsAG,
+      reglements,
+      rapprochements,
+      auditLog,
       user,
     };
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
@@ -150,6 +187,16 @@ export const AppProvider = ({ children }) => {
     planningTours,
     seanceTransactions,
     evolutionCaisse,
+    presences,
+    rubriquesModele,
+    aidesSociales,
+    parametres,
+    postes,
+    mandats,
+    decisionsAG,
+    reglements,
+    rapprochements,
+    auditLog,
     user,
   ]);
 
@@ -179,6 +226,16 @@ export const AppProvider = ({ children }) => {
     setPlanningTours(workspace.planningTours || []);
     setSeanceTransactions(workspace.seanceTransactions || []);
     setEvolutionCaisse(workspace.evolutionCaisse || []);
+    setPresences(workspace.presences || []);
+    setRubriquesModele(workspace.rubriquesModele || []);
+    setAidesSociales(workspace.aidesSociales || []);
+    setParametres(workspace.parametres || {});
+    setPostes(workspace.postes || []);
+    setMandats(workspace.mandats || []);
+    setDecisionsAG(workspace.decisionsAG || []);
+    setReglements(workspace.reglements || []);
+    setRapprochements(workspace.rapprochements || []);
+    setAuditLog(workspace.auditLog || []);
   }, []);
 
   const dashboardStats = useMemo(() => ({
@@ -205,11 +262,23 @@ export const AppProvider = ({ children }) => {
   const addMembre = async (data) => {
     const item = { id: uid(), numero: `M-${String(membres.length + 1).padStart(3, "0")}`, statut: "actif", dateAdhesion: today(), ...data };
     setMembres((prev) => [...prev, item]);
+    logAudit("membres", "creation", null, item);
     showToast("Membre ajouté");
     return item;
   };
-  const updateMembre = async (id, data) => { setMembres((prev) => prev.map((m) => (m.id === id ? { ...m, ...data } : m))); showToast("Membre modifié"); };
-  const deleteMembre = async (id) => { setMembres((prev) => prev.filter((m) => m.id !== id)); setMembresParTontine((prev) => prev.filter((m) => m.idMembre !== id)); showToast("Membre supprimé"); };
+  const updateMembre = async (id, data) => {
+    const avant = membres.find((m) => m.id === id);
+    setMembres((prev) => prev.map((m) => (m.id === id ? { ...m, ...data } : m)));
+    logAudit("membres", "modification", avant, { ...avant, ...data });
+    showToast("Membre modifié");
+  };
+  const deleteMembre = async (id) => {
+    const avant = membres.find((m) => m.id === id);
+    setMembres((prev) => prev.filter((m) => m.id !== id));
+    setMembresParTontine((prev) => prev.filter((m) => m.idMembre !== id));
+    logAudit("membres", "suppression", avant, null);
+    showToast("Membre supprimé");
+  };
 
   const addTontine = async (data) => { const item = { id: uid(), statut: "active", totalParts: 0, ...data }; setTontines((prev) => [...prev, item]); showToast("Tontine créée"); return item; };
   const updateTontine = async (data) => { setTontines((prev) => prev.map((t) => (t.id === data.id ? { ...t, ...data } : t))); showToast("Tontine modifiée"); };
@@ -221,25 +290,189 @@ export const AppProvider = ({ children }) => {
     setMembresParTontine((prev) => prev.map((m) => (m.id === id ? { ...m, ...data } : m)));
   };
 
-  const addReunion = async (data) => { const item = { id: uid(), statutReunion: "planifiee", pointsOrdreJour: [], cloture: null, ...data }; setReunions((prev) => [item, ...prev]); showToast("Réunion planifiée"); return item; };
+  // ── Réunions & Ordre du Jour (rubriques + acteurs) ──────────
+  // Gabarit des rubriques : à la création d'une nouvelle réunion, on
+  // reprend automatiquement les rubriques (libellé + ordre + acteur
+  // assigné) de la dernière réunion — jusqu'à ce qu'un utilisateur les
+  // modifie manuellement pour cette réunion précise.
+  const addReunion = async (data) => {
+    const modele = rubriquesModele.length > 0 ? rubriquesModele : [];
+    const pointsHerites = modele
+      .slice()
+      .sort((a, b) => (a.ordre ?? 0) - (b.ordre ?? 0))
+      .map((p) => ({
+        id: uid(),
+        titre: p.titre,
+        type: p.type || "administratif",
+        description: p.description || "",
+        acteurRole: p.acteurRole || "",
+        ordre: p.ordre ?? 0,
+        statut: "prevu",
+        contenuRapport: "",
+      }));
+    const item = {
+      id: uid(),
+      statutReunion: "planifiee",
+      pointsOrdreJour: data?.pointsOrdreJour || pointsHerites,
+      cloture: null,
+      ouverture: null,
+      ...data,
+    };
+    setReunions((prev) => [item, ...prev]);
+    showToast(pointsHerites.length > 0 ? "Réunion planifiée (ordre du jour repris de la dernière séance)" : "Réunion planifiée");
+    return item;
+  };
+
   const updateReunion = async (idOrData, maybeData) => { const data = maybeData || idOrData; const id = maybeData ? idOrData : data.id; setReunions((prev) => prev.map((r) => (r.id === id ? { ...r, ...data } : r))); };
-  const ouvrirReunion = (id, data) => { setReunions((prev) => prev.map((r) => (r.id === id ? { ...r, statutReunion: "en_cours", ouverture: data } : r))); showToast("Réunion ouverte"); };
-  const cloturerReunion = (id, data) => { setReunions((prev) => prev.map((r) => (r.id === id ? { ...r, statutReunion: "cloturee", cloture: data } : r))); showToast("Réunion clôturée"); };
+
+  // Une seule séance peut être ouverte à la fois, tous comptes confondus.
+  const ouvrirSeance = (id, data) => {
+    const dejaOuverte = reunions.find((r) => r.id !== id && r.statutReunion === "en_cours");
+    if (dejaOuverte) {
+      showToast(`Impossible : la séance du ${dejaOuverte.date || "—"} est déjà ouverte. Clôturez-la avant d'en ouvrir une autre.`, "error");
+      return false;
+    }
+    setReunions((prev) => prev.map((r) => (r.id === id ? { ...r, statutReunion: "en_cours", ouverture: data } : r)));
+    showToast("Séance ouverte — les acteurs assignés peuvent saisir leurs rubriques");
+    return true;
+  };
+  // Alias rétrocompatible
+  const ouvrirReunion = ouvrirSeance;
+
+  // À la clôture, on fige les rubriques (ordre + acteurs) de cette
+  // réunion comme nouveau gabarit par défaut pour la prochaine création.
+  const cloturerSeance = (id, data) => {
+    const reunion = reunions.find((r) => r.id === id);
+    if (reunion?.pointsOrdreJour?.length) {
+      setRubriquesModele(
+        reunion.pointsOrdreJour
+          .slice()
+          .sort((a, b) => (a.ordre ?? 0) - (b.ordre ?? 0))
+          .map((p, index) => ({
+            titre: p.titre, type: p.type, description: p.description,
+            acteurRole: p.acteurRole || "", ordre: index + 1,
+          }))
+      );
+    }
+    setReunions((prev) => prev.map((r) => (r.id === id ? { ...r, statutReunion: "cloturee", cloture: data } : r)));
+    showToast("Réunion clôturée. Saisie verrouillée jusqu'à la prochaine séance.");
+  };
+  // Alias rétrocompatible
+  const cloturerReunion = cloturerSeance;
+
+  const addPointODJ = (reunionId, data) => {
+    setReunions((prev) => prev.map((r) => {
+      if (r.id !== reunionId) return r;
+      const ordre = (r.pointsOrdreJour?.length || 0) + 1;
+      const point = { id: uid(), statut: "prevu", contenuRapport: "", acteurRole: "", ordre, ...data };
+      return { ...r, pointsOrdreJour: [...(r.pointsOrdreJour || []), point] };
+    }));
+    showToast("Rubrique ajoutée à l'ordre du jour");
+  };
+
+  const updatePointODJ = (reunionId, pointId, data) => {
+    setReunions((prev) => prev.map((r) => {
+      if (r.id !== reunionId) return r;
+      return { ...r, pointsOrdreJour: (r.pointsOrdreJour || []).map((p) => (p.id === pointId ? { ...p, ...data } : p)) };
+    }));
+    showToast("Rubrique modifiée");
+  };
+
+  const removePointODJ = (reunionId, pointId) => {
+    setReunions((prev) => prev.map((r) => {
+      if (r.id !== reunionId) return r;
+      if (r.statutReunion === "en_cours" || r.statutReunion === "cloturee") return r; // RG-REU-015
+      return { ...r, pointsOrdreJour: (r.pointsOrdreJour || []).filter((p) => p.id !== pointId) };
+    }));
+    showToast("Rubrique retirée");
+  };
+
+  const movePointODJ = (reunionId, pointId, direction) => {
+    setReunions((prev) => prev.map((r) => {
+      if (r.id !== reunionId) return r;
+      const points = (r.pointsOrdreJour || []).slice().sort((a, b) => (a.ordre ?? 0) - (b.ordre ?? 0));
+      const idx = points.findIndex((p) => p.id === pointId);
+      const swapIdx = direction === "up" ? idx - 1 : idx + 1;
+      if (idx < 0 || swapIdx < 0 || swapIdx >= points.length) return r;
+      [points[idx], points[swapIdx]] = [points[swapIdx], points[idx]];
+      const reordered = points.map((p, i) => ({ ...p, ordre: i + 1 }));
+      return { ...r, pointsOrdreJour: reordered };
+    }));
+  };
+
+  // ── Présences réunion (RG-REU-016 à 019) ────────────────────
+  const setPresenceMembre = (reunionId, idMembre, data) => {
+    setPresences((prev) => {
+      const existant = prev.find((p) => p.reunionId === reunionId && p.idMembre === idMembre);
+      if (existant) {
+        return prev.map((p) => (p.reunionId === reunionId && p.idMembre === idMembre ? { ...p, ...data, dateSaisie: today() } : p));
+      }
+      return [...prev, { id: uid(), reunionId, idMembre, statut: "absent", motifAbsence: "", heureArrivee: "", saisiePar: user?.name || "—", dateSaisie: today(), ...data }];
+    });
+  };
 
   const addSeanceTransaction = async (reunionOrData, maybeData) => {
     const data = maybeData ? { ...maybeData, idReunion: reunionOrData } : reunionOrData;
-    const tx = { id: uid(), date: new Date().toISOString(), ...data };
+    // modePaiement/detailsPaiement transitent librement dans data (RG-CAI-011)
+    const tx = { id: uid(), date: new Date().toISOString(), modePaiement: data.modePaiement || "especes", ...data };
     setSeanceTransactions((prev) => [...prev, tx]);
     setCaisseJournal((prev) => [...prev, tx]);
+    logAudit("transactions", tx.type || "transaction", null, tx);
     return tx;
   };
 
+  const deleteSeanceTransaction = (id) => {
+    const avant = seanceTransactions.find((t) => t.id === id);
+    setSeanceTransactions((prev) => prev.filter((t) => t.id !== id));
+    setCaisseJournal((prev) => prev.filter((t) => t.id !== id));
+    logAudit("transactions", "suppression", avant, null);
+    showToast("Transaction retirée");
+  };
+
   const enregistrerBeneficiaireSeance = (data) => { setRotations((prev) => [...prev, { id: uid(), dateAttribution: today(), ...data }]); showToast("Bénéficiaire enregistré"); };
-  const tirerAuSort = (idTontine) => {
-    const inscrits = membresParTontine.filter((m) => m.idTontine === idTontine && m.statut === "actif");
-    const gagne = inscrits[Math.floor(Math.random() * inscrits.length)];
-    const membre = membres.find((m) => m.id === gagne?.idMembre);
-    return membre ? `${membre.nom} ${membre.prenom}` : null;
+  // ── Tirage au sort pondéré par parts disponibles (RG-TON-015/017) ──
+  // Exclut les membres déjà gagnants pour cette tontine (parts déjà "gagnées"),
+  // pondère la probabilité par le nombre de parts encore disponibles.
+  const tirerAuSort = (idTontine, numeroTour, datePrevue) => {
+    const tontine = tontines.find((t) => t.id === idTontine);
+    if (!tontine) return null;
+    const dejaGagnants = {};
+    planningTours.filter((p) => p.idTontine === idTontine && p.statut === "encaisse")
+      .forEach((p) => { dejaGagnants[p.idMembre] = (dejaGagnants[p.idMembre] || 0) + 1; });
+
+    const pool = [];
+    membresParTontine
+      .filter((mt) => mt.idTontine === idTontine && mt.statut === "actif")
+      .forEach((mt) => {
+        const partsDisponibles = Number(mt.nombreParts || 1) - (dejaGagnants[mt.idMembre] || 0);
+        for (let i = 0; i < partsDisponibles; i++) pool.push(mt.idMembre);
+      });
+    if (pool.length === 0) return null;
+
+    const idMembre = pool[Math.floor(Math.random() * pool.length)];
+    const membre = membres.find((m) => m.id === idMembre);
+    if (!membre) return null;
+    const montantPot = Number(tontine.cotisation || 0) * Number(tontine.totalParts || 0);
+    return { idMembre, nomMembre: `${membre.nom} ${membre.prenom}`, montantPot, numeroTour, datePrevue };
+  };
+
+  const addTourPlanning = (data) => {
+    const item = { id: uid(), statut: "planifie", ...data };
+    setPlanningTours((prev) => [...prev, item]);
+    logAudit("planning_tours", "creation", null, item);
+    showToast("Tour planifié");
+    return item;
+  };
+  const marquerTourEncaisse = (id, modePaiement = "especes", detailsPaiement = "") => {
+    setPlanningTours((prev) => prev.map((p) => (p.id === id ? {
+      ...p, statut: "encaisse", dateEncaissement: today(),
+      modePaiement: modePaiement || "especes", detailsPaiement: detailsPaiement || "",
+    } : p)));
+    showToast("Tour marqué comme encaissé");
+  };
+  const retirerTourPlanning = (id) => {
+    setPlanningTours((prev) => prev.filter((p) => p.id !== id));
+    showToast("Tour retiré de la planification");
   };
 
   const addEnchere = (data) => { setEncheres((prev) => [...prev, { id: uid(), statut: "en_attente", dateEnchere: today(), ...data }]); showToast("Enchère enregistrée"); };
@@ -251,11 +484,12 @@ export const AppProvider = ({ children }) => {
   const annulerEncheres = (idRotation) => { setEncheres((prev) => prev.filter((e) => e.idRotation !== idRotation)); showToast("Enchères annulées"); };
 
   const addBanque = async (data) => { setBanques((prev) => [...prev, { id: uid(), statut: "active", totalSolde: 0, dateCreation: today(), ...data }]); showToast("Caisse créée"); };
-  const doOperation = async (data) => { const op = { id: uid(), date: new Date().toISOString(), ...data }; setOperationsBanque((prev) => [...prev, op]); showToast("Opération enregistrée"); };
+  const doOperation = async (data) => { const op = { id: uid(), date: new Date().toISOString(), modePaiement: data.modePaiement || "especes", ...data }; setOperationsBanque((prev) => [...prev, op]); logAudit("operations_banque", data.typeOperation || "operation", null, op); showToast("Opération enregistrée"); };
   const addMembreBanque = (data) => { setComptesBanque((prev) => [...prev, { id: uid(), solde: 0, statut: "actif", ...data }]); showToast("Compte ajouté"); };
   const transfererCaisse = async (data) => {
     const item = { id: uid(), statut: "effectue", dateTransfert: today(), ...data };
     setTransfertsCaisse((prev) => [...prev, item]);
+    logAudit("transferts_caisse", "creation", null, item);
     showToast("Transfert enregistré");
     return item;
   };
@@ -277,7 +511,7 @@ export const AppProvider = ({ children }) => {
     const montant = Number(data.montantPret || 0);
     const taux = Number(data.tauxInteret || 0);
     const interet = Math.round((montant * taux) / 100);
-    setPrets((prev) => [...prev, {
+    const item = {
       id: uid(),
       ...data,
       statut: "en_cours",
@@ -286,26 +520,162 @@ export const AppProvider = ({ children }) => {
       montantTotal: montant + interet,
       resteAPayer: montant + interet,
       datePret: data.datePret || today(),
-    }]);
+    };
+    setPrets((prev) => [...prev, item]);
+    logAudit("prets", "creation", null, item);
     showToast("Prêt ajouté");
   };
-  const rembourserPret = async (id, montant) => {
+  const rembourserPret = async (id, montant, extra = {}) => {
+    const avant = prets.find((p) => p.id === id);
     setPrets((prev) => prev.map((p) => {
       if (p.id !== id) return p;
       const rembourse = Number(p.montantRembourse || 0) + Number(montant || 0);
-      const reste = Math.max(0, Number(p.montantTotal || 0) - rembourse);
-      return { ...p, montantRembourse: rembourse, resteAPayer: reste, statut: reste === 0 ? "rembourse" : p.statut };
+
+      // Caisse associée : porte la config pénalité (RG-CAI, cf. Banques.jsx)
+      const caisse = banques.find((b) => b.id === p.caisseId);
+      const penaliteActive = Boolean(caisse?.penaliteRetardActive);
+      const tauxPenalite = Number(caisse?.tauxPenalite || 0);
+
+      let ficheAmortissement = p.ficheAmortissement;
+      let resteAPayer = Math.max(0, Number(p.montantTotal || 0) - rembourse);
+      let montantPenaliteTotal = 0;
+
+      if (Array.isArray(p.ficheAmortissement) && p.ficheAmortissement.length > 0) {
+        const calc = computeEcheancesAvecPenalites(
+          p.ficheAmortissement, rembourse, tauxPenalite, penaliteActive
+        );
+        ficheAmortissement = calc.echeances;
+        resteAPayer = calc.resteAPayer;
+        montantPenaliteTotal = calc.totalPenalites;
+      }
+
+      const solde = resteAPayer <= 0;
+      return {
+        ...p,
+        montantRembourse: rembourse,
+        resteAPayer,
+        montantPenaliteTotal,
+        ficheAmortissement,
+        statut: solde ? "rembourse" : (p.statut === "en_retard" && ficheAmortissement?.some(e => e.estEnRetard) ? "en_retard" : p.statut),
+        dernierPaiement: {
+          montant: Number(montant || 0),
+          date: today(),
+          modePaiement: extra.modePaiement || "especes",
+          detailsPaiement: extra.detailsPaiement || "",
+        },
+      };
     }));
+    logAudit("prets", "remboursement", avant, { montant: Number(montant || 0), ...extra });
     showToast("Remboursement enregistré");
   };
   const distribuerInteretsPret = () => showToast("Intérêts distribués");
 
-  const addSanction = async (data) => { setSanctions((prev) => [...prev, { id: uid(), statut: "impayee", dateSanction: today(), ...data }]); showToast("Sanction ajoutée"); };
-  const payerSanction = async (id) => { setSanctions((prev) => prev.map((s) => (s.id === id ? { ...s, statut: "payee" } : s))); showToast("Sanction réglée"); };
+  const addSanction = async (data) => {
+    const item = { id: uid(), statut: "impayee", dateSanction: today(), ...data };
+    setSanctions((prev) => [...prev, item]);
+    logAudit("sanctions", "creation", null, item);
+    showToast("Sanction ajoutée");
+  };
+  const payerSanction = async (id, extra = {}) => {
+    const avant = sanctions.find((s) => s.id === id);
+    setSanctions((prev) => prev.map((s) => (s.id === id ? {
+      ...s, statut: "payee",
+      modePaiement: extra.modePaiement || "especes",
+      detailsPaiement: extra.detailsPaiement || "",
+      datePaiement: today(),
+    } : s)));
+    logAudit("sanctions", "paiement", avant, extra);
+    showToast("Sanction réglée");
+  };
   const genererBulletin = async (data) => ({ id: uid(), ...data, pdfPending: true });
   const ouvrirBulletinPdf = () => showToast("Génération du bulletin en cours", "info");
   const addAide = async (data) => { setFondAssurance((prev) => [...prev, { id: uid(), statut: "verse", dateEvenement: today(), ...data }]); showToast("Aide ajoutée"); };
   const membreEligibleAssurance = (idMembre) => membres.some((m) => m.id === idMembre && m.statut === "actif");
+
+  // ── Journal d'audit (RG-SEC-009 à 012) ──────────────────────
+  // Enregistre automatiquement les opérations financières sensibles.
+  // Immuable : aucune fonction de suppression/édition n'est exposée.
+  const logAudit = useCallback((module, action, avant, apres) => {
+    setAuditLog((prev) => [
+      { id: uid(), module, action, avant: avant ?? null, apres: apres ?? null, utilisateur: user?.name || "Système", role: user?.role || "—", date: new Date().toISOString() },
+      ...prev,
+    ]);
+  }, [user]);
+  const logAuditConsultation = (filtres) => logAudit("audit_log", "consultation", null, { filtres, role: user?.role });
+
+  // ── Aides sociales (RG-SOC-006 à 010) ────────────────────────
+  const addAideSociale = (data) => {
+    const item = { id: uid(), statut: "en_attente", dateDeclaration: today(), ...data };
+    setAidesSociales((prev) => [...prev, item]);
+    logAudit("aide_sociale", "creation", null, item);
+    showToast("Demande d'aide sociale enregistrée");
+    return item;
+  };
+  const validerAideSociale = (id, decision, montantAccorde) => {
+    setAidesSociales((prev) => prev.map((a) => {
+      if (a.id !== id) return a;
+      const apres = { ...a, statut: decision === "approuvee" ? "approuvee" : "refusee", montantAccorde: decision === "approuvee" ? Number(montantAccorde ?? a.montant ?? 0) : 0, validePar: user?.name, dateValidation: today() };
+      logAudit("aide_sociale", decision === "approuvee" ? "approbation" : "refus", a, apres);
+      return apres;
+    }));
+    showToast(decision === "approuvee" ? "Aide approuvée" : "Aide refusée");
+  };
+  const verserAideSociale = (id, extra = {}) => {
+    setAidesSociales((prev) => prev.map((a) => (a.id === id ? { ...a, statut: "versee", modePaiement: extra.modePaiement || "especes", detailsPaiement: extra.detailsPaiement || "", dateVersement: today() } : a)));
+    showToast("Aide versée");
+  };
+
+  // ── Paramètres association (RG-ORG-012 à 015) ───────────────
+  const updateParametres = (patch) => {
+    setParametres((prev) => { const apres = { ...prev, ...patch }; logAudit("parametres", "modification", prev, apres); return apres; });
+    showToast("Paramètres mis à jour");
+  };
+
+  // ── Postes & mandats (RG-ORG-007 à 011) ─────────────────────
+  const addMandat = (data) => {
+    const item = { id: uid(), ...data };
+    setMandats((prev) => [...prev, item]);
+    logAudit("mandat", "attribution", null, item);
+    showToast("Poste attribué");
+    return item;
+  };
+  const cloturerMandat = (id) => {
+    setMandats((prev) => prev.map((m) => (m.id === id ? { ...m, dateFin: today() } : m)));
+    showToast("Mandat clôturé");
+  };
+
+  // ── Décisions d'AG (RG-SOC-011 à 014) ───────────────────────
+  const addDecisionAG = (data) => {
+    const item = { id: uid(), numero: `AG-${new Date().getFullYear()}-${String(decisionsAG.length + 1).padStart(3, "0")}`, statut: "adopte", dateEffet: today(), ...data };
+    setDecisionsAG((prev) => [item, ...prev]);
+    logAudit("decision_ag", "creation", null, item);
+    showToast("Décision AG enregistrée");
+    return item;
+  };
+
+  // ── Règlement intérieur (RG-ORG-004 à 006) ──────────────────
+  const addReglement = (data) => {
+    // Une seule version active à la fois (RG-ORG-005)
+    setReglements((prev) => [
+      { id: uid(), estActif: true, dateAdoption: today(), ...data },
+      ...prev.map((r) => ({ ...r, estActif: false })),
+    ]);
+    showToast("Nouvelle version du règlement publiée");
+  };
+
+  // ── Rapprochement bancaire (RG-CAI-017 à 019) ───────────────
+  const addRapprochement = (data) => {
+    const item = { id: uid(), justifie: false, ...data };
+    setRapprochements((prev) => [item, ...prev]);
+    logAudit("rapprochement_bancaire", "creation", null, item);
+    if (item.statut === "ecart") showToast("Écart détecté — justification requise sous 30 jours", "error");
+    else showToast("Rapprochement conforme");
+    return item;
+  };
+  const justifierEcart = (id, motif) => {
+    setRapprochements((prev) => prev.map((r) => (r.id === id ? { ...r, justifie: true, motifJustification: motif, justifiePar: user?.name, dateJustification: today() } : r)));
+    showToast("Écart justifié");
+  };
   const addCaisseEntry = async (data) => { setCaisseJournal((prev) => [...prev, { id: uid(), date: new Date().toISOString(), ...data }]); };
   const addPlanningTour = (data) => setPlanningTours((prev) => [...prev, { id: uid(), ...data }]);
   const addUtilisateur = (data) => { setUtilisateurs((prev) => [...prev, { id: uid(), statut: "actif", derniereConnexion: "-", ...data }]); showToast("Utilisateur créé"); };
@@ -346,15 +716,28 @@ export const AppProvider = ({ children }) => {
     membres, tontines, membresParTontine, reunions, rotations, encheres, banques, caisses: banques, comptesBanque, operationsBanque, transfertsCaisse, typesSanction,
     prets, sanctions, fondAssurance, aidesAssurance: fondAssurance, caisseSociale: fondAssurance, caisseJournal,
     utilisateurs, planningTours, seanceTransactions, evolutionCaisse, dashboardStats, repartitionBanques,
+    presences, rubriquesModele,
+    aidesSociales, parametres, postes, mandats, decisionsAG, reglements, rapprochements, auditLog,
     associations, currentAssociation, currentAssociationId, setupComplete, toast, user,
     addMembre, updateMembre, deleteMembre, addTontine, updateTontine, addMembreTontine, removeMembreTontine, updateMembreTontine,
-    addReunion, updateReunion, ouvrirReunion, cloturerReunion, addSeanceTransaction, enregistrerBeneficiaireSeance, tirerAuSort,
+    addReunion, updateReunion, ouvrirReunion, cloturerReunion, ouvrirSeance, cloturerSeance,
+    addPointODJ, updatePointODJ, removePointODJ, movePointODJ,
+    setPresenceMembre,
+    addSeanceTransaction, deleteSeanceTransaction, enregistrerBeneficiaireSeance, tirerAuSort,
     addEnchere, attribuerTour, annulerEncheres, addBanque, addCaisse: addBanque, doOperation, addMembreBanque, transfererCaisse, addTypeSanction, updateTypeSanction, addPret, rembourserPret, distribuerInteretsPret,
     addSanction, payerSanction, genererBulletin, ouvrirBulletinPdf, addAide, membreEligibleAssurance, addCaisseEntry, addPlanningTour,
+    addTourPlanning, marquerTourEncaisse, retirerTourPlanning,
     addUtilisateur, desactiverUtilisateur, activerUtilisateur, showToast,
     setCurrentAssociationId, createAssociation, resetWorkspace,
+    addAideSociale, validerAideSociale, verserAideSociale,
+    updateParametres,
+    addMandat, cloturerMandat,
+    addDecisionAG,
+    addReglement,
+    addRapprochement, justifierEcart,
+    logAudit, logAuditConsultation,
     login: async (credentials) => {
-      const next = { id: uid(), name: credentials.name || credentials.email || "Utilisateur", role: "president" };
+      const next = { id: uid(), name: credentials.name || credentials.email || "Utilisateur", role: credentials.role || "president" };
       setUser(next);
       showToast("Connexion réussie");
       return { user: next, must_change_password: false };

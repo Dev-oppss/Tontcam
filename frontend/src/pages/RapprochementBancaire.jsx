@@ -15,15 +15,18 @@ export default function RapprochementBancaire() {
   const [justifModal, setJustifModal] = useState(null);
   const [motif, setMotif] = useState('');
 
-  const caissesBancaires = (caisses.length ? caisses : banques).filter((c) => c.compteBancaire || c.type === 'banque' || c.type === 'BANQUE');
+  // Dans ce modèle frontend, toute caisse peut faire l'objet d'un rapprochement
+  // bancaire (pas d'entité "compte bancaire" séparée pour l'instant — à affiner
+  // côté backend avec la table comptes_bancaires du schéma SQL).
+  const caissesBancaires = caisses.length ? caisses : banques;
 
   const handleAdd = () => {
     if (!form.idCaisse || form.soldeReleve === '') return;
-    const c = caissesBancaires.find((x) => x.id === Number(form.idCaisse));
-    const soldeLogiciel = Number(c?.solde || 0);
+    const c = caissesBancaires.find((x) => x.id === form.idCaisse);
+    const soldeLogiciel = Number(c?.totalSolde || 0);
     const ecart = Number(form.soldeReleve) - soldeLogiciel;
     addRapprochement?.({
-      idCaisse: Number(form.idCaisse),
+      idCaisse: form.idCaisse,
       nomCaisse: c?.nom || c?.libelle,
       soldeLogiciel,
       soldeReleve: Number(form.soldeReleve),

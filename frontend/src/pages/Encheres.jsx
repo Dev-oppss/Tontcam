@@ -22,10 +22,10 @@ export default function Encheres() {
 
   const handleAdd = () => {
     if (!form.idMembre || !form.montantEnchere) return;
-    const m = membres.find(x => x.id === Number(form.idMembre));
+    const m = membres.find(x => x.id === form.idMembre);
     addEnchere({
       idRotation: tourEnCours?.id,
-      idMembre: Number(form.idMembre),
+      idMembre: form.idMembre,
       nomMembre: `${m.nom} ${m.prenom}`,
       montantEnchere: Number(form.montantEnchere),
       dateEnchere: form.dateEnchere,
@@ -37,7 +37,8 @@ export default function Encheres() {
   const handleConfirm = () => {
     if (!confirm) return;
     if (confirm.type === 'attribuer') {
-      attribuerTour(confirm.rotation.id, confirm.gagnant.idMembre);
+      const montantRecu = potTotal - (confirm.gagnant.montantEnchere || 0);
+      attribuerTour(confirm.rotation.id, confirm.gagnant.idMembre, montantRecu);
     } else {
       annulerEncheres(confirm.rotation.id);
     }
