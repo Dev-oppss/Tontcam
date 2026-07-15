@@ -10,6 +10,7 @@ const nav = [
   {
     label: 'Organisation',
     children: [
+      { label: 'Association', path: '/setup' },
       { label: 'Membres', path: '/membres' },
       { label: 'Postes & mandats', path: '/postes' },
       { label: 'Règlement intérieur', path: '/reglement' },
@@ -37,8 +38,6 @@ const nav = [
   {
     label: 'Social',
     children: [
-      { label: 'Caisse sociale', path: '/caisse-sociale' },
-      { label: 'Fonds assurance', path: '/fond-assurance' },
       { label: 'Volet social', path: '/social' },
       { label: 'Décisions AG', path: '/decisions-ag' },
     ],
@@ -115,7 +114,7 @@ export default function Sidebar({ collapsed, setCollapsed }) {
   return (
     <aside
       className={clsx(
-        'sticky top-0 h-screen flex flex-col transition-all duration-300 shrink-0 relative overflow-hidden',
+        'sticky top-0 h-screen flex flex-col transition-all duration-300 shrink-0 relative overflow-hidden no-print',
         collapsed ? 'w-[72px]' : 'w-[276px]',
         'gradient-sidebar'
       )}

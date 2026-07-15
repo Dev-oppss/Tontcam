@@ -88,7 +88,7 @@ export default function Rapports() {
     <div className="space-y-6">
       <PageHeader title="Rapports & Statistiques" subtitle="Synthèse financière et opérationnelle"
         action={
-          <button onClick={()=>window.print()} className="btn-secondary">
+          <button onClick={()=>window.print()} className="btn-secondary no-print">
             <Printer size={15}/> Imprimer
           </button>
         }/>

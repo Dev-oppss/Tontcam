@@ -4,20 +4,56 @@ namespace App\Models;
 
 use App\Models\Concerns\UsesUuid;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class TransfertCaisse extends Model
 {
+    const UPDATED_AT = null;
+
     use UsesUuid;
 
     protected $table = 'transferts_caisse';
-    public $timestamps = false;
-    protected $casts = ['montant' => 'decimal:2', 'created_at' => 'datetime'];
 
-    public function caisseSource(): BelongsTo { return $this->belongsTo(Caisse::class, 'caisse_source_id'); }
-    public function caisseDestination(): BelongsTo { return $this->belongsTo(Caisse::class, 'caisse_destination_id'); }
-    public function transactionSource(): BelongsTo { return $this->belongsTo(Transaction::class, 'transaction_source_id'); }
-    public function transactionDest(): BelongsTo { return $this->belongsTo(Transaction::class, 'transaction_dest_id'); }
-    public function approuvePar(): BelongsTo { return $this->belongsTo(Utilisateur::class, 'approuve_par'); }
+    protected $fillable = [
+        'caisse_source_id',
+        'caisse_destination_id',
+        'montant',
+        'transaction_source_id',
+        'transaction_dest_id',
+        'motif',
+        'approuve_par',
+    ];
+
+    protected $casts = [
+            'montant' => 'decimal:2'
+    ];
+
+    public function caisseSource()
+    {
+        return $this->belongsTo(Caisse::class, 'caisse_source_id');
+    }
+
+
+    public function caisseDestination()
+    {
+        return $this->belongsTo(Caisse::class, 'caisse_destination_id');
+    }
+
+
+    public function transactionSource()
+    {
+        return $this->belongsTo(Transaction::class, 'transaction_source_id');
+    }
+
+
+    public function transactionDestination()
+    {
+        return $this->belongsTo(Transaction::class, 'transaction_dest_id');
+    }
+
+
+    public function approbateur()
+    {
+        return $this->belongsTo(Utilisateur::class, 'approuve_par');
+    }
+
 }
-

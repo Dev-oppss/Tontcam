@@ -4,293 +4,254 @@ namespace App\Services;
 
 use App\Models\Caisse;
 use App\Models\EcheancePret;
+use App\Models\HistoriquePret;
+use App\Models\Membre;
 use App\Models\Pret;
-use Carbon\Carbon;
+use App\Models\Utilisateur;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
 
 class PretService
 {
-    public function __construct(
-        private readonly NotificationService $notificationService
-    ) {}
-
-    public function demander(Caisse $caisse, string $membreId, float $montant, int $nbEcheances, array $data = []): Pret
+    /**
+     * Dépôt d'une demande de prêt (RG-PRT-001 à 004).
+     */
+    public function demander(Caisse $caisse, Membre $emprunteur, float $montant, int $nbEcheances, array $options = []): Pret
     {
-        $taux = (float) ($data['taux_interet_mensuel'] ?? $caisse->taux_interet_mensuel ?? 0.05);
-        $tauxPenalite = (float) ($data['taux_penalite_mensuel'] ?? $caisse->taux_penalite_mensuel ?? 0.02);
-        $interet = round($montant * $taux * $nbEcheances, 2);
-        $total = round($montant + $interet, 2);
-
-        return Pret::create(array_merge($data, [
-            'caisse_id' => $caisse->id,
-            'emprunteur_id' => $membreId,
-            'montant_principal' => $montant,
-            'taux_interet_mensuel' => $taux,
-            'taux_penalite_mensuel' => $tauxPenalite,
-            'methode_amortissement' => $data['methode_amortissement'] ?? 'lineaire',
-            'nb_echeances' => $nbEcheances,
-            'montant_echeance' => round($total / $nbEcheances, 2),
-            'interet_total' => $interet,
-            'montant_total_du' => $total,
-            'montant_rembourse' => 0,
-            'capital_restant' => $total,
-            'statut' => 'demande',
-            'date_demande' => now()->toDateString(),
-        ]));
-    }
-
-    public function approuver(Pret $pret, ?string $userId = null): Pret
-    {
-        if (! in_array($pret->statut, ['demande', 'en_attente_validation'])) {
-            throw new RuntimeException('Ce pret ne peut pas etre approuve dans son etat actuel.');
+        if (! $caisse->pret_autorise) {
+            throw new RuntimeException("La caisse « {$caisse->libelle} » n'autorise pas les prêts.");
+        }
+        if ($montant > (float) $caisse->solde_actuel) {
+            throw new RuntimeException('Montant demandé supérieur au solde disponible de la caisse.');
+        }
+        $dureeMax = $caisse->duree_max_pret_mois ?? 12;
+        if ($nbEcheances > $dureeMax) {
+            throw new RuntimeException("Durée maximale autorisée : {$dureeMax} mois.");
         }
 
-        $pret->forceFill([
+        $tauxInteret = $options['taux_interet_mensuel'] ?? $caisse->taux_interet_mensuel;
+        $methode = $options['methode_amortissement'] ?? $caisse->methode_amortissement ?? 'lineaire';
+
+        $calcul = $this->calculerAmortissementLineaire($montant, (float) $tauxInteret, $nbEcheances);
+
+        return DB::transaction(function () use ($caisse, $emprunteur, $montant, $nbEcheances, $tauxInteret, $methode, $calcul, $options) {
+            $pret = Pret::create([
+                'caisse_id' => $caisse->id,
+                'emprunteur_id' => $emprunteur->id,
+                'montant_principal' => $montant,
+                'taux_interet_mensuel' => $tauxInteret,
+                'taux_penalite_mensuel' => $options['taux_penalite_mensuel'] ?? $caisse->taux_penalite_mensuel,
+                'methode_amortissement' => $methode,
+                'nb_echeances' => $nbEcheances,
+                'montant_echeance' => $calcul['echeance_mensuelle'],
+                'interet_total' => $calcul['interet_total'],
+                'montant_total_du' => $montant + $calcul['interet_total'],
+                'montant_rembourse' => 0,
+                'capital_restant' => $montant,
+                'statut' => 'demande',
+                'avaliste_id' => $options['avaliste_id'] ?? null,
+                'notes' => $options['notes'] ?? null,
+                'created_by' => $options['created_by'] ?? null,
+            ]);
+
+            $this->genererAmortissement($pret);
+
+            $this->loguerStatut($pret, null, 'demande', 'Demande initiale');
+
+            return $pret;
+        });
+    }
+
+    /**
+     * Vérification Trésorier avant transmission au Président (RG-ORG-012).
+     */
+    public function valider(Pret $pret, Utilisateur $tresorier): Pret
+    {
+        if ($pret->statut !== 'demande') {
+            throw new RuntimeException('Seule une demande peut être mise en validation.');
+        }
+
+        $pret->update(['statut' => 'en_attente_validation']);
+        $this->loguerStatut($pret, 'demande', 'en_attente_validation', 'Revue Trésorier', $tresorier);
+
+        return $pret;
+    }
+
+    /**
+     * Approbation Président si montant > seuil_approbation_pret de l'association.
+     */
+    public function approuver(Pret $pret, Utilisateur $approbateur): Pret
+    {
+        if ($pret->statut !== 'en_attente_validation') {
+            throw new RuntimeException('Ce prêt n\'est pas en attente de validation.');
+        }
+
+        $seuil = (float) ($pret->caisse->association->seuil_approbation_pret ?? PHP_INT_MAX);
+        if ((float) $pret->montant_principal > $seuil && ! in_array($approbateur->role, ['president', 'super_admin'], true)) {
+            throw new RuntimeException("Ce montant dépasse le seuil et requiert l'approbation du Président.");
+        }
+
+        $pret->update([
             'statut' => 'approuve',
-            'approuve_par' => $userId,
             'date_approbation' => now()->toDateString(),
-        ])->save();
+            'approuve_par' => $approbateur->id,
+        ]);
+        $this->loguerStatut($pret, 'en_attente_validation', 'approuve', 'Approuvé', $approbateur);
 
-        $this->notificationService->notifierPretApprouve(
-            $pret->caisse->association_id,
-            $pret->emprunteur_id,
-            $pret->id,
-            (float) $pret->montant_principal
-        );
-
-        return $pret->refresh();
+        return $pret;
     }
 
-    public function decaisser(Pret $pret, CaisseService $caisseService, ?string $userId = null): Pret
+    public function refuser(Pret $pret, string $motif, Utilisateur $refuseur): Pret
     {
-        if ($pret->date_approbation && Carbon::parse($pret->date_approbation)->diffInDays(now()) > 7) {
-            $pret->forceFill(['statut' => 'expire'])->save();
-            throw new RuntimeException('Ce pret a expire (plus de 7 jours sans decaissement).');
-        }
+        $pret->update(['statut' => 'refuse', 'motif_refus' => $motif, 'refuse_par' => $refuseur->id]);
+        $this->loguerStatut($pret, $pret->getOriginal('statut'), 'refuse', $motif, $refuseur);
 
+        return $pret;
+    }
+
+    /**
+     * Décaissement effectif : sortie de caisse + passage EN_COURS.
+     */
+    public function decaisser(Pret $pret, Utilisateur $tresorier): Pret
+    {
         if ($pret->statut !== 'approuve') {
-            throw new RuntimeException('Seul un pret approuve peut etre decaisse.');
+            throw new RuntimeException('Seul un prêt approuvé peut être décaissé.');
         }
 
-        return DB::transaction(function () use ($pret, $caisseService, $userId) {
-            $tx = $caisseService->sortie(
+        return DB::transaction(function () use ($pret, $tresorier) {
+            $transaction = app(CaisseService::class)->sortie(
                 $pret->caisse,
                 (float) $pret->montant_principal,
-                'Decaissement pret',
-                [
-                    'reference_type' => Pret::class,
-                    'reference_id' => $pret->id,
-                    'created_by' => $userId,
-                ]
+                "Décaissement prêt — {$pret->emprunteur->nom} {$pret->emprunteur->prenom}",
+                ['reference_type' => 'pret', 'reference_id' => $pret->id, 'created_by' => $tresorier->id, 'valide_par' => $tresorier->id]
             );
 
-            $pret->forceFill([
+            $pret->update([
                 'statut' => 'en_cours',
                 'date_debut' => now()->toDateString(),
-                'transaction_decaissement_id' => $tx->id,
-            ])->save();
+                'date_fin_prevue' => now()->addMonths($pret->nb_echeances)->toDateString(),
+                'transaction_decaissement_id' => $transaction->id,
+            ]);
 
-            $this->genererAmortissement($pret->refresh());
+            $this->loguerStatut($pret, 'approuve', 'en_cours', 'Décaissé', $tresorier);
 
-            return $pret->load('echeances');
-        });
-    }
-
-    public function rembourser(Pret $pret, float $montant, CaisseService $caisseService, ?string $userId = null): Pret
-    {
-        if (! in_array($pret->statut, ['en_cours', 'en_retard'])) {
-            throw new RuntimeException('Ce pret ne peut pas recevoir de remboursement dans son etat actuel.');
-        }
-
-        return DB::transaction(function () use ($pret, $montant, $caisseService, $userId) {
-            $caisseService->entree(
-                $pret->caisse,
-                $montant,
-                'Remboursement pret',
-                [
-                    'reference_type' => Pret::class,
-                    'reference_id' => $pret->id,
-                    'created_by' => $userId,
-                ]
-            );
-
-            $reste = $montant;
-            $echeances = $pret->echeances()->whereIn('statut', ['due', 'partielle', 'en_retard'])->orderBy('numero_echeance')->get();
-
-            foreach ($echeances as $echeance) {
-                if ($reste <= 0) break;
-                $manquant = (float) $echeance->montant_total - (float) $echeance->montant_verse;
-                $verse = min($reste, $manquant);
-                $reste -= $verse;
-
-                $echeance->forceFill([
-                    'montant_verse' => (float) $echeance->montant_verse + $verse,
-                    'date_versement_reel' => now()->toDateString(),
-                    'statut' => ((float) $echeance->montant_verse + $verse) >= (float) $echeance->montant_total ? 'payee' : 'partielle',
-                ])->save();
-            }
-
-            $totalVerse = (float) $pret->echeances()->sum('montant_verse');
-            $capitalRestant = max(0, (float) $pret->montant_total_du - $totalVerse);
-
-            $pret->forceFill([
-                'montant_rembourse' => $totalVerse,
-                'capital_restant' => $capitalRestant,
-                'statut' => $capitalRestant <= 0 ? 'solde' : $pret->statut,
-                'date_solde' => $capitalRestant <= 0 ? now()->toDateString() : null,
-            ])->save();
-
-            if ($capitalRestant > 0 && $montant > (float) $pret->montant_echeance) {
-                $this->recalculerEcheancesFutures($pret->refresh());
-            }
-
-            return $pret->refresh()->load('echeances');
-        });
-    }
-
-    public function verifierEtPasserEnDefaut(Pret $pret, ?string $presidentId = null): Pret
-    {
-        if ($pret->statut !== 'en_retard') {
             return $pret;
-        }
+        });
+    }
 
-        $dernierVersement = $pret->echeances()->whereNotNull('date_versement_reel')->max('date_versement_reel');
-        $referenceDate = $dernierVersement ? Carbon::parse($dernierVersement) : Carbon::parse($pret->date_debut ?? $pret->date_demande);
-        $jours = $referenceDate->diffInDays(now());
-        $seuil = (int) ($pret->caisse->association->seuil_defaut_jours ?? 90);
-
-        if ($jours >= $seuil) {
-            $pret->forceFill(['statut' => 'defaut'])->save();
-            $pret->emprunteur->forceFill([
-                'statut' => 'suspendu',
-                'motif_suspension' => 'Pret en defaut',
-            ])->save();
-
-            $this->notificationService->notifierDefautPret(
-                $pret->caisse->association_id,
-                $pret->emprunteur_id,
-                $pret->id,
-                $presidentId
+    /**
+     * Remboursement (RG-PRT — recalcul après remboursement partiel).
+     */
+    public function rembourser(Pret $pret, EcheancePret $echeance, float $montantVerse, Utilisateur $tresorier): EcheancePret
+    {
+        return DB::transaction(function () use ($pret, $echeance, $montantVerse, $tresorier) {
+            $transaction = app(CaisseService::class)->entree(
+                $pret->caisse,
+                $montantVerse,
+                "Remboursement prêt — échéance n°{$echeance->numero_echeance}",
+                ['reference_type' => 'echeance_pret', 'reference_id' => $echeance->id, 'created_by' => $tresorier->id, 'valide_par' => $tresorier->id]
             );
-        }
 
-        return $pret->refresh();
-    }
+            $totalVerseAvant = (float) $echeance->montant_verse;
+            $nouveauVerse = $totalVerseAvant + $montantVerse;
+            $deficit = (float) $echeance->montant_total - $nouveauVerse;
 
-    public function leverDefaut(Pret $pret, array $data, ?string $userId = null): Pret
-    {
-        if ($pret->statut !== 'defaut') {
-            throw new RuntimeException('Ce pret n\'est pas en statut defaut.');
-        }
+            $echeance->update([
+                'montant_verse' => $nouveauVerse,
+                'statut' => $deficit <= 0 ? 'payee' : 'partielle',
+                'date_versement_reel' => now()->toDateString(),
+                'transaction_id' => $transaction->id,
+            ]);
 
-        $arriere = (float) $pret->capital_restant;
-        $regularise = (float) ($data['montant_regularise'] ?? 0);
+            $capitalRembourseReel = min($montantVerse, (float) $echeance->montant_capital);
+            $pret->update([
+                'montant_rembourse' => (float) $pret->montant_rembourse + $montantVerse,
+                'capital_restant' => max(0, (float) $pret->capital_restant - $capitalRembourseReel),
+            ]);
 
-        if ($arriere > 0 && $regularise < ($arriere * 0.5)) {
-            throw new RuntimeException('Le montant regularise doit representer au moins 50% de l\'arrearre.');
-        }
-
-        $pret->forceFill(['statut' => 'en_cours'])->save();
-        $pret->emprunteur->forceFill([
-            'statut' => 'actif',
-            'motif_suspension' => null,
-        ])->save();
-
-        return $pret->refresh();
-    }
-
-    public function appliquerPenalites(Pret $pret): void
-    {
-        if (! in_array($pret->statut, ['en_cours', 'en_retard'])) {
-            return;
-        }
-
-        $taux = (float) ($pret->taux_penalite_mensuel ?? $pret->caisse->taux_penalite_mensuel ?? 0.02);
-        $notif = false;
-
-        foreach ($pret->echeances()->whereIn('statut', ['due', 'partielle', 'en_retard'])->get() as $echeance) {
-            $date = Carbon::parse($echeance->date_echeance);
-            if ($date->isPast() && $date->diffInHours(now()) > 24) {
-                if ($echeance->statut !== 'en_retard') {
-                    $echeance->forceFill(['statut' => 'en_retard'])->save();
-                }
-
-                $jours = $date->diffInDays(now());
-                $penalite = round((float) $pret->capital_restant * $taux * ($jours / 30), 2);
-                $echeance->forceFill(['montant_penalite' => $penalite])->save();
-
-                if (! $notif) {
-                    $this->notificationService->notifierEcheanceRetard(
-                        $pret->caisse->association_id,
-                        $pret->emprunteur_id,
-                        $pret->id,
-                        $echeance->date_echeance,
-                        (float) $echeance->montant_total
-                    );
-                    $notif = true;
-                }
+            // Si toutes les échéances sont soldées → prêt SOLDE
+            $resteAPayer = $pret->echeances()->whereNotIn('statut', ['payee'])->count();
+            if ($resteAPayer === 0) {
+                $pret->update(['statut' => 'solde', 'date_solde' => now()->toDateString(), 'capital_restant' => 0]);
+                $this->loguerStatut($pret, 'en_cours', 'solde', 'Prêt intégralement remboursé', $tresorier);
             }
-        }
 
-        if ($pret->echeances()->where('statut', 'en_retard')->exists() && $pret->statut === 'en_cours') {
-            $pret->forceFill(['statut' => 'en_retard'])->save();
-        }
+            return $echeance;
+        });
     }
 
-    public function genererAmortissement(Pret $pret): void
+    /**
+     * Tableau d'amortissement — méthode linéaire (RG-PRT / cahier des charges 5.3).
+     */
+    public function genererAmortissement(Pret $pret): array
     {
-        if ($pret->echeances()->exists()) {
-            return;
-        }
+        $pret->echeances()->delete();
 
-        $capital = round((float) $pret->montant_principal / (int) $pret->nb_echeances, 2);
-        $interet = round((float) $pret->interet_total / (int) $pret->nb_echeances, 2);
-        $restant = (float) $pret->montant_total_du;
-        $dateDebut = Carbon::parse($pret->date_debut ?? $pret->date_approbation ?? now());
+        $principal = (float) $pret->montant_principal;
+        $taux = (float) $pret->taux_interet_mensuel;
+        $n = (int) $pret->nb_echeances;
+        $capitalParEcheance = round($principal / $n, 2);
+        $capitalRestant = $principal;
 
-        for ($i = 1; $i <= (int) $pret->nb_echeances; $i++) {
-            $total = round($capital + $interet, 2);
-            $restant = max(0, round($restant - $total, 2));
+        $echeances = [];
+        for ($i = 1; $i <= $n; $i++) {
+            $interet = round($capitalRestant * $taux, 2);
+            $isLast = $i === $n;
+            $capital = $isLast ? round($capitalRestant, 2) : $capitalParEcheance;
+            $capitalRestant = max(0, round($capitalRestant - $capital, 2));
 
-            EcheancePret::create([
+            $echeances[] = EcheancePret::create([
                 'pret_id' => $pret->id,
                 'numero_echeance' => $i,
-                'date_echeance' => $dateDebut->copy()->addMonths($i)->toDateString(),
+                'date_echeance' => now()->addMonths($i)->toDateString(),
                 'montant_capital' => $capital,
                 'montant_interet' => $interet,
-                'montant_total' => $total,
+                'montant_total' => $capital + $interet,
                 'montant_verse' => 0,
-                'montant_penalite' => 0,
-                'capital_restant_apres' => $restant,
-                'statut' => 'due',
+                'capital_restant_apres' => $capitalRestant,
+                'statut' => 'a_venir',
             ]);
         }
+
+        return $echeances;
     }
 
-    private function recalculerEcheancesFutures(Pret $pret): void
+    private function calculerAmortissementLineaire(float $principal, float $tauxMensuel, int $nbMois): array
     {
-        $reste = $pret->echeances()->whereIn('statut', ['due', 'partielle', 'en_retard'])->orderBy('numero_echeance')->get();
-        $nb = $reste->count();
-        if ($nb === 0) {
-            return;
-        }
+        $interetTotal = round($principal * $tauxMensuel * $nbMois, 2);
+        $echeanceMensuelle = round(($principal / $nbMois) + ($principal * $tauxMensuel), 2);
 
-        $capital = (float) $pret->capital_restant;
-        $taux = (float) $pret->taux_interet_mensuel;
-        $interet = round($capital * $taux * $nb, 2);
-        $total = round($capital + $interet, 2);
-        $mensualite = round($total / $nb, 2);
-        $restant = $total;
+        return ['interet_total' => $interetTotal, 'echeance_mensuelle' => $echeanceMensuelle];
+    }
 
-        foreach ($reste as $echeance) {
-            $restant = max(0, round($restant - $mensualite, 2));
-            $echeance->forceFill([
-                'montant_capital' => round($capital / $nb, 2),
-                'montant_interet' => round($interet / $nb, 2),
-                'montant_total' => $mensualite,
-                'capital_restant_apres' => $restant,
-            ])->save();
-        }
+    /**
+     * Passage EN_RETARD → DEFAUT après 90 jours sans régularisation (à appeler via scheduler quotidien).
+     */
+    public function verifierDefauts(): int
+    {
+        $count = 0;
+        Pret::where('statut', 'en_retard')->chunk(100, function ($prets) use (&$count) {
+            foreach ($prets as $pret) {
+                $plusAncienneEcheanceImpayee = $pret->echeances()->whereIn('statut', ['en_retard', 'penalisee'])->orderBy('date_echeance')->first();
+                if ($plusAncienneEcheanceImpayee && now()->diffInDays($plusAncienneEcheanceImpayee->date_echeance) >= 90) {
+                    $pret->update(['statut' => 'defaut']);
+                    $this->loguerStatut($pret, 'en_retard', 'defaut', 'Non-paiement prolongé (90j+)');
+                    $count++;
+                }
+            }
+        });
+
+        return $count;
+    }
+
+    private function loguerStatut(Pret $pret, ?string $avant, string $apres, ?string $commentaire = null, ?Utilisateur $auteur = null): void
+    {
+        HistoriquePret::create([
+            'pret_id' => $pret->id,
+            'statut_avant' => $avant,
+            'statut_apres' => $apres,
+            'commentaire' => $commentaire,
+            'fait_par' => $auteur?->id,
+        ]);
     }
 }

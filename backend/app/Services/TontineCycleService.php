@@ -5,115 +5,193 @@ namespace App\Services;
 use App\Models\CotisationTontine;
 use App\Models\CycleTontine;
 use App\Models\Encherite;
+use App\Models\Reunion;
 use App\Models\Tontine;
 use App\Models\TontinePart;
+use App\Models\Utilisateur;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
 
 class TontineCycleService
 {
-    public function ouvrirCycle(Tontine $tontine, string $reunionId): CycleTontine
+    public function ouvrirCycle(Tontine $tontine, Reunion $reunion): CycleTontine
     {
-        return DB::transaction(function () use ($tontine, $reunionId) {
-            $numero = ((int) $tontine->cycles()->max('numero_cycle')) + 1;
-            $parts = $tontine->parts()->whereIn('statut', ['attribuee', 'active', 'disponible'])->get();
+        $numero = ($tontine->cycles()->max('numero_cycle') ?? 0) + 1;
 
-            if ($parts->isEmpty()) {
-                throw new RuntimeException('Aucune part active pour cette tontine.');
-            }
+        $partsActives = $tontine->parts()->where('statut', 'disponible')->count();
+        $montantPrevu = (float) $tontine->montant_part * max(1, $tontine->parts()->count());
 
+        return DB::transaction(function () use ($tontine, $reunion, $numero, $montantPrevu) {
             $cycle = CycleTontine::create([
                 'tontine_id' => $tontine->id,
-                'reunion_id' => $reunionId,
+                'reunion_id' => $reunion->id,
                 'numero_cycle' => $numero,
                 'statut' => 'ouvert',
-                'montant_collecte_prevu' => $parts->count() * (float) $tontine->montant_part,
+                'montant_collecte_prevu' => $montantPrevu,
                 'date_ouverture' => now(),
             ]);
 
-            foreach ($parts as $part) {
+            // Génère une ligne de cotisation "due" pour chaque part de la tontine (RG-TON règle parts multiples)
+            foreach ($tontine->parts as $part) {
                 CotisationTontine::create([
                     'cycle_id' => $cycle->id,
                     'tontine_part_id' => $part->id,
                     'membre_id' => $part->membre_id,
                     'montant_du' => $tontine->montant_part,
+                    'montant_verse' => 0,
                     'statut' => 'due',
                 ]);
             }
 
-            return $cycle->load(['cotisations.part', 'tontine']);
+            return $cycle;
         });
     }
 
-    public function saisirCotisation(CycleTontine $cycle, string $partId, float $montant, array $meta = []): CotisationTontine
+    /**
+     * Saisie ligne par ligne des cotisations, montant partiel autorisé.
+     */
+    public function saisirCotisations(CycleTontine $cycle, CotisationTontine $cotisation, float $montantVerse, Utilisateur $saisiPar, array $options = []): CotisationTontine
     {
-        return DB::transaction(function () use ($cycle, $partId, $montant, $meta) {
-            $cotisation = CotisationTontine::query()
-                ->where('cycle_id', $cycle->id)
-                ->where('tontine_part_id', $partId)
-                ->lockForUpdate()
-                ->firstOrFail();
+        if ($cycle->statut === 'clos') {
+            throw new RuntimeException('Cycle clôturé : cotisations non modifiables.');
+        }
 
-            $verse = min((float) $cotisation->montant_du, (float) $cotisation->montant_verse + $montant);
-            $cotisation->fill(array_merge($meta, [
-                'montant_verse' => $verse,
-                'statut' => $verse >= (float) $cotisation->montant_du ? 'payee' : 'partielle',
-                'date_versement' => now(),
-            ]))->save();
-
-            $cycle->forceFill([
-                'montant_collecte_reel' => $cycle->cotisations()->sum('montant_verse'),
-            ])->save();
-
-            return $cotisation->refresh();
-        });
-    }
-
-    public function designerGagnant(CycleTontine $cycle, ?string $partId = null): CycleTontine
-    {
-        $cycle->loadMissing('tontine.parts');
-        $tontine = $cycle->tontine;
-
-        $part = $partId ? TontinePart::findOrFail($partId) : match ($tontine->mode_attribution) {
-            'tirage_sort' => $tontine->parts()->whereNull('date_attribution')->inRandomOrder()->first(),
-            'enchere' => Encherite::query()
-                ->where('cycle_id', $cycle->id)
-                ->orderByDesc('montant_offre')
-                ->first()?->tontinePart,
-            'calendrier' => $tontine->parts()
-                ->whereNull('date_attribution')
-                ->orderByRaw('COALESCE(date_gain_calendrier, CURRENT_DATE) ASC')
-                ->orderBy('numero_part')
-                ->first(),
-            default => $tontine->parts()
-                ->whereNull('date_attribution')
-                ->orderBy('ordre_rotation')
-                ->orderBy('numero_part')
-                ->first(),
+        $deficit = (float) $cotisation->montant_du - $montantVerse;
+        $statut = match (true) {
+            $montantVerse <= 0 => 'impayee',
+            $deficit > 0 => 'partielle',
+            default => 'payee',
         };
 
-        if (! $part) {
-            throw new RuntimeException('Aucune part gagnante disponible.');
+        $cotisation->update([
+            'montant_verse' => $montantVerse,
+            'statut' => $statut,
+            'date_versement' => $montantVerse > 0 ? now() : null,
+            'mode_paiement' => $options['mode_paiement'] ?? null,
+            'reference_paiement' => $options['reference_paiement'] ?? null,
+            'saisie_par' => $saisiPar->id,
+        ]);
+
+        if ($statut !== 'payee') {
+            app(SanctionService::class)->retardCotisation($cotisation->membre, $cotisation->fresh());
         }
 
-        $cycle->forceFill(['gagnant_part_id' => $part->id])->save();
-        $part->forceFill(['date_attribution' => now(), 'statut' => 'gagnee'])->save();
+        $totalCollecte = (float) $cycle->cotisations()->sum('montant_verse');
+        $cycle->update(['montant_collecte_reel' => $totalCollecte]);
 
-        return $cycle->refresh()->load('gagnantPart');
+        return $cotisation;
     }
 
-    public function cloturerCycle(CycleTontine $cycle): CycleTontine
+    /**
+     * Désigne le gagnant selon le mode d'attribution de la tontine (RG-TON).
+     */
+    public function designerGagnant(CycleTontine $cycle, ?string $partIdForcee = null): TontinePart
     {
-        if (! $cycle->gagnant_part_id) {
-            throw new RuntimeException('Designer un gagnant avant cloture.');
+        if ($partIdForcee) {
+            $part = $cycle->tontine->parts()->where('statut', 'disponible')->findOrFail($partIdForcee);
+            $this->attribuerPart($cycle, $part);
+
+            return $part;
         }
 
-        $cycle->forceFill([
-            'statut' => 'clos',
-            'date_cloture' => now(),
-            'montant_collecte_reel' => $cycle->cotisations()->sum('montant_verse'),
-        ])->save();
+        $tontine = $cycle->tontine;
 
-        return $cycle->refresh();
+        return match ($tontine->mode_attribution) {
+            'rotation' => $this->designerParRotation($cycle, $tontine),
+            'tirage_sort' => $this->designerParTirage($cycle, $tontine),
+            'enchere' => $this->designerParEnchere($cycle, $tontine),
+            'calendrier' => $this->designerParCalendrier($cycle, $tontine),
+            default => throw new RuntimeException('Mode d\'attribution inconnu.'),
+        };
+    }
+
+    private function designerParRotation(CycleTontine $cycle, Tontine $tontine): TontinePart
+    {
+        $part = $tontine->parts()->where('statut', 'disponible')->orderBy('ordre_rotation')->firstOrFail();
+        $this->attribuerPart($cycle, $part);
+
+        return $part;
+    }
+
+    private function designerParTirage(CycleTontine $cycle, Tontine $tontine): TontinePart
+    {
+        $part = $tontine->parts()->where('statut', 'disponible')->inRandomOrder()->firstOrFail();
+        $this->attribuerPart($cycle, $part);
+
+        return $part;
+    }
+
+    /**
+     * Clôture les enchères : la part va au plus offrant.
+     * Surplus = Montant_enchère_gagnante − (nb_parts × montant_par_part) (cahier des charges 5.2).
+     */
+    private function designerParEnchere(CycleTontine $cycle, Tontine $tontine): TontinePart
+    {
+        $meilleure = Encherite::where('cycle_id', $cycle->id)->orderByDesc('montant_offre')->first();
+        if (! $meilleure) {
+            throw new RuntimeException('Aucune enchère reçue pour ce cycle.');
+        }
+        if ($tontine->mise_min_enchere && (float) $meilleure->montant_offre < (float) $tontine->mise_min_enchere) {
+            throw new RuntimeException('La meilleure enchère est sous la mise minimale.');
+        }
+
+        $meilleure->update(['est_gagnante' => true]);
+        $part = TontinePart::findOrFail($meilleure->tontine_part_id);
+
+        $nbParts = $tontine->parts()->count();
+        $surplus = max(0, (float) $meilleure->montant_offre - ($nbParts * (float) $tontine->montant_part));
+
+        $surplusRedistribue = 0;
+        $surplusCaisse = 0;
+        if ($surplus > 0) {
+            if ($tontine->option_surplus === 'redistribution') {
+                $surplusRedistribue = $surplus;
+            } else {
+                $surplusCaisse = $surplus;
+                app(CaisseService::class)->entree($tontine->caisse, $surplus, "Surplus enchère cycle n°{$cycle->numero_cycle}");
+            }
+        }
+
+        $cycle->update([
+            'montant_enchere' => $meilleure->montant_offre,
+            'surplus_enchere' => $surplus,
+            'surplus_redistribue' => $surplusRedistribue,
+            'surplus_mis_en_caisse' => $surplusCaisse,
+        ]);
+
+        $this->attribuerPart($cycle, $part);
+
+        return $part;
+    }
+
+    private function designerParCalendrier(CycleTontine $cycle, Tontine $tontine): TontinePart
+    {
+        $part = $tontine->parts()
+            ->where('statut', 'disponible')
+            ->whereDate('date_gain_calendrier', '<=', now())
+            ->orderBy('date_gain_calendrier')
+            ->firstOrFail();
+        $this->attribuerPart($cycle, $part);
+
+        return $part;
+    }
+
+    private function attribuerPart(CycleTontine $cycle, TontinePart $part): void
+    {
+        $part->update(['statut' => 'gagnee', 'date_attribution' => now()]);
+        $cycle->update(['gagnant_part_id' => $part->id]);
+    }
+
+    public function cloturerCycle(CycleTontine $cycle, Utilisateur $auteur): CycleTontine
+    {
+        if (! $cycle->gagnant_part_id) {
+            throw new RuntimeException('Impossible de clôturer : aucun gagnant désigné.');
+        }
+
+        $cycle->update(['statut' => 'clos', 'date_cloture' => now()]);
+
+        app(BulletinGainService::class)->genererDepuisCycle($cycle, $auteur);
+
+        return $cycle;
     }
 }

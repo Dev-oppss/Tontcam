@@ -4,17 +4,32 @@ namespace App\Models;
 
 use App\Models\Concerns\UsesUuid;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class HistoriquePret extends Model
 {
+    const UPDATED_AT = null;
+
     use UsesUuid;
 
     protected $table = 'historique_prets';
-    public $timestamps = false;
-    protected $casts = ['created_at' => 'datetime'];
 
-    public function pret(): BelongsTo { return $this->belongsTo(Pret::class); }
-    public function faitPar(): BelongsTo { return $this->belongsTo(Utilisateur::class, 'fait_par'); }
+    protected $fillable = [
+        'pret_id',
+        'statut_avant',
+        'statut_apres',
+        'commentaire',
+        'fait_par',
+    ];
+
+    public function pret()
+    {
+        return $this->belongsTo(Pret::class, 'pret_id');
+    }
+
+
+    public function auteur()
+    {
+        return $this->belongsTo(Utilisateur::class, 'fait_par');
+    }
+
 }
-

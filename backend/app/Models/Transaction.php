@@ -4,25 +4,71 @@ namespace App\Models;
 
 use App\Models\Concerns\UsesUuid;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class Transaction extends Model
 {
+    const UPDATED_AT = null;
+
     use UsesUuid;
 
     protected $table = 'transactions';
-    public $timestamps = false;
-    protected $casts = [
-        'montant' => 'decimal:2',
-        'solde_avant' => 'decimal:2',
-        'solde_apres' => 'decimal:2',
-        'date_transaction' => 'datetime',
-        'valide' => 'boolean',
-        'annulee' => 'boolean',
-        'valide_at' => 'datetime',
-        'annulee_at' => 'datetime',
+
+    protected $fillable = [
+        'caisse_id',
+        'type',
+        'montant',
+        'solde_avant',
+        'solde_apres',
+        'libelle',
+        'date_transaction',
+        'mode_paiement',
+        'cheque_numero',
+        'reference_externe',
+        'reference_type',
+        'reference_id',
+        'valide',
+        'valide_par',
+        'valide_at',
+        'annulee',
+        'annulee_par',
+        'annulee_at',
+        'motif_annulation',
+        'notes',
+        'created_by',
     ];
 
-    public function caisse(): BelongsTo { return $this->belongsTo(Caisse::class); }
-    public function createdBy(): BelongsTo { return $this->belongsTo(Utilisateur::class, 'created_by'); }
+    protected $casts = [
+            'montant' => 'decimal:2',
+            'solde_avant' => 'decimal:2',
+            'solde_apres' => 'decimal:2',
+            'date_transaction' => 'datetime',
+            'valide' => 'boolean',
+            'valide_at' => 'datetime',
+            'annulee' => 'boolean',
+            'annulee_at' => 'datetime'
+    ];
+
+    public function caisse()
+    {
+        return $this->belongsTo(Caisse::class);
+    }
+
+
+    public function valideur()
+    {
+        return $this->belongsTo(Utilisateur::class, 'valide_par');
+    }
+
+
+    public function annuleur()
+    {
+        return $this->belongsTo(Utilisateur::class, 'annulee_par');
+    }
+
+
+    public function createur()
+    {
+        return $this->belongsTo(Utilisateur::class, 'created_by');
+    }
+
 }

@@ -1,4 +1,5 @@
 import { useState, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   UserPlus, Search, Eye, Pencil, Trash2, Users, Plus, Minus,
   Phone, MapPin, Briefcase, Calendar, CreditCard,
@@ -74,7 +75,7 @@ function FicheMembre({ membre, onClose, onEdit }) {
     { id:'assurance', label:'Fond Assur.', icon: Shield,     badge: aidesMembre.length > 0 ? aidesMembre.length : null },
   ];
 
-  return (
+  return createPortal((
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-box max-w-[100rem] w-full" onClick={e => e.stopPropagation()}>
 
@@ -424,7 +425,7 @@ function FicheMembre({ membre, onClose, onEdit }) {
         </div>
       </div>
     </div>
-  );
+  ), document.body);
 }
 
 // ── Page principale Membres ───────────────────────────────────
@@ -451,7 +452,7 @@ export default function Membres() {
   const openEdit = (m) => { setForm({ ...m }); setEdit(m); };
 
   const handleAdd  = () => { if (!form.nom.trim()||!form.prenom.trim()||!form.telephone.trim()) return; addMembre({...form}); setAdd(false); };
-  const handleEdit = () => { if (!form.nom.trim()||!form.prenom.trim()||!form.telephone.trim()) return; updateMembre({...edit,...form}); setEdit(null); };
+  const handleEdit = () => { if (!form.nom.trim()||!form.prenom.trim()||!form.telephone.trim()) return; updateMembre(edit.id, {...edit,...form}); setEdit(null); };
 
   const formRef = useRef(form); formRef.current = form;
   const F = useRef(({k,...p}) => <input className="input" value={formRef.current[k]||''} onChange={e=>setForm(f=>({...f,[k]:e.target.value}))} {...p}/>).current;

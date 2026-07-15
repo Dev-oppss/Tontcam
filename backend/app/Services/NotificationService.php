@@ -2,187 +2,98 @@
 
 namespace App\Services;
 
+use App\Models\Membre;
 use App\Models\Notification;
+use App\Models\Reunion;
 
+/**
+ * Envoi de rappels SMS/email/WhatsApp/push (RG-REU-007).
+ * L'envoi réel est délégué à des Jobs en queue ; ce service se limite
+ * à préparer et journaliser les notifications.
+ */
 class NotificationService
 {
-    public function journaliser(array $data): Notification
-    {
-        return Notification::create(array_merge([
+    public function journaliser(
+        string $associationId,
+        ?Membre $membre,
+        string $canal,
+        string $typeEvenement,
+        string $contenu,
+        \DateTimeInterface $programmeeA,
+        ?string $sujet = null,
+        ?Reunion $reunion = null
+    ): Notification {
+        return Notification::create([
+            'association_id' => $associationId,
+            'reunion_id' => $reunion?->id,
+            'membre_id' => $membre?->id,
+            'canal' => $canal,
+            'type_evenement' => $typeEvenement,
+            'sujet' => $sujet,
+            'contenu' => $contenu,
             'statut' => 'en_attente',
-            'programmee_a' => now(),
-            'nb_tentatives' => 0,
-        ], $data));
+            'programmee_a' => $programmeeA,
+        ]);
     }
 
-    public function envoyer(Notification $notification): Notification
+    /**
+     * Prépare les rappels J-7/J-3/J-1 pour une réunion selon les paramètres
+     * activés au niveau de l'association (delai_rappel_j7/j3/j1).
+     */
+    public function preparerEnvoi(Reunion $reunion): array
     {
-        try {
-            match ($notification->canal) {
-                'sms' => $this->envoyerSms($notification),
-                'email' => $this->envoyerEmail($notification),
-                'push' => $this->envoyerPush($notification),
-                default => throw new \RuntimeException("Canal inconnu : {$notification->canal}"),
-            };
+        $association = $reunion->association;
+        $membres = Membre::where('association_id', $association->id)->where('statut', 'actif')->get();
 
-            $notification->forceFill([
-                'statut' => 'envoyee',
-                'envoyee_a' => now(),
-                'nb_tentatives' => $notification->nb_tentatives + 1,
-            ])->save();
-        } catch (\Throwable $e) {
-            $notification->forceFill([
-                'statut' => 'echec',
-                'erreur' => $e->getMessage(),
-                'nb_tentatives' => $notification->nb_tentatives + 1,
-            ])->save();
+        $paliers = [
+            'j7' => ['jours' => 7, 'actif' => $association->delai_rappel_j7],
+            'j3' => ['jours' => 3, 'actif' => $association->delai_rappel_j3],
+            'j1' => ['jours' => 1, 'actif' => $association->delai_rappel_j1],
+        ];
 
-            if ($notification->canal === 'sms' && $notification->nb_tentatives < 3) {
-                $this->planifierRetentative($notification);
+        $created = [];
+        foreach ($paliers as $code => $palier) {
+            if (! $palier['actif']) {
+                continue;
+            }
+            $programmeeA = \Illuminate\Support\Carbon::parse($reunion->date_reunion)->subDays($palier['jours'])->setTimeFromTimeString('08:00');
+
+            foreach ($membres as $membre) {
+                $created[] = $this->journaliser(
+                    $association->id,
+                    $membre,
+                    'sms',
+                    "rappel_reunion_{$code}",
+                    "Rappel : réunion du {$reunion->date_reunion->format('d/m/Y')} à {$reunion->heure_debut} — {$reunion->lieu}.",
+                    $programmeeA,
+                    'Rappel de réunion',
+                    $reunion
+                );
             }
         }
 
-        return $notification->refresh();
+        return $created;
     }
 
-    public function planifierRetentative(Notification $notification): void
+    /**
+     * Marque une notification comme échouée et incrémente le compteur de tentatives.
+     * Après 2 échecs, la notification n'est plus retentée (à orchestrer via un Job scheduler).
+     */
+    public function marquerEchec(Notification $notification, string $erreur): Notification
     {
-        $this->journaliser([
-            'association_id' => $notification->association_id,
-            'membre_id' => $notification->membre_id,
-            'reunion_id' => $notification->reunion_id,
-            'canal' => 'sms',
-            'type_evenement' => $notification->type_evenement,
-            'sujet' => $notification->sujet,
-            'contenu' => $notification->contenu,
-            'programmee_a' => now()->addMinutes(30),
-            'nb_tentatives' => $notification->nb_tentatives,
-        ]);
-    }
-
-    public function notifierReunion(string $associationId, string $membreId, array $reunionData, string $canal = 'sms'): Notification
-    {
-        return $this->journaliser([
-            'association_id' => $associationId,
-            'membre_id' => $membreId,
-            'reunion_id' => $reunionData['id'] ?? null,
-            'canal' => $canal,
-            'type_evenement' => 'rappel_reunion',
-            'sujet' => 'Rappel de reunion',
-            'contenu' => "Reunion {$reunionData['type']} le {$reunionData['date']} a {$reunionData['heure']} - {$reunionData['lieu']}.",
-        ]);
-    }
-
-    public function notifierReunionReportee(string $associationId, string $membreId, array $reunionData, string $canal = 'sms'): Notification
-    {
-        return $this->journaliser([
-            'association_id' => $associationId,
-            'membre_id' => $membreId,
-            'reunion_id' => $reunionData['id'] ?? null,
-            'canal' => $canal,
-            'type_evenement' => 'reunion_reportee',
-            'sujet' => 'Réunion reportée',
-            'contenu' => "Réunion {$reunionData['type']} reportée au {$reunionData['date']} à {$reunionData['heure']} - {$reunionData['lieu']}.",
-        ]);
-    }
-
-    public function notifierEcheanceRetard(string $associationId, string $membreId, string $pretId, string $dateEcheance, float $montant): Notification
-    {
-        return $this->journaliser([
-            'association_id' => $associationId,
-            'membre_id' => $membreId,
-            'canal' => 'sms',
-            'type_evenement' => 'echeance_retard',
-            'sujet' => 'Echeance pret en retard',
-            'contenu' => "Votre echeance de pret du {$dateEcheance} ({$montant} FCFA) est en retard.",
-        ]);
-    }
-
-    public function notifierDefautPret(string $associationId, string $membreId, string $pretId, ?string $presidentId = null): void
-    {
-        $this->journaliser([
-            'association_id' => $associationId,
-            'membre_id' => $membreId,
-            'canal' => 'sms',
-            'type_evenement' => 'pret_defaut',
-            'sujet' => 'Pret en defaut',
-            'contenu' => 'Votre pret est en situation de defaut.',
+        $notification->update([
+            'statut' => $notification->nb_tentatives >= 1 ? 'echec' : 'en_attente',
+            'nb_tentatives' => $notification->nb_tentatives + 1,
+            'erreur' => $erreur,
         ]);
 
-        if ($presidentId) {
-            $this->journaliser([
-                'association_id' => $associationId,
-                'membre_id' => $presidentId,
-                'canal' => 'email',
-                'type_evenement' => 'pret_defaut_president',
-                'sujet' => 'Alerte pret en defaut',
-                'contenu' => "ALERTE : un pret est en defaut (ref: {$pretId}).",
-            ]);
-        }
+        return $notification;
     }
 
-    public function notifierSanction(string $associationId, string $membreId, string $typeSanction, float $montant, string $sanctionId): Notification
+    public function marquerEnvoyee(Notification $notification): Notification
     {
-        return $this->journaliser([
-            'association_id' => $associationId,
-            'membre_id' => $membreId,
-            'canal' => 'sms',
-            'type_evenement' => 'sanction_appliquee',
-            'sujet' => 'Sanction appliquee',
-            'contenu' => "Une sanction ({$typeSanction}) de {$montant} FCFA vous a ete appliquee.",
-        ]);
-    }
+        $notification->update(['statut' => 'envoyee', 'envoyee_a' => now()]);
 
-    public function notifierBulletinGain(string $associationId, string $membreId, float $montantNet, string $bulletinId): Notification
-    {
-        return $this->journaliser([
-            'association_id' => $associationId,
-            'membre_id' => $membreId,
-            'canal' => 'sms',
-            'type_evenement' => 'bulletin_gain',
-            'sujet' => 'Bulletin de gain disponible',
-            'contenu' => "Votre bulletin de gain est disponible. Montant net : {$montantNet} FCFA.",
-        ]);
+        return $notification;
     }
-
-    public function notifierPretApprouve(string $associationId, string $membreId, string $pretId, float $montant): Notification
-    {
-        return $this->journaliser([
-            'association_id' => $associationId,
-            'membre_id' => $membreId,
-            'canal' => 'sms',
-            'type_evenement' => 'pret_approuve',
-            'sujet' => 'Pret approuve',
-            'contenu' => "Votre demande de pret de {$montant} FCFA a ete approuvee.",
-        ]);
-    }
-
-    public function notifierSignaturePv(string $associationId, string $membreId, string $reunionId): Notification
-    {
-        return $this->journaliser([
-            'association_id' => $associationId,
-            'membre_id' => $membreId,
-            'reunion_id' => $reunionId,
-            'canal' => 'email',
-            'type_evenement' => 'signature_pv_requise',
-            'sujet' => 'Signature PV requise',
-            'contenu' => 'Un proces-verbal est en attente de votre signature electronique.',
-        ]);
-    }
-
-    public function notifierMotDePasseOublie(string $associationId, ?string $membreId, string $email): Notification
-    {
-        return $this->journaliser([
-            'association_id' => $associationId,
-            'membre_id' => $membreId,
-            'canal' => 'email',
-            'type_evenement' => 'reset_password',
-            'sujet' => 'Réinitialisation du mot de passe',
-            'contenu' => "Une demande de réinitialisation a été générée pour {$email}.",
-        ]);
-    }
-
-    private function envoyerSms(Notification $notification): void {}
-    private function envoyerEmail(Notification $notification): void {}
-    private function envoyerPush(Notification $notification): void {}
 }

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Building2, ArrowRight, Layers3, ShieldCheck, BadgeCheck } from 'lucide-react';
+import { Navigate, useNavigate, Link } from 'react-router-dom';
+import { Building2, ArrowRight, ArrowLeft, Layers3, ShieldCheck, BadgeCheck } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 
 const flow = [
@@ -24,13 +24,16 @@ const EMPTY_FORM = {
 };
 
 export default function Setup() {
-  const { createAssociation, currentAssociation } = useApp();
+  const { user, booting, updateAssociation, currentAssociation } = useApp();
   const navigate = useNavigate();
   const [form, setForm] = useState(EMPTY_FORM);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (currentAssociation) {
+    // Tant que le profil n'est pas complété, l'association ne contient qu'un nom
+    // généré automatiquement à l'inscription (technique, sans valeur pour l'utilisateur) :
+    // on ne pré-remplit rien, la personne saisit elle-même toutes les informations.
+    if (currentAssociation?.profilComplete) {
       setForm((prev) => ({
         ...prev,
         nom: currentAssociation.nom || prev.nom,
@@ -44,12 +47,19 @@ export default function Setup() {
     }
   }, [currentAssociation]);
 
+  if (booting) {
+    return <div className="min-h-screen flex items-center justify-center text-ink-500 text-sm">Chargement…</div>;
+  }
+
+  // Page accessible aux comptes déjà connectés : pour créer un compte, direction /register.
+  if (!user) return <Navigate to="/login" replace />;
+
   const submit = async () => {
-    if (busy) return;
+    if (busy || !currentAssociation) return;
     setBusy(true);
     try {
-      await createAssociation(form);
-      navigate('/login');
+      await updateAssociation(currentAssociation.id, { ...form, profilComplete: true });
+      navigate('/');
     } finally {
       setBusy(false);
     }
@@ -70,7 +80,7 @@ export default function Setup() {
           </div>
 
           <h1 className="mt-8 font-display text-3xl md:text-5xl font-semibold leading-[1.02] max-w-2xl">
-            Tout démarre par la fiche association.
+            Encore une étape : complétez votre association.
           </h1>
           <div className="africa-band mt-5 max-w-[240px]" />
           <p className="mt-4 text-white/[0.75] max-w-2xl leading-relaxed">
@@ -107,12 +117,17 @@ export default function Setup() {
         </section>
 
         <section className="card rounded-[34px] p-6 md:p-8 shadow-[0_30px_80px_rgba(16,32,27,.18)]">
+          {currentAssociation?.profilComplete && (
+            <Link to="/" className="inline-flex items-center gap-1.5 text-xs font-semibold text-ink-500 hover:text-ink-700 mb-4">
+              <ArrowLeft size={13} /> Retour au tableau de bord
+            </Link>
+          )}
           <div className="flex items-center justify-between gap-4">
             <div>
-              <span className="hero-chip bg-[#e7efff] text-[#1f4aa6] border-[#cfdcff]">Initialiser l’association</span>
-              <h2 className="mt-4 text-2xl font-display font-semibold text-ink-900">Créer l’association</h2>
+              <span className="hero-chip bg-[#e7efff] text-[#1f4aa6] border-[#cfdcff]">Compléter l’association</span>
+              <h2 className="mt-4 text-2xl font-display font-semibold text-ink-900">Fiche de l’association</h2>
               <p className="text-sm text-ink-600/70 mt-1">
-                Renseignez la structure de base pour activer l’espace de gestion complet.
+                Complétez la structure de base pour activer l’espace de gestion complet.
               </p>
             </div>
             <div className="hidden md:flex items-center gap-3 rounded-[24px] bg-[#eef4ff] border border-[#cfdcff] px-4 py-3">
@@ -127,7 +142,9 @@ export default function Setup() {
           {currentAssociation && (
             <div className="mt-5 rounded-2xl border border-[#cfdcff] bg-[#eef4ff] p-4">
               <p className="text-[11px] uppercase tracking-[0.16em] font-bold text-[#1f4aa6]">Association active</p>
-              <p className="text-sm font-semibold text-ink-900 mt-1">{currentAssociation.nom}</p>
+              <p className="text-sm font-semibold text-ink-900 mt-1">
+                {currentAssociation.profilComplete ? currentAssociation.nom : 'Nouvelle association — à compléter'}
+              </p>
             </div>
           )}
 
@@ -173,13 +190,13 @@ export default function Setup() {
             <div className="pt-2">
               <button type="button" disabled={busy} onClick={submit} className="btn-primary justify-center w-full">
                 <ArrowRight size={14} />
-                Enregistrer et ouvrir l’espace
+                Enregistrer et accéder au tableau de bord
               </button>
             </div>
           </div>
 
           <p className="mt-6 text-xs text-ink-500 leading-relaxed">
-            Ces informations pourront être modifiées à tout moment depuis les paramètres de l’association.
+            Vous pourrez revenir modifier ces informations à tout moment depuis « Organisation → Association ».
           </p>
         </section>
       </div>

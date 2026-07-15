@@ -93,7 +93,7 @@ export default function Tontines() {
   );
   const caissesMap = Object.fromEntries((caisses || []).map((c) => [c.id, c]));
   const caissesTontine = (caisses || []).filter((c) =>
-    String(c?.type || '').toLowerCase() === 'tontine'
+    String(c?.type || '').toLowerCase() === 'tontine' && c.statut !== 'inactive'
   );
 
   const getTourPlanning   = (id) => (planningTours || []).filter(p => p.idTontine === id).sort((a,b) => a.numeroTour - b.numeroTour);

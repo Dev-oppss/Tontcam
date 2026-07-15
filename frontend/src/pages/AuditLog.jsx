@@ -11,7 +11,7 @@ export default function AuditLog() {
   const [filtreModule, setFiltreModule] = useState('');
   const [filtreAction, setFiltreAction] = useState('');
 
-  const autorise = user?.role === 'admin' || user?.role === 'controleur';
+  const autorise = user?.role === 'super_admin' || user?.role === 'controleur';
 
   // La consultation de l'audit log est elle-même tracée (RG-SEC-012)
   useMemo(() => {

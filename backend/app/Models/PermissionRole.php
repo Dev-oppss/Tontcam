@@ -9,8 +9,21 @@ class PermissionRole extends Model
 {
     use UsesUuid;
 
-    protected $table = 'permissions_roles';
     public $timestamps = false;
-    protected $casts = ['autorise' => 'boolean', 'conditions' => 'array'];
-}
 
+    protected $table = 'permissions_roles';
+
+    protected $fillable = [
+        'role',
+        'module',
+        'action',
+        'autorise',
+        'conditions',
+    ];
+
+    protected $casts = [
+            'autorise' => 'boolean',
+            'conditions' => 'array'
+    ];
+
+}

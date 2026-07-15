@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { Navigate, useNavigate, Link } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 
 const pillars = [
@@ -151,6 +151,9 @@ export default function Login() {
               </div>
               {error && <div className="text-sm text-[#a64734]">{error}</div>}
               <button type="submit" className="btn-primary w-full justify-center">Se connecter</button>
+              <p className="text-sm text-ink-600/70 text-center">
+                Pas encore de compte ? <Link to="/register" className="font-semibold text-[#1f4aa6]">Créer un compte</Link>
+              </p>
             </form>
           ) : (
             <form onSubmit={submitPassword} className="space-y-4">

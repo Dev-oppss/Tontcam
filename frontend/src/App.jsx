@@ -1,7 +1,9 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { AppProvider, useApp } from './context/AppContext';
+import { Toast }      from './components/ui/Toast';
 import Layout        from './components/layout/Layout';
 import Login         from './pages/Login';
+import Register      from './pages/Register';
 import Setup         from './pages/Setup';
 import Dashboard     from './pages/Dashboard';
 import Membres       from './pages/Membres';
@@ -11,8 +13,6 @@ import Rotations     from './pages/Rotations';
 import Encheres      from './pages/Encheres';
 import Banques       from './pages/Banques';
 import Prets         from './pages/Prets';
-import CaisseSociale from './pages/CaisseSociale';
-import FondAssurance from './pages/FondAssurance';
 import Caisse        from './pages/Caisse';
 import Sanctions     from './pages/Sanctions';
 import Rapports      from './pages/Rapports';
@@ -27,10 +27,10 @@ import AuditLog from './pages/AuditLog';
 import ReglementInterieur from './pages/ReglementInterieur';
 
 function WorkspaceGate({ children }) {
-  const { currentAssociation, setupComplete, user, loading } = useApp();
+  const { currentAssociation, setupComplete, user, booting } = useApp();
 
-  if (loading) {
-    return null;
+  if (booting) {
+    return <div className="min-h-screen flex items-center justify-center text-ink-500 text-sm">Chargement…</div>;
   }
 
   if (!user) {
@@ -51,6 +51,7 @@ export default function App() {
         <Routes>
           <Route path="/setup" element={<Setup />} />
           <Route path="/login" element={<Login />} />
+          <Route path="/register" element={<Register />} />
           <Route path="/" element={<WorkspaceGate><Layout /></WorkspaceGate>}>
             <Route index                 element={<Dashboard />}     />
             <Route path="membres"         element={<Membres />}       />
@@ -61,8 +62,8 @@ export default function App() {
             <Route path="caisses"         element={<Banques />}       />
             <Route path="banques"         element={<Navigate to="/caisses" replace />} />
             <Route path="prets"           element={<Prets />}         />
-            <Route path="caisse-sociale"  element={<CaisseSociale />} />
-            <Route path="fond-assurance"  element={<FondAssurance />} />
+            <Route path="caisse-sociale"  element={<Navigate to="/social" replace />} />
+            <Route path="fond-assurance"  element={<Navigate to="/social" replace />} />
             <Route path="caisse"          element={<Caisse />}        />
             <Route path="sanctions"       element={<Sanctions />}     />
             <Route path="rapports"        element={<Rapports />}      />
@@ -79,6 +80,7 @@ export default function App() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>
+      <Toast />
     </AppProvider>
   );
 }

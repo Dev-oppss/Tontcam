@@ -611,7 +611,7 @@ function RapportSeance({ reunion, transactions, membres, onClose }) {
             <FileText size={18} className="text-primary-600"/>
             <h3 className="font-bold text-gray-900">Procès-verbal — Réunion N°{reunion.numero}</h3>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 no-print">
             <button onClick={() => window.print()} className="btn-secondary text-xs py-1.5">
               <Printer size={13}/> Imprimer
             </button>

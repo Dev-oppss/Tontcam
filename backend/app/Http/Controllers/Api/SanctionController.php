@@ -2,131 +2,104 @@
 
 namespace App\Http\Controllers\Api;
 
-use App\Models\Caisse;
 use App\Models\Membre;
 use App\Models\SanctionMembre;
 use App\Models\TypeSanction;
+use App\Services\AccessScopeService;
 use App\Services\CaisseService;
 use App\Services\SanctionService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use App\Http\Controllers\Controller;
 
-/**
- * Gestion des sanctions.
- *
- * Règles couvertes :
- *   RG-SAN-001–005 : Catalogue des sanctions (modes fixe, pourcentage, journalier).
- *   RG-SAN-007–009 : Application manuelle avec ajustement ±50%.
- *   RG-SAN-010–011 : Annulation avant paiement, avec motif obligatoire.
- *   RG-SAN-012–014 : Règlement des sanctions (bulletin de gain ou versement direct).
- */
-class SanctionController extends CrudController
+class SanctionController extends Controller
 {
-    protected string $model = SanctionMembre::class;
-    protected array $filterable = ['association_id', 'membre_id', 'statut'];
+    public function __construct(
+        private AccessScopeService $scope,
+        private SanctionService $service,
+        private CaisseService $caisseService,
+    ) {}
 
-    /**
-     * Application d'une sanction.
-     * RG-SAN-008 : champs obligatoires membre_sanctionné, type, date, motif, montant, saisie_par.
-     * RG-SAN-009 : ajustement du montant autorisé ±50% par le Président.
-     */
-    public function store(Request $request): JsonResponse
+    public function index(Request $request): JsonResponse
     {
-        $data = $request->validate([
-            'association_id'    => ['required', 'uuid'],
-            'membre_id'         => ['required', 'uuid'],
-            'type_sanction_id'  => ['required', 'uuid'],
-            'motif'             => ['required', 'string'],
-            'montant_ajuste'    => ['nullable', 'numeric', 'min:0'],
-        ]);
-
-        $typeSanction = TypeSanction::findOrFail($data['type_sanction_id']);
-
-        // RG-SAN-009 : vérifier que l'ajustement est dans la limite ±50%
-        if (isset($data['montant_ajuste'])) {
-            $montantTheorique = (float) ($typeSanction->montant_fixe ?? 0);
-            $limite           = $montantTheorique * 0.5;
-            $diff             = abs($data['montant_ajuste'] - $montantTheorique);
-
-            if ($montantTheorique > 0 && $diff > $limite) {
-                return response()->json([
-                    'message' => 'Le montant ajusté ne peut pas dépasser ±50% du montant théorique.',
-                ], 422);
-            }
+        $query = $this->scope->scopeAssociation(SanctionMembre::query())->with('membre', 'type');
+        if ($request->filled('statut')) {
+            $query->where('statut', $request->statut);
+        }
+        if ($request->filled('membre_id')) {
+            $query->where('membre_id', $request->membre_id);
         }
 
-        $sanction = app(SanctionService::class)->appliquer(
-            $data['association_id'],
-            $data['membre_id'],
-            $typeSanction,
-            $data['motif'],
-            array_merge(
-                $request->except(['association_id', 'membre_id', 'type_sanction_id', 'motif']),
-                ['saisie_par' => $request->user()?->id]
-            )
-        );
+        return response()->json($query->latest()->paginate($request->integer('per_page', 25)));
+    }
 
-        return response()->json($sanction, 201);
+    public function store(Request $request): JsonResponse
+    {
+        $this->authorize('create', SanctionMembre::class);
+        $data = $request->validate([
+            'membre_id' => ['required', 'uuid'],
+            'type_sanction_id' => ['required', 'uuid'],
+            'motif' => ['required', 'string'],
+            'reunion_id' => ['nullable', 'uuid'],
+        ]);
+
+        $membre = Membre::where('association_id', $this->scope->associationId())->findOrFail($data['membre_id']);
+        $type = TypeSanction::where('association_id', $this->scope->associationId())->findOrFail($data['type_sanction_id']);
+        $reunion = $data['reunion_id'] ?? null ? \App\Models\Reunion::findOrFail($data['reunion_id']) : null;
+
+        $sanction = $this->service->appliquerManuelle($membre, $type, $data['motif'], $request->user(), $reunion);
+
+        return response()->json($sanction->load('type'), 201);
+    }
+
+    public function show(string $id): JsonResponse
+    {
+        return response()->json($this->scope->scopeAssociation(SanctionMembre::query())->with('membre', 'type')->findOrFail($id));
     }
 
     public function update(Request $request, string $id): JsonResponse
     {
-        $path = $request->path();
+        $sanction = $this->scope->scopeAssociation(SanctionMembre::query())->findOrFail($id);
 
-        // RG-SAN-012–014 : Paiement de la sanction via caisse
-        if (str_ends_with($path, 'payer')) {
-            $data     = $request->validate(['caisse_id' => ['nullable', 'uuid']]);
-            $sanction = SanctionMembre::findOrFail($id);
-
-            if ($sanction->statut === 'payee') {
-                return response()->json(['message' => 'Cette sanction est déjà payée.'], 422);
-            }
-
-            $caisse = isset($data['caisse_id'])
-                ? Caisse::findOrFail($data['caisse_id'])
-                : Caisse::where('association_id', $sanction->association_id)->firstOrFail();
-
-            $tx = app(CaisseService::class)->entree(
-                $caisse,
-                (float) $sanction->montant,
-                'Paiement sanction',
-                [
-                    'reference_type' => SanctionMembre::class,
-                    'reference_id'   => $sanction->id,
-                    'created_by'     => $request->user()?->id,
-                ]
-            );
-
-            $sanction->forceFill([
-                'statut'         => 'payee',
-                'payee_at'       => now(),
-                'transaction_id' => $tx->id,
-            ])->save();
-
-            return response()->json($sanction->refresh());
+        if (in_array($sanction->statut, ['payee', 'annulee'], true)) {
+            return response()->json(['message' => 'Sanction déjà clôturée.'], 422);
         }
 
-        // RG-SAN-010–011 : Annulation avant paiement, motif obligatoire
-        if (str_ends_with($path, 'annuler')) {
-            $data     = $request->validate(['motif_annulation' => ['required', 'string']]);
-            $sanction = SanctionMembre::findOrFail($id);
-
-            if ($sanction->statut === 'payee') {
-                return response()->json([
-                    'message' => 'Impossible d\'annuler une sanction déjà payée.',
-                ], 422);
-            }
-
-            $sanction->forceFill([
-                'statut'           => 'annulee',
+        $data = $request->validate(['statut' => ['sometimes', 'in:annulee'], 'motif_annulation' => ['required_if:statut,annulee', 'string']]);
+        if (($data['statut'] ?? null) === 'annulee') {
+            $sanction->update([
+                'statut' => 'annulee',
+                'annulee_par' => $request->user()->id,
+                'annulee_at' => now(),
                 'motif_annulation' => $data['motif_annulation'],
-                'annulee_par'      => $request->user()?->id,
-                'annulee_at'       => now(),
-            ])->save();
-
-            return response()->json($sanction->refresh());
+            ]);
         }
 
-        return parent::update($request, $id);
+        return response()->json($sanction);
+    }
+
+    /**
+     * Paiement direct de la sanction (hors retenue sur gain) — encaissement en caisse.
+     */
+    public function payer(Request $request, string $id): JsonResponse
+    {
+        $sanction = $this->scope->scopeAssociation(SanctionMembre::query())->findOrFail($id);
+        $this->authorize('update', $sanction);
+        if ($sanction->statut !== 'due') {
+            return response()->json(['message' => 'Cette sanction n\'est pas due.'], 422);
+        }
+
+        $data = $request->validate(['caisse_id' => ['sometimes', 'nullable', 'uuid']]);
+        $caisse = !empty($data['caisse_id'])
+            ? \App\Models\Caisse::findOrFail($data['caisse_id'])
+            : \App\Models\Caisse::where('association_id', $this->scope->associationId())->orderBy('created_at')->firstOrFail();
+
+        $transaction = $this->caisseService->entree($caisse, (float) $sanction->montant, "Paiement sanction — {$sanction->motif}", [
+            'reference_type' => 'sanction_membre', 'reference_id' => $sanction->id, 'created_by' => $request->user()->id, 'valide_par' => $request->user()->id,
+        ]);
+
+        $sanction->update(['statut' => 'payee', 'payee_at' => now(), 'transaction_id' => $transaction->id]);
+
+        return response()->json($sanction);
     }
 }

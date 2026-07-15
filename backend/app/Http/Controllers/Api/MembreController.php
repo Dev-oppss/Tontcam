@@ -3,168 +3,170 @@
 namespace App\Http\Controllers\Api;
 
 use App\Models\Membre;
-use App\Models\Pret;
-use App\Models\SanctionMembre;
-use App\Models\TontinePart;
-use App\Services\DocumentSignatureService;
-use App\Services\SimplePdfService;
+use App\Services\AccessScopeService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Gate;
+use App\Http\Controllers\Controller;
 
-/**
- * Gestion des membres de l'association.
- *
- * Règles couvertes :
- *   RG-MBR-001 : Champs obligatoires à la création (nom, prénom, contact).
- *   RG-MBR-002 : Unicité du numéro de téléphone par association.
- *   RG-MBR-003 : Statuts valides : actif, suspendu, exclu, en_attente.
- *   RG-MBR-006 : Suppression interdite si transactions/parts existent → géré par CrudController::destroy().
- *   RG-MBR-007 : Date d'adhésion ≤ date du jour.
- *   RG-SEC-006 : Un MEMBRE ne consulte que ses propres données (géré par middleware/policy).
- */
-class MembreController extends CrudController
+class MembreController extends Controller
 {
-    protected string $model = Membre::class;
+    public function __construct(private AccessScopeService $scope) {}
 
-    /** Filtres autorisés sur l'index */
-    protected array $filterable = ['association_id', 'statut'];
-
-    public function show(Request $request, string $id): JsonResponse
+    public function index(Request $request): JsonResponse
     {
-        $membre = Membre::findOrFail($id);
+        $this->authorize('viewAny', Membre::class);
+        $query = $this->scope->scopeAssociation(Membre::query());
 
-        if (str_ends_with($request->path(), 'situation')) {
-            return response()->json([
-                'membre' => $membre,
-                'parts' => TontinePart::where('membre_id', $membre->id)->get(),
-                'sanctions' => SanctionMembre::where('membre_id', $membre->id)->orderByDesc('created_at')->get(),
-                'prets' => Pret::where('emprunteur_id', $membre->id)->orderByDesc('created_at')->get(),
-            ]);
+        if ($request->filled('statut')) {
+            $query->where('statut', $request->statut);
+        }
+        if ($request->filled('q')) {
+            $q = $request->q;
+            $query->where(fn ($w) => $w->where('nom', 'ilike', "%{$q}%")->orWhere('prenom', 'ilike', "%{$q}%")->orWhere('telephone', 'ilike', "%{$q}%"));
         }
 
-        return response()->json($membre);
+        return response()->json($query->orderBy('nom')->paginate($request->integer('per_page', 25)));
     }
 
-    public function importCsv(Request $request): JsonResponse
-    {
-        Gate::authorize('create', Membre::class);
-        $request->validate(['file' => ['required', 'file', 'mimes:csv,txt']]);
-        $path = $request->file('file')->getRealPath();
-        $rows = array_map('str_getcsv', file($path));
-        $header = array_map('trim', array_shift($rows) ?: []);
-        $count = 0;
-        foreach ($rows as $row) {
-            $data = array_combine($header, $row);
-            if (! $data) continue;
-            Membre::create($data);
-            $count++;
-        }
-        return response()->json(['imported' => $count]);
-    }
-
-    public function relevePdf(Request $request, string $id): JsonResponse
-    {
-        $membre = Membre::findOrFail($id);
-        Gate::authorize('view', $membre);
-        $pdf = app(SimplePdfService::class)->render([
-            $membre->nom.' '.$membre->prenom,
-            'Statut: '.$membre->statut,
-            'Telephone: '.$membre->telephone,
-        ], 'Releve membre');
-        $path = storage_path('app/public/releves/'.$membre->id.'.pdf');
-        if (! is_dir(dirname($path))) mkdir(dirname($path), 0777, true);
-        file_put_contents($path, $pdf);
-        app(DocumentSignatureService::class)->sign($path, [
-            'type' => 'releve_membre',
-            'membre_id' => $membre->id,
-        ]);
-        return response()->json(['pdf_url' => 'storage/releves/'.$membre->id.'.pdf']);
-    }
-
-    /**
-     * RG-MBR-001, RG-MBR-002, RG-MBR-007
-     */
     public function store(Request $request): JsonResponse
     {
-        Gate::authorize('create', Membre::class);
+        $this->authorize('create', Membre::class);
         $data = $request->validate([
-            'association_id'  => ['required', 'uuid'],
-            'nom'             => ['required', 'string', 'max:100'],
-            'prenom'          => ['required', 'string', 'max:100'],
-            'telephone'       => ['required', 'string', 'max:30'],
-            'email'           => ['nullable', 'email', 'max:150'],
-            'date_adhesion'   => ['required', 'date', 'before_or_equal:today'],
-            'statut'          => ['sometimes', 'in:actif,suspendu,exclu,en_attente'],
+            'nom' => ['required', 'string', 'max:100'],
+            'prenom' => ['required', 'string', 'max:100'],
+            'date_naissance' => ['nullable', 'date'],
+            'sexe' => ['nullable', 'in:M,F,A'],
+            'telephone' => ['required', 'string', 'max:30'],
+            'email' => ['nullable', 'email'],
+            'adresse' => ['nullable', 'string'],
+            'ville' => ['nullable', 'string', 'max:100'],
+            'profession' => ['nullable', 'string', 'max:150'],
+            'date_adhesion' => ['nullable', 'date', 'before_or_equal:today'],
         ]);
 
-        // RG-MBR-002 : unicité du téléphone dans l'association
-        if (! empty($data['telephone'])) {
-            $exists = Membre::where('association_id', $data['association_id'])
-                ->where('telephone', $data['telephone'])
-                ->exists();
-
-            if ($exists) {
-                return response()->json([
-                    'message' => 'Ce numéro de téléphone est déjà utilisé dans cette association.',
-                ], 422);
-            }
-        }
+        $data['association_id'] = $this->scope->associationId();
+        $data['statut'] = 'en_attente';
 
         $membre = Membre::create($data);
+
         return response()->json($membre, 201);
     }
 
     /**
-     * RG-MBR-003, RG-MBR-004, RG-MBR-005
-     * Empêche de modifier le statut vers EXCLU directement via update —
-     * l'exclusion doit passer par une route dédiée (/membres/{id}/exclure).
+     * Import CSV en masse (RG-MBR — colonnes attendues : nom,prenom,telephone,email,date_adhesion).
      */
-    public function update(Request $request, string $id): JsonResponse
+    public function importCsv(Request $request): JsonResponse
     {
-        $membre = Membre::findOrFail($id);
-        Gate::authorize('update', $membre);
+        $request->validate(['fichier' => ['required', 'file', 'mimes:csv,txt']]);
 
-        // RG-MBR-005 : le statut exclu est irréversible
-        if ($membre->statut === 'exclu') {
-            return response()->json([
-                'message' => 'Un membre exclu ne peut plus être modifié.',
-            ], 422);
+        $associationId = $this->scope->associationId();
+        $handle = fopen($request->file('fichier')->getRealPath(), 'r');
+        $headers = fgetcsv($handle);
+        $crees = 0;
+        $erreurs = [];
+
+        while (($row = fgetcsv($handle)) !== false) {
+            $ligne = array_combine($headers, $row);
+            try {
+                Membre::create([
+                    'association_id' => $associationId,
+                    'nom' => $ligne['nom'],
+                    'prenom' => $ligne['prenom'],
+                    'telephone' => $ligne['telephone'],
+                    'email' => $ligne['email'] ?? null,
+                    'date_adhesion' => $ligne['date_adhesion'] ?? now()->toDateString(),
+                    'statut' => 'en_attente',
+                ]);
+                $crees++;
+            } catch (\Throwable $e) {
+                $erreurs[] = ['ligne' => $ligne, 'erreur' => $e->getMessage()];
+            }
         }
+        fclose($handle);
 
-        $data = $request->validate([
-            'nom'           => ['sometimes', 'string', 'max:100'],
-            'prenom'        => ['sometimes', 'string', 'max:100'],
-            'telephone'     => ['sometimes', 'string', 'max:30'],
-            'email'         => ['sometimes', 'nullable', 'email', 'max:150'],
-            'date_adhesion' => ['sometimes', 'date', 'before_or_equal:today'],
-            'statut'        => ['sometimes', 'in:actif,suspendu,en_attente'],
-        ]);
+        return response()->json(['crees' => $crees, 'erreurs' => $erreurs], 201);
+    }
 
-        $membre->fill($data)->save();
-        return response()->json($membre->refresh());
+    public function show(string $id): JsonResponse
+    {
+        $membre = $this->scope->scopeAssociation(Membre::query())
+            ->with(['mandats.poste', 'parts.tontine', 'prets', 'sanctions.type', 'assurances'])
+            ->findOrFail($id);
+        $this->authorize('view', $membre);
+
+        return response()->json($membre);
     }
 
     /**
-     * RG-MBR-005 : L'exclusion est irréversible.
-     * Endpoint dédié : PUT /membres/{id}/exclure
+     * Situation financière complète du membre (RG-MBR-016).
      */
-    public function exclure(Request $request, string $id): JsonResponse
+    public function situation(string $id): JsonResponse
     {
-        $data = $request->validate(['motif' => ['required', 'string']]);
+        $membre = $this->scope->scopeAssociation(Membre::query())->findOrFail($id);
 
-        $membre = Membre::findOrFail($id);
-        Gate::authorize('delete', $membre);
+        return response()->json([
+            'membre' => $membre,
+            'cotisations' => \App\Models\CotisationTontine::where('membre_id', $membre->id)->latest()->limit(50)->get(),
+            'prets' => $membre->prets()->with('echeances')->get(),
+            'sanctions' => $membre->sanctions()->with('type')->get(),
+            'gains' => \App\Models\BulletinGain::where('gagnant_membre_id', $membre->id)->get(),
+            'score' => $this->calculerScore($membre),
+        ]);
+    }
 
-        if ($membre->statut === 'exclu') {
-            return response()->json(['message' => 'Ce membre est déjà exclu.'], 422);
+    /**
+     * Score_membre = (Taux_participation × 0.4) + (Taux_régularité × 0.6) (cahier des charges 5.4).
+     */
+    private function calculerScore(Membre $membre): array
+    {
+        $reunionsTenues = \App\Models\Presence::where('membre_id', $membre->id)->count();
+        $reunionsPresent = \App\Models\Presence::where('membre_id', $membre->id)->where('statut', 'present')->count();
+        $tauxParticipation = $reunionsTenues > 0 ? round(($reunionsPresent / $reunionsTenues) * 100, 1) : 0;
+
+        $cotisationsDues = \App\Models\CotisationTontine::where('membre_id', $membre->id)->count();
+        $cotisationsATemps = \App\Models\CotisationTontine::where('membre_id', $membre->id)->where('statut', 'payee')->count();
+        $tauxRegularite = $cotisationsDues > 0 ? round(($cotisationsATemps / $cotisationsDues) * 100, 1) : 0;
+
+        return [
+            'taux_participation' => $tauxParticipation,
+            'taux_regularite' => $tauxRegularite,
+            'score' => round(($tauxParticipation * 0.4) + ($tauxRegularite * 0.6), 1),
+        ];
+    }
+
+    public function update(Request $request, string $id): JsonResponse
+    {
+        $membre = $this->scope->scopeAssociation(Membre::query())->findOrFail($id);
+        $this->authorize('update', $membre);
+
+        $membre->update($request->validate([
+            'nom' => ['sometimes', 'string', 'max:100'],
+            'prenom' => ['sometimes', 'string', 'max:100'],
+            'telephone' => ['sometimes', 'string', 'max:30'],
+            'email' => ['sometimes', 'nullable', 'email'],
+            'adresse' => ['sometimes', 'nullable', 'string'],
+            'profession' => ['sometimes', 'nullable', 'string', 'max:150'],
+            'statut' => ['sometimes', 'in:actif,suspendu,exclu,en_attente'],
+            'motif_suspension' => ['sometimes', 'nullable', 'string'],
+            'motif_exclusion' => ['sometimes', 'nullable', 'string'],
+        ]));
+
+        return response()->json($membre);
+    }
+
+    public function destroy(string $id): JsonResponse
+    {
+        $membre = $this->scope->scopeAssociation(Membre::query())->findOrFail($id);
+        $this->authorize('delete', $membre);
+
+        // RG-MBR-006 : suppression bloquée si des transactions existent déjà
+        $aDesTransactions = $membre->prets()->exists() || $membre->sanctions()->exists() || $membre->parts()->exists();
+        if ($aDesTransactions) {
+            return response()->json(['message' => 'Suppression impossible : ce membre a un historique financier. Utilisez le statut « exclu ».'], 422);
         }
 
-        $membre->forceFill([
-            'statut'           => 'exclu',
-            'motif_exclusion'   => $data['motif'],
-        ])->save();
+        $membre->delete();
 
-        return response()->json($membre->refresh());
+        return response()->json(['deleted' => true]);
     }
 }

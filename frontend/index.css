@@ -89,8 +89,8 @@
   .sidebar-link-inactive { @apply sidebar-link text-white/65; }
   .sidebar-link-inactive:hover { color:#fff; background: rgba(255,255,255,.07); }
 
-  .modal-overlay { @apply fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-3 md:p-6; left:0; background: rgba(11,13,18,.6); backdrop-filter: blur(10px); }
-  .modal-box { @apply w-full flex flex-col overflow-hidden relative; max-width:680px; max-height:calc(100dvh - 3rem); border-radius:24px; background: rgba(255,255,255,.4); backdrop-filter: blur(34px) saturate(180%); border:1px solid rgba(255,255,255,.6); box-shadow: 0 30px 90px rgba(11,13,18,.3); margin: 1.5rem auto; }
+  .modal-overlay { @apply fixed inset-0 z-50 flex items-center justify-center overflow-y-auto p-3 md:p-4; left:0; background: rgba(8,10,16,.86); backdrop-filter: blur(10px); }
+  .modal-box { @apply w-full flex flex-col overflow-hidden relative; max-width:680px; max-height:calc(100dvh - 8rem); border-radius:24px; background: rgba(255,255,255,.4); backdrop-filter: blur(34px) saturate(180%); border:1px solid rgba(255,255,255,.6); box-shadow: 0 30px 90px rgba(11,13,18,.3); margin:auto; }
   .modal-box.wide { max-width: 100rem; }
   .modal-body { @apply flex-1 min-h-0 overflow-y-auto scroll-py-4; }
 
@@ -120,10 +120,10 @@
 
 main .rounded-xl, main .rounded-2xl, main .rounded-3xl { border-radius: 18px !important; }
 
-@keyframes fadeUp { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
+@keyframes fadeUp { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:none} }
 @keyframes fadeIn { from{opacity:0} to{opacity:1} }
-@keyframes scaleIn { from{opacity:0;transform:scale(.97)} to{opacity:1;transform:scale(1)} }
-@keyframes slideRight { from{opacity:0;transform:translateX(-10px)} to{opacity:1;transform:translateX(0)} }
+@keyframes scaleIn { from{opacity:0;transform:scale(.97)} to{opacity:1;transform:none} }
+@keyframes slideRight { from{opacity:0;transform:translateX(-10px)} to{opacity:1;transform:none} }
 @keyframes shimmer { 0%{background-position:-200% 0} 100%{background-position:200% 0} }
 @keyframes floatSlow { 0%,100%{transform:translate(0,0)} 50%{transform:translate(12px,-14px)} }
 
@@ -146,4 +146,32 @@ main .rounded-xl, main .rounded-2xl, main .rounded-3xl { border-radius: 18px !im
   animation: floatSlow 14s ease-in-out infinite;
 }
 
-@media print { .no-print{display:none!important} .card{box-shadow:none!important;border:1px solid #e5e7eb!important} }
+@media print {
+  .no-print { display: none !important; }
+  html, body { background: #fff !important; }
+  .app-shell { display: block !important; height: auto !important; }
+  .app-shell::before { display: none !important; }
+  .print-full { overflow: visible !important; }
+  .print-area {
+    overflow: visible !important; height: auto !important; padding: 0 !important;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .print-area .max-w-\[1560px\] { max-width: 100% !important; }
+  .card { box-shadow: none !important; border: 1px solid #e5e7eb !important; break-inside: avoid; }
+  table { break-inside: auto; }
+  tr { break-inside: avoid; }
+  * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+
+  /* Impression du procès-verbal (modale) : masque tout le reste de l'app */
+  body:has(#rapport-print) .app-shell { display: none !important; }
+  body:has(#rapport-print) .modal-overlay {
+    position: static !important; background: none !important; backdrop-filter: none !important;
+    padding: 0 !important; display: block !important; overflow: visible !important;
+  }
+  body:has(#rapport-print) .modal-box {
+    max-width: 100% !important; max-height: none !important; overflow: visible !important;
+    background: #fff !important; backdrop-filter: none !important; box-shadow: none !important;
+    border: none !important; border-radius: 0 !important; margin: 0 !important;
+  }
+  #rapport-print { overflow: visible !important; }
+}

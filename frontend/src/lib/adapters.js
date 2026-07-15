@@ -1,0 +1,284 @@
+/**
+ * Traduit les objets renvoyés par l'API Laravel (snake_case, noms complets)
+ * vers la forme attendue par les pages du frontend (camelCase, héritée du mock),
+ * et inversement pour les payloads envoyés. Ça évite de toucher aux 15 pages.
+ */
+
+// ── Membre ──────────────────────────────────────────────────────
+export const membreFromApi = (m) => !m ? null : ({
+  id: m.id,
+  matricule: m.matricule,
+  nom: m.nom,
+  prenom: m.prenom,
+  sexe: m.sexe,
+  telephone: m.telephone,
+  telephone2: m.telephone2,
+  email: m.email,
+  adresse: m.adresse,
+  ville: m.ville,
+  profession: m.profession,
+  dateAdhesion: m.date_adhesion,
+  statut: m.statut,
+  estAssure: m.est_assure,
+  numero: m.matricule || m.id?.slice(0, 8),
+});
+
+export const membreToApi = (m) => ({
+  nom: m.nom,
+  prenom: m.prenom,
+  sexe: m.sexe,
+  telephone: m.telephone,
+  email: m.email || null,
+  adresse: m.adresse || null,
+  ville: m.ville || null,
+  profession: m.profession || null,
+  date_adhesion: m.dateAdhesion || undefined,
+  statut: m.statut,
+  motif_suspension: m.motifSuspension,
+  motif_exclusion: m.motifExclusion,
+});
+
+// ── Postes & mandats ───────────────────────────────────────────
+export const mandatFromApi = (m) => !m ? null : ({
+  id: m.id,
+  idPoste: m.poste_id,
+  idMembre: m.membre_id,
+  poste: m.poste?.libelle,
+  nomMembre: m.membre ? `${m.membre.nom} ${m.membre.prenom}` : undefined,
+  dateDebut: m.date_debut,
+  dateFin: m.date_fin,
+});
+
+export const posteFromApi = (p) => !p ? null : ({
+  id: p.id,
+  libelle: p.libelle,
+  code: p.code,
+  estBureau: p.est_bureau,
+  estObligatoire: p.est_obligatoire,
+  mandats: (p.mandats || []).map(mandatFromApi),
+});
+
+// ── Tontine ─────────────────────────────────────────────────────
+export const tontineFromApi = (t) => !t ? null : ({
+  id: t.id,
+  nom: t.libelle,
+  description: t.description,
+  cotisation: Number(t.montant_part),
+  typeAttribution: t.mode_attribution === 'tirage_sort' ? 'tirage' : t.mode_attribution,
+  avalisteRequis: t.exige_avaliste,
+  pretAutorise: t.pret_autorise,
+  miseMinEnchere: Number(t.mise_min_enchere || 0),
+  optionSurplus: t.option_surplus,
+  statut: t.statut === 'active' ? 'active' : t.statut,
+  totalParts: t.parts_count ?? t.parts?.length ?? 0,
+  idCaisse: t.caisse_id,
+  dateDebut: t.date_debut,
+});
+
+export const tontineToApi = (t) => ({
+  libelle: t.nom,
+  description: t.description || null,
+  montant_part: Number(t.cotisation),
+  mode_attribution: t.typeAttribution === 'tirage' ? 'tirage_sort' : t.typeAttribution,
+  nb_parts_total: Number(t.totalParts || t.nbPartsTotal || 1),
+  exige_avaliste: !!t.avalisteRequis,
+  pret_autorise: !!t.pretAutorise,
+  mise_min_enchere: t.miseMinEnchere ?? undefined,
+  option_surplus: t.optionSurplus,
+  date_debut: t.dateDebut || undefined,
+  caisse_id: t.idCaisse || undefined,
+});
+
+// ── Part de tontine (membresParTontine) ────────────────────────
+export const partFromApi = (p) => !p ? null : ({
+  id: p.id,
+  idTontine: p.tontine_id,
+  idMembre: p.membre_id,
+  numeroPart: p.numero_part,
+  nombreParts: 1, // le backend modélise chaque part individuellement (RG-TON parts multiples)
+  ordreRotation: p.ordre_rotation,
+  dateGainCalendrier: p.date_gain_calendrier,
+  idAvaliste: p.avaliste_id,
+  statut: p.statut === 'disponible' ? 'actif' : p.statut,
+  dateAdhesion: p.created_at,
+});
+
+export const partToApi = (p) => ({
+  membre_id: p.idMembre,
+  numero_part: Number(p.numeroPart || p.numero || 1),
+  ordre_rotation: p.ordreRotation ?? undefined,
+  date_gain_calendrier: p.dateGainCalendrier || undefined,
+  avaliste_id: p.idAvaliste || undefined,
+});
+
+// ── Réunion ─────────────────────────────────────────────────────
+export const reunionFromApi = (r) => !r ? null : ({
+  id: r.id,
+  numReunion: r.numero,
+  type: r.type,
+  date: r.date_reunion,
+  heureDebut: r.heure_debut,
+  lieu: r.lieu,
+  statutReunion: r.statut === 'ouverte' ? 'en_cours' : r.statut === 'cloturee' ? 'cloturee' : 'planifiee',
+  quorumRequis: r.quorum_requis,
+  quorumAtteint: r.quorum_atteint,
+  pointsOrdreJour: (r.ordre_du_jour || []).map((it) => ({
+    id: it.id,
+    titre: it.rubrique?.libelle || it.libelle_libre,
+    type: it.type || 'divers',
+    description: it.contenu_rapport,
+    statut: it.rapport_valide ? 'traite' : 'prevu',
+    idRapporteur: it.rapporteur_id,
+  })),
+  signatures: (r.signataires || []).map((s) => ({ idMembre: s.membre_id, nom: s.membre?.nom, role: s.role_signature, signeLe: s.signed_at })),
+});
+
+export const reunionToApi = (r) => ({
+  type: r.type || 'ordinaire',
+  date_reunion: r.date,
+  heure_debut: r.heureDebut || '18:00',
+  lieu: r.lieu,
+  est_domicile_membre: !!r.estDomicileMembre,
+  hote_membre_id: r.idHote || undefined,
+  quorum_requis: r.quorumRequis ?? undefined,
+});
+
+// ── Prêt ────────────────────────────────────────────────────────
+export const pretFromApi = (p) => !p ? null : ({
+  id: p.id,
+  idMembre: p.emprunteur_id,
+  nomMembre: p.emprunteur ? `${p.emprunteur.nom} ${p.emprunteur.prenom}` : undefined,
+  idCaisse: p.caisse_id,
+  montantPret: Number(p.montant_principal),
+  tauxInteret: Number(p.taux_interet_mensuel) * 100,
+  nbEcheances: p.nb_echeances,
+  montantInteret: Number(p.interet_total),
+  montantTotal: Number(p.montant_total_du),
+  montantRembourse: Number(p.montant_rembourse),
+  resteAPayer: Number(p.capital_restant),
+  datePret: p.date_debut || p.date_demande,
+  statut: mapStatutPret(p.statut),
+  echeances: (p.echeances || []).map((e) => ({
+    id: e.id,
+    numero: e.numero_echeance,
+    date: e.date_echeance,
+    montantTotal: Number(e.montant_total),
+    montantVerse: Number(e.montant_verse),
+    statut: e.statut,
+  })),
+});
+
+function mapStatutPret(s) {
+  return { demande: 'en_attente', en_attente_validation: 'en_attente', approuve: 'approuve', en_cours: 'en_cours', en_retard: 'en_retard', defaut: 'defaut', solde: 'rembourse', refuse: 'refuse' }[s] || s;
+}
+
+export const pretToApi = (p) => ({
+  caisse_id: p.idCaisse,
+  emprunteur_id: p.idMembre,
+  montant_principal: Number(p.montantPret),
+  nb_echeances: Number(p.nbEcheances || p.dureeMois || 12),
+  avaliste_id: p.idAvaliste || undefined,
+  notes: p.notes || undefined,
+});
+
+// ── Sanction ────────────────────────────────────────────────────
+export const sanctionFromApi = (s) => !s ? null : ({
+  id: s.id,
+  idMembre: s.membre_id,
+  nomMembre: s.membre ? `${s.membre.nom} ${s.membre.prenom}` : undefined,
+  typeSanction: s.type?.code || s.type_sanction_id,
+  motif: s.motif,
+  montant: Number(s.montant),
+  numReunion: s.reunion_id,
+  dateSanction: s.created_at,
+  statut: s.statut === 'due' ? 'impayee' : s.statut === 'payee' ? 'payee' : s.statut,
+});
+
+export const typeSanctionFromApi = (t) => !t ? null : ({
+  id: t.id,
+  code: t.code || t.id,
+  libelle: t.libelle,
+  montantFixe: Number(t.montant_fixe || 0),
+  modeCalcul: t.mode_calcul,
+  estAutomatique: t.est_automatique,
+});
+
+// ── Aide sociale (FondAssurance) ───────────────────────────────
+export const aideFromApi = (a) => !a ? null : ({
+  id: a.id,
+  idMembre: a.membre_id,
+  nomMembre: a.membre ? `${a.membre.nom} ${a.membre.prenom}` : undefined,
+  typeEvenement: a.type_aide?.type_evenement || a.type_aide_id,
+  description: a.description,
+  dateEvenement: a.date_evenement,
+  montantAide: Number(a.montant_accorde || a.montant_demande || 0),
+  statut: a.statut === 'versee' ? 'verse' : a.statut,
+});
+
+// ── Caisses (banques) ──────────────────────────────────────────
+export const caisseFromApi = (c) => !c ? null : ({
+  id: c.id,
+  nom: c.libelle,
+  type: c.type,
+  totalSolde: Number(c.solde_actuel),
+  soldeInitial: Number(c.solde_initial),
+  pretAutorise: c.pret_autorise,
+  tauxInteret: Number(c.taux_interet_mensuel || 0) * 100,
+  statut: c.actif ? 'active' : 'inactive',
+  dateCreation: c.date_ouverture || c.created_at,
+});
+
+export const caisseToApi = (c) => ({
+  libelle: c.nom,
+  description: c.description || null,
+  type: c.type || 'autre',
+  solde_initial: Number(c.soldeInitial || 0),
+  pret_autorise: !!c.pretAutorise,
+  taux_interet_mensuel: c.tauxInteret ? Number(c.tauxInteret) / 100 : undefined,
+});
+
+export const transactionFromApi = (t) => !t ? null : ({
+  id: t.id,
+  idCaisse: t.caisse_id,
+  date: t.date_transaction,
+  type: t.type === 'entree' ? 'entree' : 'sortie',
+  montant: Number(t.montant),
+  entree: t.type === 'entree' ? Number(t.montant) : 0,
+  sortie: t.type !== 'entree' ? Number(t.montant) : 0,
+  libelle: t.libelle,
+  modePaiement: t.mode_paiement,
+});
+
+// ── Utilisateurs ────────────────────────────────────────────────
+export const utilisateurFromApi = (u) => !u ? null : ({
+  id: u.id,
+  nomUtilisateur: u.email,
+  email: u.email,
+  idMembre: u.membre_id,
+  nomMembre: u.membre ? `${u.membre.nom} ${u.membre.prenom}` : undefined,
+  role: u.role,
+  statut: u.actif ? 'actif' : 'inactif',
+  derniereConnexion: u.derniere_connexion || '—',
+});
+
+// ── Cycle de tontine → Rotation (forme attendue par Rotations.jsx) ──
+export const cycleToRotation = (c) => !c ? null : ({
+  id: c.id,
+  idTontine: c.tontine_id,
+  numeroTour: c.numero_cycle,
+  beneficiaire: c.gagnant?.membre ? `${c.gagnant.membre.nom} ${c.gagnant.membre.prenom}` : null,
+  idMembre: c.gagnant?.membre_id,
+  montantTotal: Number(c.montant_collecte_reel || c.montant_collecte_prevu || 0),
+  enchere: Number(c.montant_enchere || 0),
+  montantRecu: Number(c.montant_collecte_reel || 0) - Number(c.montant_enchere || 0),
+  dateAttribution: c.date_cloture,
+});
+
+export const enchereFromApi = (e) => !e ? null : ({
+  id: e.id,
+  idRotation: e.cycle_id,
+  idMembre: e.membre_id,
+  nomMembre: e.membre ? `${e.membre.nom} ${e.membre.prenom}` : undefined,
+  montantEnchere: Number(e.montant_offre),
+  dateEnchere: e.created_at,
+});

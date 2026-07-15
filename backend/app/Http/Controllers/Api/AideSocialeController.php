@@ -2,146 +2,137 @@
 
 namespace App\Http\Controllers\Api;
 
-use App\Models\Caisse;
 use App\Models\EvenementSocial;
+use App\Models\Membre;
 use App\Models\TypeAideSociale;
+use App\Services\AccessScopeService;
 use App\Services\CaisseService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use App\Http\Controllers\Controller;
+use RuntimeException;
 
-class AideSocialeController extends CrudController
+class AideSocialeController extends Controller
 {
-    protected string $model = EvenementSocial::class;
-    protected array $filterable = ['association_id', 'membre_id', 'type_aide_id', 'statut'];
+    public function __construct(private AccessScopeService $scope, private CaisseService $caisseService) {}
 
+    public function index(Request $request): JsonResponse
+    {
+        $query = $this->scope->scopeAssociation(EvenementSocial::query())->with('membre', 'typeAide');
+        if ($request->filled('statut')) {
+            $query->where('statut', $request->statut);
+        }
+
+        return response()->json($query->latest()->paginate($request->integer('per_page', 25)));
+    }
+
+    /**
+     * Déclaration d'un événement social — vérifie la limite annuelle par catégorie (RG-SOC-010).
+     */
     public function store(Request $request): JsonResponse
     {
+        $this->authorize('create', EvenementSocial::class);
         $data = $request->validate([
-            'association_id' => ['required', 'uuid'],
             'membre_id' => ['required', 'uuid'],
             'type_aide_id' => ['required', 'uuid'],
-            'description' => ['required', 'string'],
-            'date_evenement' => ['required', 'date', 'before_or_equal:today'],
+            'description' => ['nullable', 'string'],
+            'date_evenement' => ['required', 'date'],
             'montant_demande' => ['nullable', 'numeric', 'min:0'],
-            'pieces_jointes' => ['nullable', 'array'],
-            'document_justificatif' => ['nullable', 'string'],
-            'notes' => ['nullable', 'string'],
+            'pieces_jointes' => ['required', 'array', 'min:1'],
         ]);
 
-        $type = TypeAideSociale::where('id', $data['type_aide_id'])
-            ->where('association_id', $data['association_id'])
-            ->firstOrFail();
+        $membre = Membre::where('association_id', $this->scope->associationId())->findOrFail($data['membre_id']);
+        $type = TypeAideSociale::where('association_id', $this->scope->associationId())->findOrFail($data['type_aide_id']);
 
-        $nbAides = EvenementSocial::where('membre_id', $data['membre_id'])
+        $dejaAccorde = EvenementSocial::where('membre_id', $membre->id)
             ->where('type_aide_id', $type->id)
-            ->where('statut', 'versee')
-            ->whereYear('date_evenement', now()->year)
+            ->whereYear('date_declaration', now()->year)
             ->count();
 
-        if ($nbAides >= (int) ($type->nb_max_par_an ?? 3)) {
-            return response()->json(['message' => 'Limite annuelle atteinte pour ce type d\'aide.'], 422);
+        if ($dejaAccorde >= ($type->nb_max_par_an ?? 3)) {
+            return response()->json(['message' => "Limite de {$type->nb_max_par_an} aide(s)/an atteinte pour cette catégorie."], 422);
         }
 
-        $pieces = $data['pieces_jointes'] ?? [];
-        if (! empty($data['document_justificatif'])) {
-            $pieces[] = $data['document_justificatif'];
+        if ($type->justificatif_requis && empty($data['pieces_jointes'])) {
+            return response()->json(['message' => 'Justificatif obligatoire pour cette catégorie d\'aide.'], 422);
         }
 
-        $event = EvenementSocial::create([
-            'association_id' => $data['association_id'],
-            'membre_id' => $data['membre_id'],
+        $evenement = EvenementSocial::create([
+            'association_id' => $this->scope->associationId(),
+            'membre_id' => $membre->id,
             'type_aide_id' => $type->id,
-            'description' => $data['description'],
+            'description' => $data['description'] ?? null,
             'date_evenement' => $data['date_evenement'],
-            'montant_demande' => $data['montant_demande'] ?? $type->montant_fixe ?? $type->montant_min,
-            'statut' => 'demandee',
-            'pieces_jointes' => array_values($pieces),
-            'notes' => $data['notes'] ?? null,
+            'date_declaration' => now()->toDateString(),
+            'montant_demande' => $data['montant_demande'] ?? $type->montant_fixe,
+            'statut' => 'en_attente',
+            'pieces_jointes' => $data['pieces_jointes'],
         ]);
 
-        return response()->json($event, 201);
+        return response()->json($evenement->load('typeAide'), 201);
+    }
+
+    public function show(string $id): JsonResponse
+    {
+        return response()->json($this->scope->scopeAssociation(EvenementSocial::query())->with('membre', 'typeAide')->findOrFail($id));
     }
 
     public function update(Request $request, string $id): JsonResponse
     {
-        $event = EvenementSocial::findOrFail($id);
-        $path = $request->path();
+        $evenement = $this->scope->scopeAssociation(EvenementSocial::query())->findOrFail($id);
+        $evenement->update($request->validate(['description' => ['sometimes', 'nullable', 'string']]));
 
-        if (str_ends_with($path, 'valider')) {
-            if ($event->statut !== 'demandee') {
-                return response()->json(['message' => 'Cette demande ne peut plus être validée.'], 422);
-            }
+        return response()->json($evenement);
+    }
 
-            $data = $request->validate([
-                'montant_accorde' => ['nullable', 'numeric', 'min:0'],
-            ]);
-
-            $event->forceFill([
-                'statut' => 'approuvee',
-                'montant_accorde' => $data['montant_accorde'] ?? $event->montant_demande,
-                'approuve_par' => $request->user()?->id,
-                'approuve_at' => now(),
-            ])->save();
-
-            return response()->json($event->refresh());
+    public function valider(Request $request, string $id): JsonResponse
+    {
+        $evenement = $this->scope->scopeAssociation(EvenementSocial::query())->findOrFail($id);
+        $this->authorize('update', $evenement);
+        if ($evenement->statut !== 'en_attente') {
+            return response()->json(['message' => 'Cette demande a déjà été traitée.'], 422);
         }
 
-        if (str_ends_with($path, 'verser')) {
-            if ($event->statut === 'versee') {
-                return response()->json(['message' => 'Cette aide est déjà versée.'], 422);
-            }
+        $data = $request->validate(['montant_accorde' => ['required', 'numeric', 'min:0']]);
 
-            if ($event->statut !== 'approuvee') {
-                return response()->json(['message' => 'Cette aide doit être approuvée avant versement.'], 422);
-            }
+        $evenement->update([
+            'statut' => 'approuvee',
+            'montant_accorde' => $data['montant_accorde'],
+            'approuve_par' => $request->user()->id,
+            'approuve_at' => now(),
+        ]);
 
-            $type = $event->typeAide;
-            $caisse = $type->caisse_source_id
-                ? Caisse::findOrFail($type->caisse_source_id)
-                : Caisse::where('association_id', $event->association_id)->where('type', 'tontine')->firstOrFail();
+        return response()->json($evenement);
+    }
 
-            $montant = (float) ($event->montant_accorde ?? $event->montant_demande ?? $type->montant_fixe ?? 0);
+    /**
+     * Versement effectif — sortie de la caisse source de l'aide.
+     */
+    public function verser(Request $request, string $id): JsonResponse
+    {
+        $evenement = $this->scope->scopeAssociation(EvenementSocial::query())->with('typeAide.caisseSource', 'membre')->findOrFail($id);
+        if ($evenement->statut !== 'approuvee') {
+            return response()->json(['message' => 'L\'aide doit être approuvée avant versement.'], 422);
+        }
 
-            if ($caisse->solde_actuel < $montant) {
-                return response()->json(['message' => 'Solde insuffisant dans la caisse.'], 422);
-            }
+        $caisse = $evenement->typeAide->caisseSource;
+        if (! $caisse) {
+            return response()->json(['message' => 'Aucune caisse source configurée pour cette catégorie d\'aide.'], 422);
+        }
 
-            $tx = app(CaisseService::class)->sortie(
+        try {
+            $transaction = $this->caisseService->sortie(
                 $caisse,
-                $montant,
-                "Aide sociale — {$type->libelle}",
-                [
-                    'reference_type' => EvenementSocial::class,
-                    'reference_id' => $event->id,
-                    'created_by' => $request->user()?->id,
-                ]
+                (float) $evenement->montant_accorde,
+                "Aide sociale — {$evenement->membre->nom} {$evenement->membre->prenom}",
+                ['reference_type' => 'evenement_social', 'reference_id' => $evenement->id, 'created_by' => $request->user()->id, 'valide_par' => $request->user()->id]
             );
-
-            $event->forceFill([
-                'statut' => 'versee',
-                'transaction_id' => $tx->id,
-                'date_versement' => now(),
-            ])->save();
-
-            return response()->json($event->refresh());
+        } catch (RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
         }
 
-        if (str_ends_with($path, 'rejeter')) {
-            $data = $request->validate(['motif_refus' => ['required', 'string']]);
+        $evenement->update(['statut' => 'versee', 'transaction_id' => $transaction->id, 'date_versement' => now()]);
 
-            if ($event->statut === 'versee') {
-                return response()->json(['message' => 'Impossible de rejeter une aide déjà versée.'], 422);
-            }
-
-            $event->forceFill([
-                'statut' => 'refusee',
-                'refuse_par' => $request->user()?->id,
-                'motif_refus' => $data['motif_refus'],
-            ])->save();
-
-            return response()->json($event->refresh());
-        }
-
-        return parent::update($request, $id);
+        return response()->json($evenement);
     }
 }

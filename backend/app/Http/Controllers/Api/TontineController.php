@@ -2,190 +2,141 @@
 
 namespace App\Http\Controllers\Api;
 
-use App\Models\CycleTontine;
-use App\Models\TontinePart;
 use App\Models\Tontine;
-use App\Services\BulletinGainService;
-use App\Services\TontineCycleService;
+use App\Models\TontinePart;
+use App\Services\AccessScopeService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use App\Http\Controllers\Controller;
 
-/**
- * Gestion des tontines.
- *
- * Règles couvertes :
- *   RG-TON-001 : Champs obligatoires : libellé, montant/part, mode d'attribution, caisse.
- *   RG-TON-002 : Montant/part immuable après premier cycle.
- *   RG-TON-003 : Nb de parts = nb de cycles.
- *   RG-TON-004 : Modes valides : rotation, tirage_sort, enchere, calendrier.
- *   RG-TON-005 : Suppression interdite si ≥ 1 cycle lancé → clôture uniquement.
- *   RG-TON-006 : Paramètre avaliste configurable par tontine.
- *   RG-CAI-003 : Chaque tontine liée à exactement une caisse TONTINE (immuable).
- */
-class TontineController extends CrudController
+class TontineController extends Controller
 {
-    protected string $model = Tontine::class;
-    protected array $filterable = ['association_id', 'statut', 'mode_attribution'];
+    public function __construct(private AccessScopeService $scope) {}
 
-    /**
-     * RG-TON-001, RG-TON-004, RG-TON-006, RG-CAI-003
-     */
+    public function index(Request $request): JsonResponse
+    {
+        return response()->json(
+            $this->scope->scopeAssociation(Tontine::query())->withCount('parts')->get()
+        );
+    }
+
     public function store(Request $request): JsonResponse
     {
+        $this->authorize('create', Tontine::class);
         $data = $request->validate([
-            'association_id'   => ['required', 'uuid'],
-            'libelle'          => ['required', 'string', 'max:150'],
-            'montant_part'     => ['required', 'numeric', 'min:1'],
+            'libelle' => ['required', 'string', 'max:200'],
+            'description' => ['nullable', 'string'],
+            'montant_part' => ['required', 'numeric', 'min:1'],
             'mode_attribution' => ['required', 'in:rotation,tirage_sort,enchere,calendrier'],
-            'caisse_id'        => ['required', 'uuid'],
-            'avaliste_requis'  => ['sometimes', 'boolean'],
-            'nb_parts_max_par_membre' => ['nullable', 'integer', 'min:1'],
+            'nb_parts_total' => ['required', 'integer', 'min:1'],
+            'exige_avaliste' => ['sometimes', 'boolean'],
+            'pret_autorise' => ['sometimes', 'boolean'],
+            'mise_min_enchere' => ['required_if:mode_attribution,enchere', 'nullable', 'numeric'],
+            'option_surplus' => ['sometimes', 'in:redistribution,mise_en_caisse'],
+            'date_debut' => ['nullable', 'date'],
+            'caisse_id' => ['nullable', 'uuid'],
         ]);
-
-        // RG-CAI-003 : vérifier que la caisse est de type TONTINE
-        $caisse = \App\Models\Caisse::findOrFail($data['caisse_id']);
-        $caisseType = strtolower(trim((string) $caisse->type));
-        if ($caisseType !== 'tontine') {
-            if (! empty($caisse->tontine_id)) {
-                return response()->json([
-                    'message' => 'La caisse associée est déjà liée à une autre tontine.',
-                ], 422);
-            }
-
-            $caisse->forceFill(['type' => 'tontine'])->save();
-        }
-
-        // RG-CAI-003 : une caisse TONTINE ne peut être liée qu'à une seule tontine
-        $dejaLiee = Tontine::where('caisse_id', $data['caisse_id'])->exists();
-        if ($dejaLiee) {
-            return response()->json([
-                'message' => 'Cette caisse est déjà associée à une tontine.',
-            ], 422);
-        }
+        $data['association_id'] = $this->scope->associationId();
+        $data['statut'] = 'en_preparation';
+        $data['created_by'] = $request->user()->id;
 
         $tontine = Tontine::create($data);
+
         return response()->json($tontine, 201);
     }
 
-    public function parts(Request $request, string $id): JsonResponse
+    public function show(string $id): JsonResponse
     {
-        $tontine = Tontine::findOrFail($id);
-        $data = $request->validate([
-            'membre_id' => ['required', 'uuid'],
-            'nombre_parts' => ['sometimes', 'integer', 'min:1'],
-            'avaliste_id' => ['nullable', 'uuid'],
-            'date_gain_calendrier' => ['nullable', 'date'],
-            'notes' => ['nullable', 'string'],
-        ]);
+        $tontine = $this->scope->scopeAssociation(Tontine::query())
+            ->with(['parts.membre', 'parts.avaliste', 'cycles.encherites.membre', 'cycles.gagnant.membre'])
+            ->findOrFail($id);
 
-        $count = max(1, (int) ($data['nombre_parts'] ?? 1));
-        $start = ((int) ($tontine->parts()->max('numero_part') ?? 0)) + 1;
-        $created = [];
-
-        for ($i = 0; $i < $count; $i++) {
-            $created[] = TontinePart::create([
-                'tontine_id' => $tontine->id,
-                'membre_id' => $data['membre_id'],
-                'numero_part' => $start + $i,
-                'ordre_rotation' => $start + $i,
-                'date_gain_calendrier' => $data['date_gain_calendrier'] ?? null,
-                'statut' => 'disponible',
-                'avaliste_id' => $data['avaliste_id'] ?? null,
-                'notes' => $data['notes'] ?? null,
-            ]);
-        }
-
-        return response()->json($created, 201);
+        return response()->json($tontine);
     }
 
-    /**
-     * RG-TON-002 : Montant/part immuable après le premier cycle.
-     * RG-TON-005 : Suppression interdite → clôture.
-     */
     public function update(Request $request, string $id): JsonResponse
     {
-        $tontine = Tontine::findOrFail($id);
-        $path    = $request->path();
+        $tontine = $this->scope->scopeAssociation(Tontine::query())->findOrFail($id);
+        $this->authorize('update', $tontine);
 
-        // ── Clôture (RG-TON-005) ─────────────────────────────────────────
-        if (str_ends_with($path, 'cloturer')) {
-            if ($tontine->statut === 'cloturee') {
-                return response()->json(['message' => 'Cette tontine est déjà clôturée.'], 422);
-            }
+        $tontine->update($request->validate([
+            'libelle' => ['sometimes', 'string', 'max:200'],
+            'description' => ['sometimes', 'nullable', 'string'],
+            'statut' => ['sometimes', 'in:en_preparation,active,suspendue,cloturee'],
+            'pret_autorise' => ['sometimes', 'boolean'],
+        ]));
 
-            $tontine->forceFill([
-                'statut'       => 'cloturee',
-                'date_cloture' => now(),
-            ])->save();
-
-            return response()->json($tontine->refresh());
-        }
-
-        if (str_ends_with($path, 'bulletin')) {
-            $cycle = $tontine->cycles()
-                ->whereIn('statut', ['ouvert', 'en_cours', 'clos'])
-                ->orderByDesc('numero_cycle')
-                ->first();
-
-            if (! $cycle) {
-                return response()->json(['message' => 'Aucun cycle trouvé pour cette tontine.'], 404);
-            }
-
-            $retenues = $request->input('retenues', []);
-            $bulletin = app(BulletinGainService::class)->generer($cycle, $retenues, $request->user()?->id);
-
-            return response()->json($bulletin, 201);
-        }
-
-        if (str_ends_with($path, 'cycles')) {
-            return response()->json(
-                $tontine->cycles()->latest('numero_cycle')->get()
-            );
-        }
-
-        // RG-TON-002 : blocage montant_part si cycles lancés
-        if ($request->has('montant_part')) {
-            $aCycles = $tontine->cycles()->exists();
-            if ($aCycles) {
-                return response()->json([
-                    'message' => 'Le montant par part est immuable après le démarrage du premier cycle.',
-                ], 422);
-            }
-        }
-
-        // RG-CAI-003 : caisse_id immuable
-        if ($request->has('caisse_id')) {
-            return response()->json([
-                'message' => 'L\'association caisse-tontine est immuable.',
-            ], 422);
-        }
-
-        $data = $request->validate([
-            'libelle'                  => ['sometimes', 'string', 'max:150'],
-            'mode_attribution'         => ['sometimes', 'in:rotation,tirage_sort,enchere,calendrier'],
-            'avaliste_requis'          => ['sometimes', 'boolean'],
-            'nb_parts_max_par_membre'  => ['sometimes', 'nullable', 'integer', 'min:1'],
-            'statut'                   => ['sometimes', 'in:en_preparation,active,suspendue,cloturee'],
-        ]);
-
-        $tontine->fill($data)->save();
-        return response()->json($tontine->refresh());
+        return response()->json($tontine);
     }
 
     /**
-     * RG-TON-005 : Pas de suppression si cycles existent.
+     * Inscription d'une part sur la tontine, avec avaliste si exigé (RG-TON-006/011/012).
      */
-    public function destroy(Request $request, string $id): JsonResponse
+    public function ajouterPart(Request $request, string $id): JsonResponse
     {
-        $tontine = Tontine::findOrFail($id);
+        $tontine = $this->scope->scopeAssociation(Tontine::query())->findOrFail($id);
+        $this->authorize('update', $tontine);
 
+        $data = $request->validate([
+            'membre_id' => ['required', 'uuid'],
+            'numero_part' => ['required', 'integer', 'min:1'],
+            'ordre_rotation' => ['nullable', 'integer'],
+            'date_gain_calendrier' => ['nullable', 'date'],
+            'avaliste_id' => [$tontine->exige_avaliste ? 'required' : 'nullable', 'uuid', 'different:membre_id'],
+        ]);
+
+        $data['tontine_id'] = $tontine->id;
+        $data['statut'] = 'disponible';
+
+        $part = TontinePart::create($data);
+
+        return response()->json($part->load('membre', 'avaliste'), 201);
+    }
+
+    public function destroy(string $id): JsonResponse
+    {
+        $tontine = $this->scope->scopeAssociation(Tontine::query())->findOrFail($id);
         if ($tontine->cycles()->exists()) {
-            return response()->json([
-                'message' => 'Impossible de supprimer une tontine ayant des cycles lancés. Utilisez la clôture.',
-            ], 422);
+            return response()->json(['message' => 'Suppression impossible : des cycles existent déjà.'], 422);
+        }
+        $tontine->delete();
+
+        return response()->json(['deleted' => true]);
+    }
+
+    /**
+     * Modification d'une part (avaliste, ordre de rotation) — bloquée si des cotisations existent déjà.
+     */
+    public function modifierPart(Request $request, string $tontineId, string $partId): JsonResponse
+    {
+        $tontine = $this->scope->scopeAssociation(Tontine::query())->findOrFail($tontineId);
+        $part = $tontine->parts()->findOrFail($partId);
+
+        $data = $request->validate([
+            'ordre_rotation' => ['sometimes', 'integer'],
+            'date_gain_calendrier' => ['sometimes', 'nullable', 'date'],
+            'avaliste_id' => ['sometimes', 'nullable', 'uuid', 'different:membre_id'],
+        ]);
+
+        $part->update($data);
+
+        return response()->json($part->load('membre', 'avaliste'));
+    }
+
+    /**
+     * Retrait d'une part — bloqué si des cotisations ont déjà été enregistrées dessus.
+     */
+    public function retirerPart(string $tontineId, string $partId): JsonResponse
+    {
+        $tontine = $this->scope->scopeAssociation(Tontine::query())->findOrFail($tontineId);
+        $part = $tontine->parts()->findOrFail($partId);
+
+        if ($part->cotisations()->exists() || $part->statut === 'gagnee') {
+            return response()->json(['message' => 'Impossible de retirer cette part : des cotisations ou un gain existent déjà.'], 422);
         }
 
-        $tontine->delete();
+        $part->delete();
+
         return response()->json(['deleted' => true]);
     }
 }

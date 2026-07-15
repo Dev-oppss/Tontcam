@@ -96,6 +96,7 @@ const typeLabels = {
 
 const createEmptyBanque = () => ({
   nom: '', description: '',
+  type: 'autre',
   montantCotisation: '',
   operationsAutorisees: ['epargne'],
   pretAutorise: false,
@@ -436,6 +437,22 @@ export default function Banques() {
                 value={newBanque.nom}
                 onChange={e => setNewBanque(f => ({ ...f, nom: e.target.value }))}
               />
+            </FormField>
+
+            <FormField label="Type de caisse" required hint="Détermine où cette caisse peut être utilisée dans l'application (ex : liée à une tontine).">
+              <select
+                className="select"
+                value={newBanque.type}
+                onChange={e => setNewBanque(f => ({ ...f, type: e.target.value }))}
+              >
+                <option value="tontine">Tontine</option>
+                <option value="mutuelle">Mutuelle</option>
+                <option value="scolaire">Scolaire</option>
+                <option value="evenement">Événement</option>
+                <option value="annuelle">Annuelle</option>
+                <option value="banque">Banque</option>
+                <option value="autre">Autre</option>
+              </select>
             </FormField>
 
             <FormField label="Montant de cotisation mensuelle (FCFA)">

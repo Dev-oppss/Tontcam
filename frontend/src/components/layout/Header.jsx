@@ -27,7 +27,7 @@ export default function Header() {
   const today = new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 
   return (
-    <header className="min-h-[74px] bg-white/55 border-b border-white/60 flex items-center px-5 py-3 gap-4 shrink-0 sticky top-0 z-30 backdrop-blur-xl backdrop-saturate-150 shadow-[0_8px_24px_-20px_rgba(11,13,18,.3)]">
+    <header className="no-print min-h-[74px] bg-white/55 border-b border-white/60 flex items-center px-5 py-3 gap-4 shrink-0 sticky top-0 z-30 backdrop-blur-xl backdrop-saturate-150 shadow-[0_8px_24px_-20px_rgba(11,13,18,.3)]">
 
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-1">

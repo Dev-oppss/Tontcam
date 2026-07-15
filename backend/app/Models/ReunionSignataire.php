@@ -4,16 +4,38 @@ namespace App\Models;
 
 use App\Models\Concerns\UsesUuid;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class ReunionSignataire extends Model
 {
+    const UPDATED_AT = null;
+
     use UsesUuid;
 
     protected $table = 'reunion_signataires';
-    public $timestamps = false;
-    protected $casts = ['ordre_signature' => 'integer', 'signed_at' => 'datetime'];
 
-    public function reunion(): BelongsTo { return $this->belongsTo(Reunion::class); }
-    public function membre(): BelongsTo { return $this->belongsTo(Membre::class); }
+    protected $fillable = [
+        'reunion_id',
+        'membre_id',
+        'ordre_signature',
+        'role_signature',
+        'signed_at',
+        'commentaire',
+    ];
+
+    protected $casts = [
+            'signed_at' => 'datetime',
+            'ordre_signature' => 'integer'
+    ];
+
+    public function reunion()
+    {
+        return $this->belongsTo(Reunion::class);
+    }
+
+
+    public function membre()
+    {
+        return $this->belongsTo(Membre::class);
+    }
+
 }

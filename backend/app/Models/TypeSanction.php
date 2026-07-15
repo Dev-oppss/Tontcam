@@ -4,24 +4,43 @@ namespace App\Models;
 
 use App\Models\Concerns\UsesUuid;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class TypeSanction extends Model
 {
     use UsesUuid;
 
     protected $table = 'types_sanction';
-    protected $casts = [
-        'montant_fixe' => 'decimal:2',
-        'montant_pct' => 'decimal:4',
-        'montant_journalier' => 'decimal:2',
-        'est_automatique' => 'boolean',
-        'actif' => 'boolean',
+
+    protected $fillable = [
+        'association_id',
+        'libelle',
+        'mode_calcul',
+        'montant_fixe',
+        'montant_pct',
+        'montant_journalier',
+        'est_automatique',
+        'declencheur',
+        'actif',
+        'description',
     ];
 
-    public function association(): BelongsTo
+    protected $casts = [
+            'montant_fixe' => 'decimal:2',
+            'montant_pct' => 'decimal:4',
+            'montant_journalier' => 'decimal:2',
+            'est_automatique' => 'boolean',
+            'actif' => 'boolean'
+    ];
+
+    public function association()
     {
         return $this->belongsTo(Association::class);
     }
-}
 
+
+    public function sanctions()
+    {
+        return $this->hasMany(SanctionMembre::class, 'type_sanction_id');
+    }
+
+}

@@ -1,5 +1,6 @@
-// Nécessite : npm install jspdf xlsx
+// Nécessite : npm install jspdf exceljs
 import { jsPDF } from 'jspdf';
+import ExcelJS from 'exceljs';
 import { fmt, fmtDate } from '../data/mockData';
 
 /* ── Export CSV / XLSX générique (listes membres, transactions, sanctions…) ── */
@@ -11,11 +12,18 @@ export function exportToCSV(rows, headers, filename = 'export.csv') {
 }
 
 export async function exportToXLSX(rows, headers, filename = 'export.xlsx', sheetName = 'Données') {
-  const XLSX = await import('xlsx');
-  const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, sheetName);
-  XLSX.writeFile(wb, filename);
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet(sheetName);
+
+  sheet.addRow(headers);
+  sheet.getRow(1).font = { bold: true };
+  sheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEDEFF3' } };
+  rows.forEach((r) => sheet.addRow(r));
+  sheet.columns.forEach((col) => { col.width = 18; });
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  downloadBlob(blob, filename);
 }
 
 function downloadBlob(blob, filename) {

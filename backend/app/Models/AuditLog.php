@@ -2,24 +2,40 @@
 
 namespace App\Models;
 
+
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class AuditLog extends Model
 {
+    const UPDATED_AT = null;
+
     protected $table = 'audit_log';
-    public $timestamps = false;
-    protected $primaryKey = 'id';
-    protected $keyType = 'int';
-    public $incrementing = true;
-    protected $guarded = [];
-    protected $casts = [
-        'valeur_avant' => 'array',
-        'valeur_apres' => 'array',
-        'created_at' => 'datetime',
+
+    protected $fillable = [
+        'association_id',
+        'utilisateur_id',
+        'action',
+        'table_name',
+        'record_id',
+        'valeur_avant',
+        'valeur_apres',
+        'ip_address',
     ];
 
-    public function association(): BelongsTo { return $this->belongsTo(Association::class); }
-    public function utilisateur(): BelongsTo { return $this->belongsTo(Utilisateur::class); }
-}
+    protected $casts = [
+            'valeur_avant' => 'array',
+            'valeur_apres' => 'array'
+    ];
 
+    public function association()
+    {
+        return $this->belongsTo(Association::class);
+    }
+
+
+    public function utilisateur()
+    {
+        return $this->belongsTo(Utilisateur::class);
+    }
+
+}

@@ -2,29 +2,44 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Http\Controllers\Controller;
 use App\Models\AuditLog;
+use App\Services\AccessScopeService;
+use App\Services\AuditService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Gate;
 
-class AuditLogController extends CrudController
+class AuditLogController extends Controller
 {
-    protected string $model = AuditLog::class;
-    protected array $filterable = ['association_id', 'utilisateur_id', 'table_name', 'action'];
+    public function __construct(private AccessScopeService $scope, private AuditService $audit) {}
 
+    /**
+     * Accès restreint : Super Admin et Contrôleur uniquement (RG-SEC-011).
+     * La consultation elle-même est tracée (RG-SEC-012).
+     */
     public function index(Request $request): JsonResponse
     {
-        Gate::authorize('view-audit-log');
+        if ($request->user()->cannot('access-audit-log')) {
+            return response()->json(['message' => "Accès restreint au Super Admin et au Contrôleur."], 403);
+        }
 
-        AuditLog::create([
-            'association_id' => $request->user()?->membre?->association_id,
-            'utilisateur_id' => $request->user()?->id,
-            'action' => 'view',
-            'table_name' => 'audit_log',
-            'valeur_apres' => ['filters' => $request->query()],
-            'ip_address' => $request->ip(),
-        ]);
+        $filtres = $request->only(['module' => $request->get('table'), 'action' => $request->get('action')]);
+        $this->audit->journaliserConsultation($request->user(), $filtres);
 
-        return parent::index($request);
+        $query = AuditLog::where('association_id', $this->scope->associationId($request->user()))
+            ->with('utilisateur.membre')
+            ->orderByDesc('created_at');
+
+        if ($request->filled('table')) {
+            $query->where('table_name', $request->table);
+        }
+        if ($request->filled('action')) {
+            $query->where('action', $request->action);
+        }
+        if ($request->filled('du') && $request->filled('au')) {
+            $query->whereBetween('created_at', [$request->du, $request->au]);
+        }
+
+        return response()->json($query->paginate($request->integer('per_page', 50)));
     }
 }

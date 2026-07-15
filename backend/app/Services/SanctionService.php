@@ -2,247 +2,143 @@
 
 namespace App\Services;
 
-use App\Models\Association;
-use App\Models\CotisationTontine;
 use App\Models\EcheancePret;
 use App\Models\Membre;
-use App\Models\Presence;
+use App\Models\Pret;
+use App\Models\Reunion;
 use App\Models\SanctionMembre;
 use App\Models\TypeSanction;
-use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\DB;
+use App\Models\Utilisateur;
 use RuntimeException;
 
 class SanctionService
 {
-    public function __construct(
-        private readonly NotificationService $notificationService,
-    ) {}
-
-    public function appliquer(
-        string $associationId,
-        string $membreId,
-        TypeSanction $type,
-        string $motif,
-        array $data = []
-    ): SanctionMembre {
-        return DB::transaction(function () use ($associationId, $membreId, $type, $motif, $data) {
-            if (! empty($data['reference_type']) && ! empty($data['reference_id'])) {
-                $exists = SanctionMembre::where('membre_id', $membreId)
-                    ->where('type_sanction_id', $type->id)
-                    ->where('reference_type', $data['reference_type'])
-                    ->where('reference_id', $data['reference_id'])
-                    ->where('statut', '!=', 'annulee')
-                    ->exists();
-
-                if ($exists) {
-                    throw new RuntimeException('Sanction déjà existante pour cette référence.');
-                }
-            }
-
-            $montant = $this->calculerMontant($type, $data);
-
-            $sanction = SanctionMembre::create([
-                'association_id'   => $associationId,
-                'membre_id'        => $membreId,
-                'type_sanction_id' => $type->id,
-                'reunion_id'       => $data['reunion_id'] ?? null,
-                'montant'          => $montant,
-                'motif'            => $motif,
-                'statut'           => 'due',
-                'est_automatique'  => (bool) ($data['est_automatique'] ?? $type->est_automatique),
-                'reference_type'   => $data['reference_type'] ?? null,
-                'reference_id'     => $data['reference_id'] ?? null,
-                'appliquee_par'    => $data['appliquee_par'] ?? null,
-            ]);
-
-            $this->notificationService->notifierSanction(
-                $associationId,
-                $membreId,
-                $type->libelle,
-                (float) $montant,
-                $sanction->id
-            );
-
-            $this->recalculerStatutMembre($associationId, $membreId);
-
-            return $sanction->refresh();
-        });
+    public function appliquerManuelle(Membre $membre, TypeSanction $type, string $motif, Utilisateur $appliquePar, ?Reunion $reunion = null): SanctionMembre
+    {
+        return SanctionMembre::create([
+            'association_id' => $membre->association_id,
+            'membre_id' => $membre->id,
+            'type_sanction_id' => $type->id,
+            'reunion_id' => $reunion?->id,
+            'montant' => $this->calculerMontant($type),
+            'motif' => $motif,
+            'statut' => 'due',
+            'est_automatique' => false,
+            'appliquee_par' => $appliquePar->id,
+        ]);
     }
 
-    public function sanctionnerRetardCotisation(CotisationTontine $cotisation): ?SanctionMembre
+    /**
+     * Déclenchement auto lors d'une absence non excusée en réunion.
+     */
+    public function absenceNonExcusee(Membre $membre, Reunion $reunion): ?SanctionMembre
     {
-        $association = $cotisation->cycle->tontine->association;
-        $type = $association->typesSanctions()
-            ->where('est_automatique', true)
-            ->where('declencheur', 'retard_cotisation')
-            ->where('actif', true)
-            ->first();
-
-        if (! $type) {
-            return null;
-        }
-
-        return $this->appliquer(
-            $association->id,
-            $cotisation->membre_id,
-            $type,
-            'Retard de cotisation',
-            [
-                'est_automatique' => true,
-                'reference_type' => CotisationTontine::class,
-                'reference_id' => $cotisation->id,
-                'montant_reference' => (float) $cotisation->montant_du,
-            ]
-        );
-    }
-
-    public function sanctionnerRetardEcheancePret(EcheancePret $echeance): ?SanctionMembre
-    {
-        $pret = $echeance->pret;
-        $association = $pret->caisse->association;
-        $type = $association->typesSanctions()
-            ->where('est_automatique', true)
-            ->where('declencheur', 'retard_remboursement_pret')
-            ->where('actif', true)
-            ->first();
-
-        if (! $type) {
-            return null;
-        }
-
-        return $this->appliquer(
-            $association->id,
-            $pret->emprunteur_id,
-            $type,
-            'Retard de remboursement de prêt',
-            [
-                'est_automatique' => true,
-                'reference_type' => EcheancePret::class,
-                'reference_id' => $echeance->id,
-                'montant_reference' => (float) $echeance->montant_total,
-            ]
-        );
-    }
-
-    public function sanctionnerAbsenceNonExcusee(Presence $presence): ?SanctionMembre
-    {
-        $reunion = $presence->reunion;
-        $association = $reunion->association;
-        $type = $association->typesSanctions()
-            ->where('est_automatique', true)
+        $type = TypeSanction::where('association_id', $membre->association_id)
             ->where('declencheur', 'absence_non_excusee')
-            ->where('actif', true)
+            ->where('est_automatique', true)
             ->first();
 
         if (! $type) {
             return null;
         }
 
-        return $this->appliquer(
-            $association->id,
-            $presence->membre_id,
-            $type,
-            'Absence non excusée',
-            [
-                'est_automatique' => true,
-                'reference_type' => Presence::class,
-                'reference_id' => $presence->id,
-                'reunion_id' => $reunion->id,
-            ]
-        );
+        // Évite le doublon si la sanction existe déjà pour cette réunion
+        $existe = SanctionMembre::where('membre_id', $membre->id)
+            ->where('reunion_id', $reunion->id)
+            ->where('type_sanction_id', $type->id)
+            ->exists();
+        if ($existe) {
+            return null;
+        }
+
+        return SanctionMembre::create([
+            'association_id' => $membre->association_id,
+            'membre_id' => $membre->id,
+            'type_sanction_id' => $type->id,
+            'reunion_id' => $reunion->id,
+            'montant' => $this->calculerMontant($type),
+            'motif' => "Absence non excusée — réunion n°{$reunion->numero}",
+            'statut' => 'due',
+            'est_automatique' => true,
+        ]);
     }
 
-    public function payer(SanctionMembre $sanction, CaisseService $caisseService, ?string $userId = null): SanctionMembre
+    /**
+     * Déclenchement auto sur cotisation en retard (à appeler à la clôture d'un cycle).
+     */
+    public function retardCotisation(Membre $membre, \App\Models\CotisationTontine $cotisation): ?SanctionMembre
     {
-        if ($sanction->statut === 'payee') {
-            throw new RuntimeException('Cette sanction est déjà payée.');
+        $type = TypeSanction::where('association_id', $membre->association_id)
+            ->where('declencheur', 'retard_cotisation')
+            ->where('est_automatique', true)
+            ->first();
+
+        if (! $type) {
+            return null;
         }
 
-        if ($sanction->statut === 'annulee') {
-            throw new RuntimeException('Impossible de payer une sanction annulée.');
-        }
+        $montant = $type->mode_calcul === 'journalier'
+            ? (float) $type->montant_journalier * max(1, now()->diffInDays($cotisation->cycle->date_ouverture ?? now()))
+            : $this->calculerMontant($type);
 
-        return DB::transaction(function () use ($sanction, $caisseService, $userId) {
-            $caisse = \App\Models\Caisse::where('association_id', $sanction->association_id)
-                ->where('type', 'tontine')
-                ->firstOrFail();
-
-            $tx = $caisseService->entree(
-                $caisse,
-                (float) $sanction->montant,
-                'Paiement sanction',
-                [
-                    'reference_type' => SanctionMembre::class,
-                    'reference_id' => $sanction->id,
-                    'created_by' => $userId,
-                ]
-            );
-
-            $sanction->forceFill([
-                'statut' => 'payee',
-                'payee_at' => now(),
-                'transaction_id' => $tx->id,
-            ])->save();
-
-            $this->recalculerStatutMembre($sanction->association_id, $sanction->membre_id);
-
-            return $sanction->refresh();
-        });
+        return SanctionMembre::create([
+            'association_id' => $membre->association_id,
+            'membre_id' => $membre->id,
+            'type_sanction_id' => $type->id,
+            'montant' => $montant,
+            'motif' => 'Retard de cotisation',
+            'statut' => 'due',
+            'est_automatique' => true,
+            'reference_type' => 'cotisation_tontine',
+            'reference_id' => $cotisation->id,
+        ]);
     }
 
-    public function annuler(SanctionMembre $sanction, string $motif, ?string $userId = null): SanctionMembre
+    /**
+     * Déclenchement auto sur échéance de prêt en retard (RG-PRT-020).
+     */
+    public function retardPret(Pret $pret, EcheancePret $echeance): ?SanctionMembre
     {
-        if ($sanction->statut === 'payee') {
-            throw new RuntimeException('Impossible d\'annuler une sanction déjà payée.');
+        $type = TypeSanction::where('association_id', $pret->caisse->association_id)
+            ->where('declencheur', 'retard_pret')
+            ->where('est_automatique', true)
+            ->first();
+
+        $membre = $pret->emprunteur;
+
+        // Pénalité de retard = Capital_restant × taux_pénalité_mensuel × nb_mois_retard
+        $moisRetard = max(1, now()->diffInMonths($echeance->date_echeance) + 1);
+        $penalite = round((float) $pret->capital_restant * (float) $pret->taux_penalite_mensuel * $moisRetard, 2);
+
+        $echeance->update([
+            'statut' => 'penalisee',
+            'montant_penalite' => $penalite,
+        ]);
+
+        if (! $type) {
+            return null;
         }
 
-        $sanction->forceFill([
-            'statut' => 'annulee',
-            'motif_annulation' => $motif,
-            'annulee_par' => $userId,
-            'annulee_at' => now(),
-        ])->save();
-
-        $this->recalculerStatutMembre($sanction->association_id, $sanction->membre_id, true);
-
-        return $sanction->refresh();
+        return SanctionMembre::create([
+            'association_id' => $membre->association_id,
+            'membre_id' => $membre->id,
+            'type_sanction_id' => $type->id,
+            'montant' => $penalite,
+            'motif' => "Retard échéance n°{$echeance->numero_echeance} du prêt",
+            'statut' => 'due',
+            'est_automatique' => true,
+            'reference_type' => 'echeance_pret',
+            'reference_id' => $echeance->id,
+        ]);
     }
 
-    private function calculerMontant(TypeSanction $type, array $data): float
+    private function calculerMontant(TypeSanction $type): float
     {
-        if (isset($data['montant_ajuste'])) {
-            return (float) $data['montant_ajuste'];
-        }
-
         return match ($type->mode_calcul) {
-            'fixe' => (float) ($type->montant_fixe ?? 0),
-            'pourcentage' => round((float) ($data['montant_reference'] ?? 0) * (float) ($type->montant_pct ?? 0), 2),
-            'journalier' => round((float) ($type->montant_journalier ?? 0) * max(1, (int) ($data['nb_jours'] ?? 1)), 2),
-            default => (float) ($type->montant_fixe ?? 0),
+            'fixe' => (float) $type->montant_fixe,
+            'journalier' => (float) $type->montant_journalier,
+            'pourcentage' => throw new RuntimeException('Le mode pourcentage nécessite une base de calcul explicite.'),
+            default => 0.0,
         };
-    }
-
-    private function recalculerStatutMembre(string $associationId, string $membreId, bool $annulation = false): void
-    {
-        $association = Association::find($associationId);
-        $membre = Membre::find($membreId);
-        if (! $association || ! $membre) {
-            return;
-        }
-
-        $seuil = (int) ($association->config['seuil_sanctions_suspension'] ?? 3);
-        $nb = SanctionMembre::where('association_id', $associationId)
-            ->where('membre_id', $membreId)
-            ->where('statut', 'due')
-            ->count();
-
-        if (! $annulation && $nb >= $seuil && $membre->statut === 'actif') {
-            $membre->forceFill(['statut' => 'suspendu', 'motif_suspension' => 'Seuil de sanctions atteint.'])->save();
-        }
-
-        if ($annulation && $nb < $seuil && $membre->statut === 'suspendu') {
-            $membre->forceFill(['statut' => 'actif', 'motif_suspension' => null])->save();
-        }
     }
 }

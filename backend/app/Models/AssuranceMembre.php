@@ -4,21 +4,42 @@ namespace App\Models;
 
 use App\Models\Concerns\UsesUuid;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class AssuranceMembre extends Model
 {
     use UsesUuid;
 
     protected $table = 'assurances_membres';
-    protected $casts = [
-        'date_debut' => 'date',
-        'date_fin' => 'date',
-        'prime_mensuelle' => 'decimal:2',
-        'actif' => 'boolean',
+
+    protected $fillable = [
+        'membre_id',
+        'type_assurance',
+        'assureur',
+        'numero_police',
+        'date_debut',
+        'date_fin',
+        'prime_mensuelle',
+        'actif',
+        'caisse_id',
+        'notes',
     ];
 
-    public function membre(): BelongsTo { return $this->belongsTo(Membre::class); }
-    public function caisse(): BelongsTo { return $this->belongsTo(Caisse::class); }
-}
+    protected $casts = [
+            'date_debut' => 'date',
+            'date_fin' => 'date',
+            'prime_mensuelle' => 'decimal:2',
+            'actif' => 'boolean'
+    ];
 
+    public function membre()
+    {
+        return $this->belongsTo(Membre::class);
+    }
+
+
+    public function caisse()
+    {
+        return $this->belongsTo(Caisse::class);
+    }
+
+}

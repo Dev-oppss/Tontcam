@@ -2,135 +2,190 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Models\Association;
+use App\Models\Membre;
 use App\Models\Utilisateur;
-use App\Services\NotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Routing\Controller;
-use Illuminate\Support\Facades\Cache;
+use App\Http\Controllers\Controller;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 
 class AuthController extends Controller
 {
+    private const MAX_TENTATIVES = 5;
+
     /**
-     * RG-SEC-001 : Authentification email/mot de passe.
-     * RG-SEC-004 : Verrouillage du compte après 5 tentatives échouées (15 min).
+     * Inscription : crée en une seule transaction l'association (fiche minimale,
+     * à compléter ensuite), le membre fondateur et son compte utilisateur, puis
+     * connecte immédiatement la personne (RG : un utilisateur est toujours rattaché
+     * à un membre, lui-même toujours rattaché à une association — aucune des trois
+     * ne peut exister seule).
      */
-    public function login(Request $request): JsonResponse
+    public function register(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'email'    => ['required', 'email'],
-            'password' => ['required', 'string'],
+            'nom' => ['required', 'string', 'max:100'],
+            'prenom' => ['required', 'string', 'max:100'],
+            'telephone' => ['required', 'string', 'max:30'],
+            'email' => ['required', 'email', 'max:200', 'unique:utilisateurs,email'],
+            'password' => ['required', 'string', 'min:8', 'confirmed'],
         ]);
 
-        // RG-SEC-004 : vérifier le verrou avant tout
-        $lockKey = 'login_attempts:' . $request->ip() . ':' . $data['email'];
-        $attempts = Cache::get($lockKey, 0);
+        $utilisateur = DB::transaction(function () use ($data) {
+            // Aucune information d'association n'est demandée à l'inscription : une fiche
+            // vide est ouverte automatiquement, à compléter ensuite sur /setup.
+            $association = Association::create([
+                'nom' => trim($data['prenom'].' '.$data['nom']).' — association à compléter ('.strtoupper(Str::random(4)).')',
+                'date_creation' => now()->toDateString(),
+                'profil_complete' => false,
+            ]);
 
-        if ($attempts >= 5) {
-            return response()->json([
-                'message' => 'Compte temporairement verrouillé. Réessayez dans 15 minutes.',
-            ], 429);
-        }
+            // La fiche membre est protégée par des politiques RLS (isolation multi-tenant) :
+            // ces réglages, valables le temps de la transaction, autorisent l'écriture initiale
+            // exactement comme le ferait le middleware SetAssociationContext pour une requête authentifiée.
+            DB::statement("select set_config('tontine.current_association_id', ?, true)", [$association->id]);
+            DB::statement("select set_config('tontine.current_role', 'super_admin', true)");
 
-        $user = Utilisateur::query()->where('email', $data['email'])->first();
+            $membre = Membre::create([
+                'association_id' => $association->id,
+                'nom' => $data['nom'],
+                'prenom' => $data['prenom'],
+                'telephone' => $data['telephone'],
+                'email' => $data['email'],
+                'date_adhesion' => now()->toDateString(),
+                'statut' => 'actif',
+            ]);
 
-        if (! $user || ! Hash::check($data['password'], $user->password_hash)) {
-            // Incrémenter le compteur d'échecs (TTL 15 min)
-            Cache::put($lockKey, $attempts + 1, now()->addMinutes(15));
+            return Utilisateur::create([
+                'membre_id' => $membre->id,
+                'email' => $data['email'],
+                'password_hash' => Hash::make($data['password']),
+                'role' => 'super_admin',
+                'actif' => true,
+            ]);
+        });
+
+        $utilisateur->load('membre.association');
+
+        return response()->json([
+            'user' => $utilisateur,
+            'token' => $utilisateur->createToken('api')->plainTextToken,
+            'must_change_password' => false,
+        ], 201);
+    }
+
+    public function login(Request $request): JsonResponse
+    {
+        $data = $request->validate(['email' => ['required', 'email'], 'password' => ['required', 'string']]);
+
+        $user = Utilisateur::with('membre.association')->where('email', $data['email'])->first();
+
+        if (! $user || ! $user->actif) {
             return response()->json(['message' => 'Identifiants invalides'], 422);
         }
 
-        // Réinitialiser le compteur en cas de succès
-        Cache::forget($lockKey);
+        if ($user->verrouille_jusqua && $user->verrouille_jusqua->isFuture()) {
+            return response()->json(['message' => 'Compte temporairement verrouillé, réessayez plus tard.'], 423);
+        }
+
+        if (! Hash::check($data['password'], $user->password_hash)) {
+            $tentatives = $user->tentatives_echec + 1;
+            $user->update([
+                'tentatives_echec' => $tentatives,
+                'verrouille_jusqua' => $tentatives >= self::MAX_TENTATIVES ? now()->addMinutes(15) : null,
+            ]);
+
+            return response()->json(['message' => 'Identifiants invalides'], 422);
+        }
+
+        $user->update(['tentatives_echec' => 0, 'verrouille_jusqua' => null, 'derniere_connexion' => now()]);
+
+        $mustChangePassword = (bool) ($user->preferences['must_change_password'] ?? false);
 
         return response()->json([
-            'user'                 => $user,
-            'token'                => $user->createToken('api')->plainTextToken,
-            'must_change_password' => (bool) ($user->must_change_password ?? false),
+            'user' => $user,
+            'token' => $user->createToken('api')->plainTextToken,
+            'must_change_password' => $mustChangePassword,
         ]);
     }
 
     public function logout(Request $request): JsonResponse
     {
         $request->user()?->currentAccessToken()?->delete();
+
         return response()->json(['ok' => true]);
     }
 
     public function me(Request $request): JsonResponse
     {
-        return response()->json($request->user());
+        return response()->json($request->user()?->loadMissing('membre.association'));
     }
 
-    /**
-     * RG-SEC-005 : Réinitialisation par lien SMS/email — validité 30 minutes.
-     * NOTE : L'envoi réel du lien doit être déclenché ici via un Job/Notification.
-     */
     public function forgotPassword(Request $request): JsonResponse
     {
         $request->validate(['email' => ['required', 'email']]);
 
-        $user = Utilisateur::query()->where('email', $request->email)->first();
-
+        $user = Utilisateur::where('email', $request->email)->first();
+        // Réponse volontairement neutre pour ne pas divulguer l'existence du compte
         if ($user) {
-            // Générer un token sécurisé valide 30 minutes (RG-SEC-005)
-            $token = Str::random(64);
-            Cache::put('pwd_reset:' . $token, $user->id, now()->addMinutes(30));
-
-            app(NotificationService::class)->notifierMotDePasseOublie(
-                $user->membre?->association_id ?? $user->association_id ?? '',
-                $user->membre_id ?? null,
-                $user->email
-            );
+            $user->update([
+                'token_reset_mdp' => Str::random(64),
+                'token_reset_exp' => now()->addHours(2),
+            ]);
+            // Le job d'envoi SMS/email réel se branche ici via NotificationService.
         }
 
-        // Réponse générique pour ne pas révéler l'existence du compte
-        return response()->json([
-            'message' => 'Si cet email existe, un lien de réinitialisation a été envoyé.',
-        ]);
+        return response()->json(['message' => 'Si ce compte existe, un lien de réinitialisation a été envoyé.']);
     }
 
-    /**
-     * RG-SEC-005 : Vérification du token avant réinitialisation.
-     * RG-SEC-003 : Contraintes de complexité du mot de passe.
-     */
     public function resetPassword(Request $request): JsonResponse
     {
         $request->validate([
-            'token'    => ['required', 'string'],
-            'password' => ['required', 'confirmed', 'min:8', 'regex:/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[\W_]).+$/'],
+            'email' => ['required', 'email'],
+            'token' => ['required', 'string'],
+            'password' => ['required', 'confirmed', 'min:8'],
         ]);
 
-        $userId = Cache::pull('pwd_reset:' . $request->token);
+        $user = Utilisateur::where('email', $request->email)
+            ->where('token_reset_mdp', $request->token)
+            ->where('token_reset_exp', '>', now())
+            ->first();
 
-        if (! $userId) {
-            return response()->json(['message' => 'Token invalide ou expiré.'], 422);
+        if (! $user) {
+            return response()->json(['message' => 'Lien de réinitialisation invalide ou expiré.'], 422);
         }
 
-        $user = Utilisateur::findOrFail($userId);
-        $user->forceFill([
-            'password_hash'        => Hash::make($request->password),
-            'must_change_password' => false,
-        ])->save();
+        $user->update([
+            'password_hash' => Hash::make($request->password),
+            'token_reset_mdp' => null,
+            'token_reset_exp' => null,
+            'tentatives_echec' => 0,
+            'verrouille_jusqua' => null,
+            'preferences' => array_merge($user->preferences ?? [], ['must_change_password' => false]),
+        ]);
 
         return response()->json(['ok' => true]);
     }
 
-    /**
-     * RG-SEC-002 : Changement obligatoire du mot de passe à la première connexion.
-     * RG-SEC-003 : Contraintes de complexité.
-     */
     public function changePassword(Request $request): JsonResponse
     {
         $request->validate([
-            'password' => ['required', 'confirmed', 'min:8', 'regex:/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[\W_]).+$/'],
+            'current_password' => ['required', 'string'],
+            'password' => ['required', 'confirmed', 'min:8'],
         ]);
 
-        $request->user()->forceFill([
-            'password_hash'        => Hash::make($request->password),
-            'must_change_password' => false,
-        ])->save();
+        $user = $request->user();
+
+        if (! Hash::check($request->current_password, $user->password_hash)) {
+            return response()->json(['message' => 'Mot de passe actuel incorrect.'], 422);
+        }
+
+        $user->update([
+            'password_hash' => Hash::make($request->password),
+            'preferences' => array_merge($user->preferences ?? [], ['must_change_password' => false]),
+        ]);
 
         return response()->json(['ok' => true]);
     }
