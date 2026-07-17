@@ -102,6 +102,7 @@ export default function Tontines() {
   const aucuneCaisseDisponible = (caisses || []).length > 0 && caissesTontine.length === 0;
 
   const getTourPlanning   = (id) => (planningTours || []).filter(p => p.idTontine === id).sort((a,b) => a.numeroTour - b.numeroTour);
+  const potTontine = (t) => Number(t?.cotisation || 0) * Number(t?.totalParts || 0);
   const getMembresActifs  = (id) => membresParTontine.filter(mt => mt.idTontine === id && mt.statut === 'actif');
   const getNbEncaisses    = (id) => (planningTours || []).filter(p => p.idTontine === id && p.statut === 'encaisse').length;
   const getProchainTour   = (id, nb) => Math.min(getNbEncaisses(id) + 1, nb);
@@ -158,7 +159,7 @@ export default function Tontines() {
       idTontine, idMembre: formTour.idMembre,
       nomMembre: `${m?.nom} ${m?.prenom}`, numeroTour,
       datePrevue: formTour.datePrevue, note: formTour.note,
-      montantPot: t ? t.cotisation * t.totalParts : 0,
+      montantPot: t ? potTontine(t) : 0,
     });
     setFormTour({ idMembre:'', datePrevue:'', note:'' }); setAddTourMode(false);
   };
@@ -169,13 +170,20 @@ export default function Tontines() {
     if (result) setShowTirage(result);
   };
 
-  const partsDeTontine    = (id) => membresParTontine.filter(mt => mt.idTontine === id).map(mt => ({ ...mt, ...membres.find(m => m.id === mt.idMembre) }));
+  // Chaque `mt` est une part (une ligne = une part côté serveur). On y ajoute les
+  // champs du membre SANS écraser l'id de la part (bug corrigé : `{...mt, ...membre}`
+  // remplaçait `mt.id` par l'id du membre, ce qui corrompait `partIds` utilisé pour
+  // la suppression et faisait apparaître des clés React dupliquées).
+  const partsDeTontine    = (id) => membresParTontine.filter(mt => mt.idTontine === id).map(mt => ({ ...membres.find(m => m.id === mt.idMembre), ...mt }));
   // Le backend modélise chaque part individuellement (une ligne = une part) ; on
   // regroupe ici par membre pour l'affichage (CDC 4.3 — parts multiples).
   const membresDeTontine  = (id) => {
     const parts = partsDeTontine(id);
     const groupes = new Map();
+    const vues = new Set(); // garde-fou anti-doublon sur l'id réel de la part
     parts.forEach((p) => {
+      if (vues.has(p.id)) return;
+      vues.add(p.id);
       if (!groupes.has(p.idMembre)) {
         groupes.set(p.idMembre, { ...p, partIds: [p.id], nombreParts: 1 });
       } else {
@@ -215,10 +223,10 @@ export default function Tontines() {
       {/* Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
-          { l:'Pot total cumulé',  v: fmt(tontines.reduce((s,t)=>s+t.cotisation*t.totalParts,0)), c:'text-primary-600', bg:'bg-primary-50', icon:'' },
+          { l:'Pot total cumulé',  v: fmt(tontines.reduce((s,t)=>s+potTontine(t),0)), c:'text-primary-600', bg:'bg-primary-50', icon:'' },
           { l:'Membres inscrits',  v: membresParTontine.filter(mt=>mt.statut==='actif').length,   c:'text-blue-600',   bg:'bg-blue-50',   icon:'' },
           { l:'Tours encaissés',   v: (planningTours||[]).filter(p=>p.statut==='encaisse').length, c:'text-amber-600',  bg:'bg-amber-50',  icon:'' },
-          { l:'Parts totales',     v: tontines.reduce((s,t)=>s+t.totalParts,0),                    c:'text-purple-600', bg:'bg-purple-50', icon:'' },
+          { l:'Parts totales',     v: tontines.reduce((s,t)=>s+Number(t.totalParts||0),0),                    c:'text-purple-600', bg:'bg-purple-50', icon:'' },
         ].map(s => (
           <div key={s.l} className={`p-3 rounded-2xl ${s.bg} text-center border-0`}>
             <div className="text-2xl mb-1">{s.icon}</div>
@@ -254,7 +262,7 @@ export default function Tontines() {
           const encaisses = getNbEncaisses(t.id);
           const prochain  = getProchainTour(t.id, t.nbTours);
           const progress  = Math.round((encaisses / Math.max(t.nbTours, 1)) * 100);
-          const potTour   = t.cotisation * t.totalParts;
+          const potTour   = potTontine(t);
           const prochainTour = planning.find(p => p.statut === 'planifie');
           const enCoursEnch  = getEncheresDuTour(t.id);
 
@@ -543,7 +551,7 @@ export default function Tontines() {
                             nomMembre: item.nom,
                             numeroTour: tourNum,
                             datePrevue,
-                            montantPot: t.cotisation * t.totalParts,
+                            montantPot: potTontine(t),
                             statut: 'planifie',
                             note: `Rotation — position ${tourNum}`,
                           });
@@ -658,14 +666,14 @@ export default function Tontines() {
         const t   = tontines.find(x=>x.id===showMembres.id)||showMembres;
         const cfg = TYPE_CONFIG[t.typeAttribution]||TYPE_CONFIG.rotation;
         const mtList = membresDeTontine(t.id);
-        const pot = t.cotisation * t.totalParts;
+        const pot = potTontine(t);
         return (
           <Modal open={true} onClose={()=>{setShowMembres(null);setShowAddMembre(false);}} title={`${cfg.icon} Membres — ${t.nom}`}
             footer={<div className="flex gap-2 w-full"><button onClick={()=>setShowAddMembre(true)} className="btn-primary"><UserPlus size={14}/> Inscrire</button><button onClick={()=>setShowMembres(null)} className="btn-secondary ml-auto">Fermer</button></div>}>
             <div className="space-y-4">
               <div className="grid grid-cols-3 gap-2 text-center">
                 <div className="p-2.5 bg-gray-50 rounded-xl"><p className="text-sm font-bold text-primary-600">{fmt(pot)}</p><p className="text-xs text-gray-400">Pot/tour</p></div>
-                <div className="p-2.5 bg-gray-50 rounded-xl"><p className="text-sm font-bold text-gray-800">{t.totalParts}</p><p className="text-xs text-gray-400">Parts</p></div>
+                <div className="p-2.5 bg-gray-50 rounded-xl"><p className="text-sm font-bold text-gray-800">{Number(t.totalParts || 0)}</p><p className="text-xs text-gray-400">Parts</p></div>
                 <div className="p-2.5 bg-gray-50 rounded-xl"><p className="text-sm font-bold text-blue-600">{mtList.filter(m=>m.statut==='actif').length}</p><p className="text-xs text-gray-400">Actifs</p></div>
               </div>
               {mtList.length===0 ? (
@@ -677,7 +685,7 @@ export default function Tontines() {
                       <div className="w-9 h-9 rounded-xl gradient-primary flex items-center justify-center text-white text-sm font-bold shrink-0">{mt.nom?.[0]}{mt.prenom?.[0]}</div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-semibold text-gray-800">{mt.nom} {mt.prenom}</p>
-                        <p className="text-xs text-gray-400">{mt.nombreParts} part(s) · {fmt(t.cotisation * mt.nombreParts)}/tour</p>
+                        <p className="text-xs text-gray-400">{mt.nombreParts} part(s) · {fmt(Number(t.cotisation||0) * Number(mt.nombreParts||0))}/tour</p>
                       </div>
                       <Badge variant={mt.statut==='actif'?'green':'gray'}>{mt.statut==='actif'?'Actif':'Suspendu'}</Badge>
                       <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -695,7 +703,7 @@ export default function Tontines() {
                     {mtList.map(mt=>(
                       <div key={mt.id} className="flex justify-between text-xs">
                         <span className="text-gray-600">{mt.nom} {mt.prenom} (x{mt.nombreParts})</span>
-                        <span className="font-bold text-amber-700">{fmt(t.cotisation*mt.nombreParts)}</span>
+                        <span className="font-bold text-amber-700">{fmt(Number(t.cotisation||0) * Number(mt.nombreParts||0))}</span>
                       </div>
                     ))}
                   </div>
