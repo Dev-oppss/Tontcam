@@ -888,7 +888,7 @@ export default function Tontines() {
         footer={<>
           <button onClick={()=>setEncaisseModal(null)} className="btn-secondary">Annuler</button>
           <button
-            onClick={()=>{ marquerTourEncaisse(encaisseModal.id, encModePaiement, encDetails); setEncaisseModal(null); }}
+            onClick={()=>{ marquerTourEncaisse(encaisseModal.idTontine, encaisseModal.id); setEncaisseModal(null); }}
             disabled={!isModePaiementValid(encModePaiement, encDetails)}
             className={clsx('btn-primary', !isModePaiementValid(encModePaiement, encDetails) && 'opacity-40 cursor-not-allowed')}
           ><CheckCircle size={14}/>Confirmer l'encaissement</button>
