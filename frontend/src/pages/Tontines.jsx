@@ -63,7 +63,7 @@ export default function Tontines() {
     membres, membresParTontine, addMembreTontine, removeMembreTontine,
     planningTours, addTourPlanning, marquerTourEncaisse, retirerTourPlanning, tirerAuSort,
     encheres, rotations, attribuerTour,
-    genererBulletin, ouvrirBulletinPdf,
+    genererBulletin, ouvrirBulletinPdf, cyclesTontine, chargerCycles,
   } = useApp();
 
   const [searchParams] = useSearchParams();
@@ -87,7 +87,7 @@ export default function Tontines() {
   const [rankingDateBase, setRankingDateBase] = useState('');
   const [dragIdx,         setDragIdx]         = useState(null);
   const [showBulletin,    setShowBulletin]    = useState(null);
-  const [bulletinForm,    setBulletinForm]    = useState({ idMembre:'', numeroCycle:1, retenueLibelle:'', retenueMontant:0 });
+  const [bulletinForm,    setBulletinForm]    = useState({ idCycle:'' });
   const [encaisseModal,   setEncaisseModal]   = useState(null); // tour planning à encaisser
   const [encModePaiement, setEncModePaiement] = useState('especes');
   const [encDetails,      setEncDetails]      = useState('');
@@ -351,7 +351,7 @@ export default function Tontines() {
                 <NavLink to={t.typeAttribution === 'enchere' ? '/encheres' : '/rotations'} className="btn-secondary text-xs py-1.5 justify-center">
                   <Trophy size={12}/> Historique
                 </NavLink>
-                <button onClick={() => { setShowBulletin(t); setBulletinForm({ idMembre:'', numeroCycle:prochain, retenueLibelle:'', retenueMontant:0 }); }} className="btn-secondary text-xs py-1.5 justify-center">
+                <button onClick={() => { setShowBulletin(t); setBulletinForm({ idCycle:'' }); chargerCycles(t.id); }} className="btn-secondary text-xs py-1.5 justify-center">
                   <FileText size={12}/> Bulletin
                 </button>
               </div>
@@ -782,25 +782,19 @@ export default function Tontines() {
       </Modal>
 
       <Modal open={!!showBulletin} onClose={()=>setShowBulletin(null)} title={`Bulletin de gain — ${showBulletin?.nom || ''}`}
-        footer={<><button onClick={()=>setShowBulletin(null)} className="btn-secondary">Annuler</button><button onClick={async()=>{const retenues=bulletinForm.retenueMontant>0?[{libelle:bulletinForm.retenueLibelle||'Retenue',montant:Number(bulletinForm.retenueMontant)}]:[];const b=await genererBulletin({idTontine:showBulletin.id,idMembre:bulletinForm.idMembre,numeroCycle:Number(bulletinForm.numeroCycle),retenues});if(b){ouvrirBulletinPdf(b.id);setShowBulletin(null);}}} className="btn-primary"><FileText size={14}/> Générer PDF</button></>}>
+        footer={<><button onClick={()=>setShowBulletin(null)} className="btn-secondary">Annuler</button><button disabled={!bulletinForm.idCycle} onClick={async()=>{const b=await genererBulletin(bulletinForm.idCycle);if(b){ouvrirBulletinPdf(b.id);setShowBulletin(null);}}} className="btn-primary"><FileText size={14}/> Télécharger le PDF</button></>}>
         <div className="space-y-4">
-          <FormField label="Bénéficiaire" required>
-            <select className="select" value={bulletinForm.idMembre} onChange={e=>setBulletinForm(f=>({...f,idMembre:e.target.value}))}>
+          <FormField label="Cycle clôturé" required hint="Le bulletin (montant, retenues) est calculé automatiquement à la clôture du cycle.">
+            <select className="select" value={bulletinForm.idCycle} onChange={e=>setBulletinForm(f=>({...f,idCycle:e.target.value}))}>
               <option value="">Sélectionner…</option>
-              {showBulletin && membresDeTontine(showBulletin.id).map(m=><option key={m.idMembre} value={m.idMembre}>{m.nom} {m.prenom}</option>)}
+              {showBulletin && cyclesTontine.filter(c=>c.idTontine===showBulletin.id && c.statut==='clos').map(c=>
+                <option key={c.id} value={c.id}>Cycle n°{c.numeroCycle} — {c.gagnantNom || 'gagnant inconnu'}</option>
+              )}
             </select>
           </FormField>
-          <FormField label="Cycle">
-            <input type="number" min="1" className="input" value={bulletinForm.numeroCycle} onChange={e=>setBulletinForm(f=>({...f,numeroCycle:e.target.value}))}/>
-          </FormField>
-          <div className="grid grid-cols-2 gap-3">
-            <FormField label="Retenue">
-              <input className="input" placeholder="Ex : sanction" value={bulletinForm.retenueLibelle} onChange={e=>setBulletinForm(f=>({...f,retenueLibelle:e.target.value}))}/>
-            </FormField>
-            <FormField label="Montant retenue">
-              <input type="number" min="0" className="input" value={bulletinForm.retenueMontant} onChange={e=>setBulletinForm(f=>({...f,retenueMontant:e.target.value}))}/>
-            </FormField>
-          </div>
+          {showBulletin && cyclesTontine.filter(c=>c.idTontine===showBulletin.id && c.statut==='clos').length===0 && (
+            <p className="text-xs text-gray-500">Aucun cycle clôturé pour cette tontine — le bulletin n'est disponible qu'une fois un cycle terminé (gagnant désigné puis clôturé).</p>
+          )}
         </div>
       </Modal>
 

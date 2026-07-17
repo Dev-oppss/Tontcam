@@ -130,6 +130,16 @@ export const tontineFromApi = (t) => !t ? null : ({
   dateDebut: t.date_debut,
 });
 
+export const cycleFromApi = (c) => !c ? null : ({
+  id: c.id,
+  idTontine: c.tontine_id,
+  numeroCycle: c.numero_cycle,
+  statut: c.statut,
+  gagnantNom: c.gagnant?.membre ? `${c.gagnant.membre.nom} ${c.gagnant.membre.prenom}` : null,
+  idBulletin: c.bulletin?.id || null,
+  dateCloture: c.date_cloture,
+});
+
 export const tontineToApi = (t) => ({
   libelle: t.nom,
   description: t.description || null,

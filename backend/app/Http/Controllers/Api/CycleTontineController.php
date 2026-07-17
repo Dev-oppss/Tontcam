@@ -22,6 +22,21 @@ class CycleTontineController extends Controller
     ) {}
 
     /**
+     * GET /tontines/{id}/cycles — liste des cycles d'une tontine, du plus récent au plus ancien.
+     */
+    public function index(string $tontineId): JsonResponse
+    {
+        $tontine = $this->scope->scopeAssociation(Tontine::query())->findOrFail($tontineId);
+
+        $cycles = $tontine->cycles()
+            ->with(['gagnant.membre', 'bulletin'])
+            ->orderByDesc('numero_cycle')
+            ->get();
+
+        return response()->json($cycles);
+    }
+
+    /**
      * POST /tontines/{id}/cycles/ouvrir
      */
     public function ouvrir(Request $request, string $tontineId): JsonResponse

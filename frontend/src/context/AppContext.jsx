@@ -45,6 +45,7 @@ export const AppProvider = ({ children }) => {
   const [caisseJournal, setCaisseJournal] = useState([]);
   const [utilisateurs, setUtilisateurs] = useState([]);
   const [planningTours, setPlanningTours] = useState([]);
+  const [cyclesTontine, setCyclesTontine] = useState([]);
   const [parametres, setParametres] = useState({});
 
   const showToast = useCallback((message, type = 'success') => {
@@ -914,6 +915,14 @@ export const AppProvider = ({ children }) => {
   };
 
   // ── Bulletins / rapports (génération PDF déléguée au backend) ──
+  const chargerCycles = async (idTontine) => {
+    try {
+      const list = await request(`/tontines/${idTontine}/cycles`);
+      const cycles = (list || []).map(adapt.cycleFromApi);
+      setCyclesTontine((prev) => [...prev.filter((c) => c.idTontine !== idTontine), ...cycles]);
+      return cycles;
+    } catch (err) { return handleError(err); }
+  };
   const genererBulletin = async (idCycle) => {
     try {
       const data = await request(`/cycles/${idCycle}/bulletin`);
@@ -944,7 +953,7 @@ export const AppProvider = ({ children }) => {
     // de transactions par réunion distinct du journal de caisse) — exposés vides pour éviter
     // les crashs sur Membres.jsx/Rapports.jsx ; à construire côté backend si le besoin est confirmé.
     comptesBanque: [], operationsBanque: [], seanceTransactions: seanceTransactionsState, transfertsCaisse,
-    utilisateurs, planningTours, dashboardStats, repartitionBanques, evolutionCaisse: mock.evolutionCaisse,
+    utilisateurs, planningTours, cyclesTontine, chargerCycles, dashboardStats, repartitionBanques, evolutionCaisse: mock.evolutionCaisse,
     showToast,
     login, logout, changePassword, register, updateAssociation,
     addMembre, updateMembre, deleteMembre,

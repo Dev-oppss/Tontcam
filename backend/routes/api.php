@@ -74,6 +74,7 @@ Route::middleware(['auth:sanctum', 'association.context'])->group(function () {
     Route::delete('/ordre-du-jour-rubriques/{id}', [OrdreDuJourRubriqueController::class, 'destroy']);
 
     // ── Tontines & cycles ───────────────────────────────────────
+    Route::get('/tontines/{id}/cycles', [CycleTontineController::class, 'index']);
     Route::apiResource('tontines', TontineController::class);
     Route::post('/tontines/{id}/parts', [TontineController::class, 'ajouterPart']);
     Route::put('/tontines/{id}/parts/{partId}', [TontineController::class, 'modifierPart']);
