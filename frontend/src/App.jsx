@@ -51,6 +51,7 @@ export default function App() {
             <Route index                 element={<Dashboard />}     />
             <Route path="membres"         element={<Membres />}       />
             <Route path="reunions"        element={<Reunions />}      />
+            <Route path="reunions/:id"    element={<Reunions />}      />
             <Route path="tontines"        element={<Tontines />}      />
             <Route path="rotations"       element={<Rotations />}     />
             <Route path="encheres"        element={<Encheres />}      />

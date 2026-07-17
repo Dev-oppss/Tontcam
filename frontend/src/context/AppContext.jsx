@@ -360,6 +360,27 @@ export const AppProvider = ({ children }) => {
   // Alias rétrocompatible
   const cloturerReunion = cloturerSeance;
 
+  // ── Signatures du PV (RG-REU-022 à 024, règle métier) ───────
+  // Le PV reste modifiable tant que le Président n'a pas signé, même si
+  // les autres signataires (secrétaire, trésorier, membre témoin) ont déjà
+  // apposé leur signature. La signature du Président verrouille
+  // DÉFINITIVEMENT la réunion : plus aucune saisie ni modification possible.
+  const signerPV = (reunionId, signature) => {
+    const reunion = reunions.find((r) => r.id === reunionId);
+    if (!reunion || reunion.verrouillee) return false;
+    if ((reunion.signatures || []).some((s) => s.idMembre === signature.idMembre)) return false;
+    const item = { id: uid(), signeLe: new Date().toISOString(), ...signature };
+    const estPresident = signature.role === "president";
+    setReunions((prev) => prev.map((r) => (r.id === reunionId ? {
+      ...r,
+      signatures: [...(r.signatures || []), item],
+      verrouillee: r.verrouillee || estPresident,
+    } : r)));
+    logAudit("reunion", "signature_pv", null, item);
+    showToast(estPresident ? "Signature du Président — réunion verrouillée définitivement" : "Signature enregistrée");
+    return true;
+  };
+
   const addPointODJ = (reunionId, data) => {
     setReunions((prev) => prev.map((r) => {
       if (r.id !== reunionId) return r;
@@ -429,7 +450,14 @@ export const AppProvider = ({ children }) => {
     showToast("Transaction retirée");
   };
 
-  const enregistrerBeneficiaireSeance = (data) => { setRotations((prev) => [...prev, { id: uid(), dateAttribution: today(), ...data }]); showToast("Bénéficiaire enregistré"); };
+  const enregistrerBeneficiaireSeance = (reunionId, data) => {
+    const item = { id: uid(), idReunion: reunionId, dateAttribution: today(), ...data };
+    setRotations((prev) => [...prev, item]);
+    setReunions((prev) => prev.map((r) => (r.id === reunionId ? { ...r, beneficiairesSeance: [...(r.beneficiairesSeance || []), item] } : r)));
+    logAudit("reunion", "beneficiaire_seance", null, item);
+    showToast("Bénéficiaire enregistré");
+    return item;
+  };
   // ── Tirage au sort pondéré par parts disponibles (RG-TON-015/017) ──
   // Exclut les membres déjà gagnants pour cette tontine (parts déjà "gagnées"),
   // pondère la probabilité par le nombre de parts encore disponibles.
@@ -720,7 +748,7 @@ export const AppProvider = ({ children }) => {
     aidesSociales, parametres, postes, mandats, decisionsAG, reglements, rapprochements, auditLog,
     associations, currentAssociation, currentAssociationId, setupComplete, toast, user,
     addMembre, updateMembre, deleteMembre, addTontine, updateTontine, addMembreTontine, removeMembreTontine, updateMembreTontine,
-    addReunion, updateReunion, ouvrirReunion, cloturerReunion, ouvrirSeance, cloturerSeance,
+    addReunion, updateReunion, ouvrirReunion, cloturerReunion, ouvrirSeance, cloturerSeance, signerPV,
     addPointODJ, updatePointODJ, removePointODJ, movePointODJ,
     setPresenceMembre,
     addSeanceTransaction, deleteSeanceTransaction, enregistrerBeneficiaireSeance, tirerAuSort,
@@ -737,8 +765,35 @@ export const AppProvider = ({ children }) => {
     addRapprochement, justifierEcart,
     logAudit, logAuditConsultation,
     login: async (credentials) => {
-      const next = { id: uid(), name: credentials.name || credentials.email || "Utilisateur", role: credentials.role || "president" };
+      const email = String(credentials.email || "").trim().toLowerCase();
+      const password = credentials.password || "";
+      if (!email) throw new Error("Email requis");
+
+      // Premier compte de l'association = super-admin, créé automatiquement
+      // à la première connexion (accès complet, RG-SEC · rôle 'admin').
+      if (utilisateurs.length === 0) {
+        const compteAdmin = {
+          id: uid(), nomUtilisateur: email, nomMembre: credentials.name || "Administrateur",
+          idMembre: null, role: "admin", motDePasse: password, statut: "actif",
+          derniereConnexion: new Date().toLocaleString("fr-FR"),
+        };
+        setUtilisateurs([compteAdmin]);
+        const next = { id: compteAdmin.id, idMembre: compteAdmin.idMembre, name: compteAdmin.nomMembre, role: "admin", email };
+        setUser(next);
+        logAudit("utilisateur", "creation_admin", null, { email });
+        showToast("Compte administrateur créé — bienvenue");
+        return { user: next, must_change_password: false };
+      }
+
+      const compte = utilisateurs.find((u) => (u.nomUtilisateur || "").trim().toLowerCase() === email);
+      if (!compte) throw new Error("Compte inconnu. Contactez votre administrateur pour créer votre accès.");
+      if (compte.statut !== "actif") throw new Error("Compte désactivé. Contactez votre administrateur.");
+      if (compte.motDePasse && compte.motDePasse !== password) throw new Error("Mot de passe incorrect.");
+
+      const next = { id: compte.id, idMembre: compte.idMembre, name: compte.nomMembre, role: compte.role, email };
       setUser(next);
+      setUtilisateurs((prev) => prev.map((u) => (u.id === compte.id ? { ...u, derniereConnexion: new Date().toLocaleString("fr-FR") } : u)));
+      logAudit("utilisateur", "connexion", null, { email });
       showToast("Connexion réussie");
       return { user: next, must_change_password: false };
     },

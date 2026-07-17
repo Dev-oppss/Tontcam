@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
-import { ACTEUR_ROLES } from '../data/mockData';
 
 const pillars = [
   'Organisation claire',
@@ -12,9 +11,9 @@ const pillars = [
 ];
 
 export default function Login() {
-  const { user, login, changePassword } = useApp();
+  const { user, login, changePassword, utilisateurs } = useApp();
   const navigate = useNavigate();
-  const [form, setForm] = useState({ name: '', email: '', password: '', role: 'president' });
+  const [form, setForm] = useState({ name: '', email: '', password: '' });
   const [mustChange, setMustChange] = useState(false);
   const [passwordForm, setPasswordForm] = useState({ current_password: '', password: '', password_confirmation: '' });
   const [error, setError] = useState(null);
@@ -33,8 +32,8 @@ export default function Login() {
         return;
       }
       navigate('/');
-    } catch {
-      setError('Connexion impossible. Vérifiez vos identifiants.');
+    } catch (err) {
+      setError(err?.message || 'Connexion impossible. Vérifiez vos identifiants.');
     }
   };
 
@@ -122,16 +121,23 @@ export default function Login() {
 
           {!mustChange ? (
             <form onSubmit={submit} className="space-y-4">
-              <div>
-                <label className="label">Nom complet</label>
-                <input
-                  type="text"
-                  value={form.name}
-                  onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  className="input"
-                  placeholder="Ex : Jean Mballa"
-                />
-              </div>
+              {(!utilisateurs || utilisateurs.length === 0) && (
+                <>
+                  <div className="rounded-2xl bg-[#eef4ff] border border-[#cfdcff] p-3 text-xs text-[#1f4aa6]">
+                    Premier accès à cette association — ce compte devient automatiquement <strong>Administrateur</strong>.
+                  </div>
+                  <div>
+                    <label className="label">Nom complet</label>
+                    <input
+                      type="text"
+                      value={form.name}
+                      onChange={(e) => setForm({ ...form, name: e.target.value })}
+                      className="input"
+                      placeholder="Ex : Jean Mballa"
+                    />
+                  </div>
+                </>
+              )}
               <div>
                 <label className="label">Email</label>
                 <input
@@ -150,19 +156,10 @@ export default function Login() {
                   className="input"
                 />
               </div>
-              <div>
-                <label className="label">Rôle</label>
-                <select
-                  value={form.role}
-                  onChange={(e) => setForm({ ...form, role: e.target.value })}
-                  className="select"
-                >
-                  {ACTEUR_ROLES.map((r) => (
-                    <option key={r.value} value={r.value}>{r.label}</option>
-                  ))}
-                </select>
-                <p className="text-xs text-ink-600/45 mt-1">Détermine quelles rubriques de réunion vous pouvez saisir.</p>
-              </div>
+              <p className="text-xs text-ink-600/45 -mt-1">
+                Votre rôle est déterminé par le compte créé pour vous dans <strong>Utilisateurs</strong> (onglet Sécurité).
+                Le tout premier compte créé sur une association devient automatiquement Administrateur.
+              </p>
               {error && <div className="text-sm text-[#a64734]">{error}</div>}
               <button type="submit" className="btn-primary w-full justify-center">Se connecter</button>
             </form>

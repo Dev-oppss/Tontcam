@@ -1,4 +1,5 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import {
   CalendarPlus, MapPin, Users, Clock, CheckCircle, PlayCircle,
   Plus, Trash2, Pencil, Lock, FileText, AlertCircle,
@@ -6,9 +7,9 @@ import {
   Landmark, DollarSign, ChevronRight, Printer, Receipt, X,
   ClipboardCheck, ShieldAlert, CheckSquare, XSquare, MinusSquare,
   BadgeDollarSign, TrendingUp, AlertTriangle, Banknote,
-  Trophy, Dices, Gavel, RefreshCw, Star,
+  Trophy, Dices, Gavel, RefreshCw, Star, HeartHandshake, ArrowLeft,
 } from 'lucide-react';
-import { fmtDate, typePointLabel, statutPointLabel, fmt, periodeLabel, ACTEUR_ROLES, acteurRoleLabel, STATUTS_PRESENCE, statutPresenceLabel } from '../data/mockData';
+import { fmtDate, typePointLabel, statutPointLabel, fmt, periodeLabel, ACTEUR_ROLES, acteurRoleLabel, roleLabel, STATUTS_PRESENCE, statutPresenceLabel, MODES_PAIEMENT, modePaiementConfig } from '../data/mockData';
 import { useApp, TX_TYPES, TX_LABELS } from '../context/AppContext';
 import { PageHeader, Badge, Modal, FormField } from '../components/ui/index';
 import { ModePaiementFields, isModePaiementValid, ModePaiementBadge } from '../components/ui/ModePaiement';
@@ -35,6 +36,28 @@ const statutPointCfg = {
   annule:   { v:'red',   label:'Annulé'   },
 };
 
+// ── Accès aux onglets de la fiche réunion, par rôle (RG-SEC-002) ──
+// Un acteur ne voit QUE les onglets qui le concernent. Le rôle vient du
+// compte créé dans Utilisateurs (Sécurité), pas d'un choix libre à la
+// connexion. Le Président voit tout en LECTURE SEULE (consultation
+// générale). L'Administrateur (créateur de l'association / super-admin)
+// a accès complet à tout, y compris la saisie — c'est le seul rôle à la
+// fois "voit tout" et "peut tout modifier".
+const TAB_ACCESS = {
+  info:               ['admin','president','vice_president','tresorier','secretaire','controleur','membre'],
+  presences:          ['admin','president','secretaire','controleur'],
+  feuille_cotisation: ['admin','president','tresorier','controleur'],
+  beneficiaire:       ['admin','president','tresorier','secretaire','controleur'],
+  remboursement:      ['admin','president','tresorier','controleur'],
+  pret:               ['admin','president','tresorier','controleur'],
+  sanction:           ['admin','president','tresorier','secretaire','controleur'],
+  aide:               ['admin','president','tresorier','secretaire','controleur'],
+  banque:             ['admin','president','tresorier','controleur'],
+  divers:             ['admin','president','tresorier','controleur'],
+  signatures:         ['admin','president','vice_president','tresorier','secretaire','controleur'],
+};
+const ROLES_LECTURE_SEULE = ['president','controleur'];
+
 const EMPTY_REUNION   = { date:'', lieu:'', numero:'', observation:'' };
 const EMPTY_OUVERTURE = { heureOuverture:'', presidentSeance:'', secretaireSeance:'', motOuverture:'' };
 const EMPTY_CLOTURE   = { heureCloture:'', presents:'', absents:'', membresAbsents:'', observation:'' };
@@ -44,7 +67,7 @@ const EMPTY_TX        = { type:'cotisation', idMembre:'', montant:'', libelle:''
 // ── Feuille de présence / cotisation tontine ─────────────────
 const STATUT_COTIS = { non_defini: null, cotise: 'cotise', defaillant: 'defaillant' };
 
-function FeuillePresenceTontine({ reunion, onClose }) {
+function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
   const {
     tontines, membres, membresParTontine,
     addSeanceTransaction, addSanction, seanceTransactions,
@@ -52,11 +75,12 @@ function FeuillePresenceTontine({ reunion, onClose }) {
     encheres,
   } = useApp();
 
-  const locked   = reunion.statutReunion === 'cloturee';
+  const locked   = !!reunion.verrouillee;
   const notOpen  = reunion.statutReunion === 'planifiee';
 
   const [idTontineSelectee, setIdTontineSelectee] = useState('');
   const [statutParMembre,   setStatutParMembre]   = useState({});
+  const [modeParMembre,     setModeParMembre]     = useState({}); // { [idMembre]: { modePaiement, detailsPaiement } }
   const [sanctionMontant,   setSanctionMontant]   = useState('');
   const [valide,            setValide]            = useState(false);
   // etape: 'choix' - 'cotisation' - 'beneficiaire' - 'recap'
@@ -109,17 +133,38 @@ function FeuillePresenceTontine({ reunion, onClose }) {
     return encheres.filter(e => e.statut === 'en_attente');
   }, [tontineSelectee, typeAttr, encheres]);
 
-  const setStatut = (idMembre, statut) =>
-    setStatutParMembre(prev => ({ ...prev, [idMembre]: prev[idMembre] === statut ? undefined : statut }));
+  // Par défaut, chaque membre est considéré cotisé (RG-TON-030 : toute
+  // cotisation non renseignée est marquée impayée) — l'utilisateur décoche
+  // uniquement les membres qui n'ont pas payé, au lieu de tout cocher un à un.
+  useEffect(() => {
+    if (!tontineSelectee) return;
+    setStatutParMembre(prev => {
+      const next = { ...prev }; let changed = false;
+      membresDeLatontine.forEach(m => { if (next[m.id] === undefined) { next[m.id] = 'cotise'; changed = true; } });
+      return changed ? next : prev;
+    });
+    setModeParMembre(prev => {
+      const next = { ...prev }; let changed = false;
+      membresDeLatontine.forEach(m => { if (!next[m.id]) { next[m.id] = { modePaiement: 'especes', detailsPaiement: '' }; changed = true; } });
+      return changed ? next : prev;
+    });
+  }, [idTontineSelectee, membresDeLatontine, tontineSelectee]);
+
+  const toggleCotise = (idMembre) =>
+    setStatutParMembre(prev => ({ ...prev, [idMembre]: prev[idMembre] === 'defaillant' ? 'cotise' : 'defaillant' }));
+  const setModePaiementMembre = (idMembre, patch) =>
+    setModeParMembre(prev => ({ ...prev, [idMembre]: { ...(prev[idMembre]||{modePaiement:'especes',detailsPaiement:''}), ...patch } }));
 
   // ── Valider la feuille de cotisation ──
   const handleValiderFeuille = () => {
     if (!tontineSelectee) return;
     cotises.forEach(m => {
+      const mode = modeParMembre[m.id] || { modePaiement:'especes', detailsPaiement:'' };
       addSeanceTransaction(reunion.id, {
         type: 'cotisation', idMembre: m.id, montant: m.montantDu,
         libelle: `Cotisation ${tontineSelectee.nom} — ${m.nombreParts} part(s)`,
         idTontine: tontineSelectee.id,
+        modePaiement: mode.modePaiement, detailsPaiement: mode.detailsPaiement,
       }, [], membres);
     });
     defaillants.forEach(m => {
@@ -177,7 +222,7 @@ function FeuillePresenceTontine({ reunion, onClose }) {
   };
 
   const reset = () => {
-    setIdTontineSelectee(''); setEtape('choix'); setStatutParMembre({});
+    setIdTontineSelectee(''); setEtape('choix'); setStatutParMembre({}); setModeParMembre({});
     setValide(false); setSanctionMontant(''); setGagnant(null);
     setEnchereIdGagnant(''); setMiseGagnante(''); setTirageEffectue(false);
   };
@@ -298,51 +343,70 @@ function FeuillePresenceTontine({ reunion, onClose }) {
             - Changer de tontine
           </button>
 
-          {/* Sélection rapide */}
-          <div className="flex gap-2">
-            <button onClick={() => { const all = {}; membresDeLatontine.forEach(m => { all[m.id] = 'cotise'; }); setStatutParMembre(all); }}
-              className="btn-secondary text-xs py-1.5 flex-1"><CheckSquare size={12}/> Tous cotisé</button>
-            <button onClick={() => setStatutParMembre({})} className="btn-secondary text-xs py-1.5 flex-1">
-              <MinusSquare size={12}/> Réinitialiser</button>
+          {/* Consigne simple */}
+          <div className="p-2.5 bg-gray-50 rounded-xl text-xs text-gray-500 flex items-start gap-2">
+            <ClipboardCheck size={14} className="mt-0.5 shrink-0 text-primary-500"/>
+            <p>Tout le monde est coché <strong>« a cotisé »</strong> par défaut. Décochez uniquement les membres qui n'ont pas payé.</p>
           </div>
 
-          {/* Liste membres */}
-          <div className="rounded-2xl border border-gray-200 overflow-hidden">
-            <div className="grid grid-cols-[1fr_auto_auto_auto] bg-gray-50 px-3 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wide">
-              <span>Membre</span><span className="pr-2 text-center">Parts</span>
-              <span className="pr-2 text-right">Dû</span><span className="text-center">Statut</span>
+          {/* Sélection rapide */}
+          {!(locked || readOnly) && (
+            <div className="flex gap-2">
+              <button onClick={() => { const all = {}; membresDeLatontine.forEach(m => { all[m.id] = 'cotise'; }); setStatutParMembre(all); }}
+                className="btn-secondary text-xs py-1.5 flex-1"><CheckSquare size={12}/> Tout cocher (tous cotisé)</button>
+              <button onClick={() => { const all = {}; membresDeLatontine.forEach(m => { all[m.id] = 'defaillant'; }); setStatutParMembre(all); }}
+                className="btn-secondary text-xs py-1.5 flex-1">
+                <MinusSquare size={12}/> Tout décocher</button>
             </div>
-            <div className="divide-y divide-gray-100">
-              {membresDeLatontine.map(m => {
-                const isCotise  = statutParMembre[m.id] === 'cotise';
-                const isDefaill = statutParMembre[m.id] === 'defaillant';
-                return (
-                  <div key={m.id} className={clsx('grid grid-cols-[1fr_auto_auto_auto] items-center px-3 py-2.5 transition-colors',
-                    isCotise ? 'bg-green-50' : isDefaill ? 'bg-red-50' : 'bg-white hover:bg-gray-50')}>
-                    <div>
-                      <p className={clsx('font-semibold text-sm', isCotise ? 'text-green-800' : isDefaill ? 'text-red-700' : 'text-gray-800')}>
-                        {m.nom} {m.prenom}
+          )}
+
+          {/* Liste membres — cases à cocher larges + mode de paiement inline */}
+          <div className="rounded-2xl border border-gray-200 overflow-hidden divide-y divide-gray-100">
+            {membresDeLatontine.map(m => {
+              const isCotise = statutParMembre[m.id] !== 'defaillant';
+              const mode = modeParMembre[m.id] || { modePaiement:'especes', detailsPaiement:'' };
+              const modeCfg = modePaiementConfig?.[mode.modePaiement];
+              const dis = locked || readOnly;
+              return (
+                <div key={m.id} className={clsx('px-3 py-3 transition-colors', isCotise ? 'bg-green-50' : 'bg-red-50')}>
+                  <div className="flex items-center gap-3">
+                    {/* Grande case à cocher tactile */}
+                    <button onClick={() => toggleCotise(m.id)} disabled={dis}
+                      aria-label={isCotise ? 'Décocher (n\'a pas cotisé)' : 'Cocher (a cotisé)'}
+                      className={clsx('w-10 h-10 rounded-xl flex items-center justify-center border-2 shrink-0 transition-all',
+                        dis && 'opacity-60 cursor-not-allowed',
+                        isCotise ? 'bg-green-500 border-green-500 text-white' : 'bg-white border-red-300 text-red-400')}>
+                      {isCotise ? <CheckSquare size={20}/> : <XSquare size={20}/>}
+                    </button>
+                    <div className="flex-1 min-w-0">
+                      <p className={clsx('font-semibold text-sm truncate', isCotise ? 'text-green-800' : 'text-red-700')}>
+                        {m.nom} {m.prenom} <span className="text-xs font-normal text-gray-400">x{m.nombreParts} part(s)</span>
                       </p>
-                      <p className="text-xs text-gray-400">{m.profession}</p>
+                      <p className={clsx('text-sm font-bold', isCotise ? 'text-green-700' : 'text-red-600')}>{fmt(m.montantDu)}</p>
                     </div>
-                    <span className="text-xs font-bold bg-gray-100 px-2 py-0.5 rounded-full mx-2">x{m.nombreParts}</span>
-                    <p className={clsx('text-sm font-bold pr-2', isCotise ? 'text-green-700' : isDefaill ? 'text-red-600' : 'text-gray-700')}>{fmt(m.montantDu)}</p>
-                    <div className="flex gap-1.5">
-                      <button onClick={() => setStatut(m.id, 'cotise')}
-                        className={clsx('w-8 h-8 rounded-lg flex items-center justify-center border transition-all',
-                          isCotise ? 'bg-green-500 border-green-500 text-white' : 'border-gray-200 text-gray-300 hover:border-green-300 hover:text-green-500')}>
-                        <CheckSquare size={15}/>
-                      </button>
-                      <button onClick={() => setStatut(m.id, 'defaillant')}
-                        className={clsx('w-8 h-8 rounded-lg flex items-center justify-center border transition-all',
-                          isDefaill ? 'bg-red-500 border-red-500 text-white' : 'border-gray-200 text-gray-300 hover:border-red-300 hover:text-red-500')}>
-                        <XSquare size={15}/>
-                      </button>
-                    </div>
+                    <span className={clsx('text-xs font-bold px-2 py-1 rounded-full shrink-0', isCotise ? 'bg-green-600 text-white' : 'bg-red-500 text-white')}>
+                      {isCotise ? 'A cotisé' : 'Défaillant'}
+                    </span>
                   </div>
-                );
-              })}
-            </div>
+                  {/* Mode de paiement — seulement si a cotisé */}
+                  {isCotise && (
+                    <div className="mt-2 pl-[52px] flex flex-wrap items-center gap-2">
+                      <select className="select text-xs py-1.5 flex-1 min-w-[140px]" disabled={dis}
+                        value={mode.modePaiement}
+                        onChange={e => setModePaiementMembre(m.id, { modePaiement: e.target.value, detailsPaiement: '' })}>
+                        {MODES_PAIEMENT.map(mp => <option key={mp.value} value={mp.value}>{mp.label}</option>)}
+                      </select>
+                      {modeCfg?.detail && (
+                        <input className="input text-xs py-1.5 flex-1 min-w-[140px]" disabled={dis}
+                          placeholder={modeCfg.detailPlaceholder || 'Référence'}
+                          value={mode.detailsPaiement}
+                          onChange={e => setModePaiementMembre(m.id, { detailsPaiement: e.target.value })}/>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
 
           {/* Bilan */}
@@ -377,7 +441,7 @@ function FeuillePresenceTontine({ reunion, onClose }) {
             </div>
           )}
 
-          {!locked && (
+          {!locked && !readOnly && (
             <button onClick={handleValiderFeuille}
               disabled={cotises.length + defaillants.length === 0}
               className={clsx('btn-primary w-full justify-center', cotises.length + defaillants.length === 0 && 'opacity-40 cursor-not-allowed')}>
@@ -605,24 +669,13 @@ function RapportSeance({ reunion, transactions, membres, onClose }) {
     : null;
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-box max-w-[100rem] w-full" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
-          <div className="flex items-center gap-2">
-            <FileText size={18} className="text-primary-600"/>
-            <h3 className="font-bold text-gray-900">Procès-verbal — Réunion N°{reunion.numero}</h3>
-          </div>
-          <div className="flex gap-2">
-            <button onClick={() => window.print()} className="btn-secondary text-xs py-1.5">
-              <Printer size={13}/> Imprimer
-            </button>
-            <button onClick={onClose} className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100">
-              <X size={16}/>
-            </button>
-          </div>
-        </div>
-
-        <div id="rapport-print" className="flex-1 min-h-0 overflow-y-auto p-6 space-y-5 text-sm">
+    <Modal open={true} onClose={onClose} size="full"
+      title={<span className="flex items-center gap-2"><FileText size={18} className="text-primary-600"/>Procès-verbal — Réunion N°{reunion.numero}</span>}
+      footer={<>
+        <button onClick={() => window.print()} className="btn-secondary"><Printer size={14}/> Imprimer</button>
+        <button onClick={onClose} className="btn-primary ml-auto">Fermer</button>
+      </>}>
+        <div id="rapport-print" className="space-y-5 text-sm">
           {/* En-tête officiel */}
           <div className="text-center border-b-2 border-primary-200 pb-4">
             <p className="text-xs text-gray-400 uppercase tracking-widest mb-1">Procès-verbal de séance</p>
@@ -825,22 +878,31 @@ function RapportSeance({ reunion, transactions, membres, onClose }) {
             </div>
           )}
 
-          {/* Signatures */}
+          {/* Signatures du PV */}
           <div className="border-t-2 border-dashed border-gray-200 pt-4 mt-2">
-            <div className="grid grid-cols-2 gap-8 text-center text-xs text-gray-500">
-              <div>
-                <p className="font-semibold mb-8">Le Président de séance</p>
-                <p className="border-t border-gray-300 pt-1">{reunion.ouverture?.presidentSeance || '________________________'}</p>
-              </div>
-              <div>
-                <p className="font-semibold mb-8">Le Secrétaire de séance</p>
-                <p className="border-t border-gray-300 pt-1">{reunion.ouverture?.secretaireSeance || '________________________'}</p>
-              </div>
+            <h4 className="font-bold text-gray-700 uppercase text-xs tracking-wider mb-3 flex items-center gap-2">
+              <Lock size={12} className={reunion.verrouillee ? 'text-green-600' : 'text-amber-500'}/>
+              Signatures {reunion.verrouillee ? '— PV verrouillé définitivement' : '— en attente de signature du Président'}
+            </h4>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center text-xs">
+              {SIGNATAIRES_ATTENDUS.map(slot => {
+                const sig = (reunion.signatures || []).find(s => s.role === slot.role);
+                return (
+                  <div key={slot.role} className={clsx('rounded-xl border p-3', sig ? 'bg-green-50 border-green-200' : 'border-dashed border-gray-200')}>
+                    <p className="text-gray-400 mb-1">{acteurRoleLabel[slot.role] || slot.label}</p>
+                    {sig ? (
+                      <>
+                        <p className="font-semibold text-green-700">{sig.nom}</p>
+                        <p className="text-[10px] text-gray-400 mt-0.5">{new Date(sig.signeLe).toLocaleString('fr-FR')}</p>
+                      </>
+                    ) : <p className="italic text-gray-300">Non signé</p>}
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -1377,7 +1439,7 @@ function BeneficiaireSeancePanel({ reunion }) {
   const [miseGagnante, setMiseGagnante] = useState('');
   const [enchereIdGagnant, setEnchereIdGagnant] = useState('');
 
-  const locked = reunion.statutReunion === 'cloturee';
+  const locked = !!reunion.verrouillee;
   const beneficiairesSeance = reunion.beneficiairesSeance || [];
 
   const tontine = tontines.find(t => t.id === idTontine);
@@ -1708,7 +1770,7 @@ function BeneficiaireSeancePanel({ reunion }) {
 // ── Panneau Présences (RG-REU-016 à 019) ──────────────────────
 function PanneauPresences({ reunion, membres }) {
   const { presences, setPresenceMembre } = useApp();
-  const locked  = reunion.statutReunion === 'cloturee';
+  const locked  = !!reunion.verrouillee;
   const notOpen = reunion.statutReunion === 'planifiee';
 
   const presencesReunion = presences.filter(p => p.reunionId === reunion.id);
@@ -1824,16 +1886,17 @@ function PanneauPresences({ reunion, membres }) {
 }
 
 
-// ── Panneau transactions séance ───────────────────────────────
-function PanneauTransactions({ reunion, onClose }) {
+// ── Panneau rubrique séance (ex-Transactions, éclaté par rubrique) ──
+// Chaque rubrique métier (Remboursement, Prêt, Sanction, Aide sociale,
+// Banque, Divers) a maintenant sa propre interface dédiée au lieu d'un
+// unique onglet "Transactions" fourre-tout avec sélecteur de type.
+function PanneauRubrique({ reunion, types, titre, readOnly = false }) {
   const {
     membres, banques, prets, sanctions,
     seanceTransactions, addSeanceTransaction, deleteSeanceTransaction,
     tontines, membresParTontine, caisseJournal,
   } = useApp();
 
-  // Solde de caisse disponible, toutes séances confondues (RG-CAI-006 : le
-  // solde d'une caisse ne peut jamais devenir négatif).
   const soldeDisponibleCaisse = (caisseJournal || []).reduce((s, t) => {
     const dir = TX_TYPES.find(tt => tt.value === t.type)?.dir;
     if (dir === 'entree') return s + Number(t.montant || 0);
@@ -1841,20 +1904,16 @@ function PanneauTransactions({ reunion, onClose }) {
     return s;
   }, 0);
 
-  const txs     = seanceTransactions.filter(t => t.reunionId === reunion.id);
-  const locked  = reunion.statutReunion === 'cloturee';
+  const txs     = seanceTransactions.filter(t => t.reunionId === reunion.id && types.includes(t.type));
+  const locked  = !!reunion.verrouillee || readOnly;
   const notOpen = reunion.statutReunion === 'planifiee';
 
-  const [selectedType, setSelectedType] = useState(null);
-  // null        - bouton "Enregistrer"
-  // '__picker__'- grille de sélection du type
-  // 'cotisation'- formulaire intelligent du type choisi
+  // Un seul type -> formulaire direct. Plusieurs types (ex: Divers) -> petit choix parmi eux seulement.
+  const [selectedType, setSelectedType] = useState(types.length === 1 ? types[0] : null);
 
   const totalEntrees = txs.filter(t => TX_TYPES.find(tt => tt.value === t.type)?.dir === 'entree').reduce((s, t) => s + t.montant, 0);
   const totalSorties = txs.filter(t => TX_TYPES.find(tt => tt.value === t.type)?.dir === 'sortie').reduce((s, t) => s + t.montant, 0);
-  const totalBanque  = txs.filter(t => t.type === 'depot_banque').reduce((s, t) => s + t.montant, 0);
 
-  // ── Garde : séance non ouverte
   if (notOpen) {
     return (
       <div className="flex flex-col items-center justify-center py-12 text-center space-y-3">
@@ -1862,10 +1921,7 @@ function PanneauTransactions({ reunion, onClose }) {
           <Lock size={28} className="text-amber-500"/>
         </div>
         <p className="font-bold text-gray-700">Séance non ouverte</p>
-        <p className="text-sm text-gray-400 max-w-xs">Aucune transaction ne peut être enregistrée tant que la séance n'est pas officiellement ouverte.</p>
-        <div className="px-4 py-2 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-700 font-medium">
-           Cliquez sur "Ouvrir la séance" pour commencer les opérations
-        </div>
+        <p className="text-sm text-gray-400 max-w-xs">Aucune saisie de {titre.toLowerCase()} tant que la séance n'est pas officiellement ouverte.</p>
       </div>
     );
   }
@@ -1881,70 +1937,53 @@ function PanneauTransactions({ reunion, onClose }) {
       idBanque:   form.idBanque   || null,
       nomMembre:  m ? `${m.nom} ${m.prenom}` : (form.nomMembre || ''),
     });
-    setSelectedType(null);
+    if (types.length > 1) setSelectedType(null); else setSelectedType(types[0]);
   };
 
   return (
     <div className="space-y-4">
-
-      {/* Résumé financier */}
-      <div className="grid grid-cols-3 gap-2">
-        {[
-          { l: 'Entrées caisse', v: totalEntrees, c: 'text-green-600', bg: 'bg-green-50 border border-green-100' },
-          { l: 'Sorties caisse', v: totalSorties, c: 'text-red-500',   bg: 'bg-red-50 border border-red-100'     },
-          { l: 'Dépôts banque',  v: totalBanque,  c: 'text-blue-600',  bg: 'bg-blue-50 border border-blue-100'   },
-        ].map(s => (
-          <div key={s.l} className={`p-2.5 rounded-xl text-center ${s.bg}`}>
-            <p className={`text-base font-bold ${s.c}`}>{fmt(s.v)}</p>
-            <p className="text-xs text-gray-500">{s.l}</p>
+      {/* Résumé financier de la rubrique */}
+      {(totalEntrees > 0 || totalSorties > 0) && (
+        <div className="grid grid-cols-2 gap-2">
+          <div className="p-2.5 rounded-xl text-center bg-green-50 border border-green-100">
+            <p className="text-base font-bold text-green-600">{fmt(totalEntrees)}</p>
+            <p className="text-xs text-gray-500">Entrées</p>
           </div>
-        ))}
-      </div>
+          <div className="p-2.5 rounded-xl text-center bg-red-50 border border-red-100">
+            <p className="text-base font-bold text-red-500">{fmt(totalSorties)}</p>
+            <p className="text-xs text-gray-500">Sorties</p>
+          </div>
+        </div>
+      )}
 
-      {/* Zone formulaire / sélecteur */}
+      {/* Zone formulaire */}
       {!locked && (
         <div>
-          {/* Bouton principal */}
-          {selectedType === null && (
-            <button
-              onClick={() => setSelectedType('__picker__')}
-              className="btn-primary w-full text-sm justify-center"
-            >
-              <Plus size={15}/> Enregistrer une transaction
-            </button>
-          )}
-
-          {/* Sélecteur de type */}
-          {selectedType === '__picker__' && (
-            <div className="p-4 bg-white rounded-xl border border-gray-200 shadow-sm space-y-4">
-              <div className="flex items-center justify-between">
-                <p className="text-sm font-bold text-gray-800">Choisir le type de transaction</p>
-                <button
-                  onClick={() => setSelectedType(null)}
-                  className="p-1 rounded-lg hover:bg-gray-100 text-gray-400"
-                >
-                  <X size={15}/>
-                </button>
-              </div>
-              <TypePicker onSelect={(t) => setSelectedType(t)} />
+          {types.length > 1 && selectedType === null && (
+            <div className="flex gap-2">
+              {types.map(tv => {
+                const meta = TX_TYPES.find(t => t.value === tv);
+                return (
+                  <button key={tv} onClick={() => setSelectedType(tv)} className="btn-secondary flex-1 justify-center text-sm">
+                    {meta?.icon} {meta?.label}
+                  </button>
+                );
+              })}
             </div>
           )}
-
-          {/* Formulaire intelligent selon le type choisi */}
-          {selectedType && selectedType !== '__picker__' && (
+          {selectedType && (
             <div className="p-4 bg-white rounded-xl border border-gray-200 shadow-sm">
-              <div className="flex items-center justify-between mb-3">
-                <p className="text-sm font-bold text-gray-800">
-                  {TX_TYPES.find(t => t.value === selectedType)?.icon}{' '}
-                  {TX_TYPES.find(t => t.value === selectedType)?.label}
-                </p>
-                <button
-                  onClick={() => setSelectedType('__picker__')}
-                  className="text-xs text-primary-600 hover:underline"
-                >
-                  - Changer de type
-                </button>
-              </div>
+              {types.length > 1 && (
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-sm font-bold text-gray-800">
+                    {TX_TYPES.find(t => t.value === selectedType)?.icon}{' '}
+                    {TX_TYPES.find(t => t.value === selectedType)?.label}
+                  </p>
+                  <button onClick={() => setSelectedType(null)} className="text-xs text-primary-600 hover:underline">
+                    - Changer de type
+                  </button>
+                </div>
+              )}
               <SmartFormWrapper
                 type={selectedType}
                 reunion={reunion}
@@ -1956,19 +1995,18 @@ function PanneauTransactions({ reunion, onClose }) {
                 membresParTontine={membresParTontine}
                 soldeDisponible={soldeDisponibleCaisse}
                 onSubmit={handleSubmitTx}
-                onCancel={() => setSelectedType(null)}
+                onCancel={() => setSelectedType(types.length > 1 ? null : types[0])}
               />
             </div>
           )}
         </div>
       )}
 
-      {/* Liste des transactions enregistrées */}
+      {/* Liste des opérations de cette rubrique */}
       {txs.length === 0 ? (
         <div className="text-center py-8 text-gray-400">
           <DollarSign size={28} className="mx-auto mb-2 text-gray-200"/>
-          <p className="text-sm">Aucune transaction enregistrée pour cette séance</p>
-          {!locked && <p className="text-xs mt-1">Cliquez sur « Enregistrer une transaction » pour commencer</p>}
+          <p className="text-sm">Aucune opération « {titre} » enregistrée pour cette séance</p>
         </div>
       ) : (
         <div className="space-y-2">
@@ -1977,13 +2015,9 @@ function PanneauTransactions({ reunion, onClose }) {
             const isEntree = meta?.dir === 'entree';
             const isSortie = meta?.dir === 'sortie';
             return (
-              <div key={tx.id}
-                className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl group hover:bg-white hover:shadow-sm transition-all"
-              >
-                <div className={clsx(
-                  'w-9 h-9 rounded-xl flex items-center justify-center text-base shrink-0',
-                  isEntree ? 'bg-green-100' : isSortie ? 'bg-red-100' : 'bg-blue-100'
-                )}>
+              <div key={tx.id} className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl group hover:bg-white hover:shadow-sm transition-all">
+                <div className={clsx('w-9 h-9 rounded-xl flex items-center justify-center text-base shrink-0',
+                  isEntree ? 'bg-green-100' : isSortie ? 'bg-red-100' : 'bg-blue-100')}>
                   {meta?.icon || ''}
                 </div>
                 <div className="flex-1 min-w-0">
@@ -1994,32 +2028,156 @@ function PanneauTransactions({ reunion, onClose }) {
                   <ModePaiementBadge modePaiement={tx.modePaiement} detailsPaiement={tx.detailsPaiement} />
                 </div>
                 <div className="text-right shrink-0">
-                  <p className={clsx('text-sm font-bold',
-                    isEntree ? 'text-green-600' : isSortie ? 'text-red-500' : 'text-blue-600'
-                  )}>
+                  <p className={clsx('text-sm font-bold', isEntree ? 'text-green-600' : isSortie ? 'text-red-500' : 'text-blue-600')}>
                     {isEntree ? '+' : isSortie ? '−' : ''} {fmt(tx.montant)}
                   </p>
-                  <p className="text-xs text-gray-400">{meta?.label}</p>
                 </div>
                 {!locked && (
-                  <button
-                    onClick={() => deleteSeanceTransaction(tx.id)}
-                    className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg opacity-0 group-hover:opacity-100 transition-all shrink-0"
-                  >
+                  <button onClick={() => deleteSeanceTransaction(tx.id)}
+                    className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg opacity-0 group-hover:opacity-100 transition-all shrink-0">
                     <Trash2 size={13}/>
                   </button>
                 )}
               </div>
             );
           })}
-          {/* Total séance */}
-          <div className="flex justify-between items-center p-2.5 bg-gray-100 rounded-xl text-xs font-bold text-gray-700 mt-1">
-            <span>{txs.length} transaction(s)</span>
-            <span className={totalEntrees - totalSorties >= 0 ? 'text-green-700' : 'text-red-600'}>
-              Net : {totalEntrees - totalSorties >= 0 ? '+' : ''}{fmt(totalEntrees - totalSorties)}
-            </span>
-          </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+// Configuration des rubriques individuelles (remplace l'onglet unique Transactions)
+const RUBRIQUES = [
+  { id:'remboursement', label:'Remboursement', icon: Receipt,     types:['remboursement_pret'] },
+  { id:'pret',          label:'Prêt',          icon: Landmark,    types:['pret_accorde']        },
+  { id:'sanction',      label:'Sanctions',     icon: AlertTriangle, types:['amende']             },
+  { id:'aide',          label:'Aide sociale',  icon: HeartHandshake, types:['aide_sociale']      },
+  { id:'banque',        label:'Banque',        icon: Landmark,    types:['depot_banque']         },
+  { id:'divers',        label:'Divers',        icon: DollarSign,  types:['divers_entree','divers_sortie'] },
+];
+
+// ── Panneau Signatures du PV (règle : verrouillage définitif au Président) ──
+// 4 signataires attendus (Président, Secrétaire, Trésorier, 1 membre témoin).
+// Tant que le Président n'a pas signé, la réunion reste modifiable — même
+// si les 3 autres ont déjà signé. La signature du Président verrouille
+// IMMÉDIATEMENT et DÉFINITIVEMENT la réunion.
+const SIGNATAIRES_ATTENDUS = [
+  { role: 'president',  label: 'Président'  },
+  { role: 'secretaire',  label: 'Secrétaire' },
+  { role: 'tresorier',   label: 'Trésorier'  },
+  { role: 'membre',      label: 'Membre témoin' },
+];
+
+const ROLES_PEUVENT_ENREGISTRER_TEMOIN = ['admin','president','secretaire','tresorier'];
+
+function PanneauSignatures({ reunion }) {
+  const { user, membres, signerPV } = useApp();
+  const signatures = reunion.signatures || [];
+  const verrouillee = !!reunion.verrouillee;
+  const roleUser = user?.role || 'membre';
+  const [idTemoin, setIdTemoin] = useState('');
+
+  if (reunion.statutReunion !== 'cloturee') {
+    return (
+      <div className="p-4 bg-gray-50 rounded-xl text-sm text-gray-500 flex items-start gap-2">
+        <Lock size={16} className="mt-0.5 shrink-0 text-gray-300"/>
+        <p>La signature du PV n'est possible qu'une fois la séance <strong>clôturée</strong>. Utilisez le bouton « Clôturer la séance » une fois toutes les saisies terminées.</p>
+      </div>
+    );
+  }
+
+  const dejaSigne = signatures.some(s => s.idMembre === (user?.idMembre || user?.id));
+  const monSlot = SIGNATAIRES_ATTENDUS.find(s => s.role === roleUser);
+  const sigTemoin = signatures.find(s => s.role === 'membre');
+  const peutEnregistrerTemoin = ROLES_PEUVENT_ENREGISTRER_TEMOIN.includes(roleUser) && !sigTemoin && !verrouillee;
+
+  const handleSigner = () => {
+    if (!monSlot || dejaSigne || verrouillee) return;
+    const m = membres.find(x => x.id === (user?.idMembre || user?.id));
+    signerPV(reunion.id, {
+      idMembre: user?.idMembre || user?.id || uidLike(),
+      nom: m ? `${m.nom} ${m.prenom}` : (user?.name || monSlot.label),
+      role: roleUser,
+    });
+  };
+  const handleEnregistrerTemoin = () => {
+    if (!idTemoin || verrouillee) return;
+    const m = membres.find(x => x.id === idTemoin);
+    if (!m) return;
+    signerPV(reunion.id, { idMembre: m.id, nom: `${m.nom} ${m.prenom}`, role: 'membre' });
+    setIdTemoin('');
+  };
+  function uidLike(){ return `u-${Date.now()}`; }
+
+  return (
+    <div className="space-y-4">
+      <div className={clsx('p-3 rounded-xl border text-sm flex items-start gap-2',
+        verrouillee ? 'bg-green-50 border-green-200 text-green-700' : 'bg-amber-50 border-amber-200 text-amber-700')}>
+        {verrouillee ? <Lock size={16} className="mt-0.5 shrink-0"/> : <AlertCircle size={16} className="mt-0.5 shrink-0"/>}
+        <p>
+          {verrouillee
+            ? 'Réunion verrouillée définitivement — le Président a signé. Plus aucune modification possible.'
+            : "La réunion reste modifiable tant que le Président n'a pas signé, même si d'autres signataires ont déjà signé."}
+        </p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2.5">
+        {SIGNATAIRES_ATTENDUS.map(slot => {
+          const sig = signatures.find(s => s.role === slot.role);
+          const estPresident = slot.role === 'president';
+          const estTemoin = slot.role === 'membre';
+          return (
+            <div key={slot.role} className={clsx('rounded-xl border-2 p-3 text-center',
+              sig ? (estPresident ? 'bg-green-50 border-green-400' : 'bg-emerald-50 border-emerald-200') : 'border-dashed border-gray-200 bg-white')}>
+              {sig ? (
+                <>
+                  <CheckCircle size={16} className={clsx('mx-auto mb-1', estPresident ? 'text-green-600' : 'text-emerald-600')}/>
+                  <p className="text-xs font-bold text-gray-800 truncate">{sig.nom}</p>
+                  <p className="text-xs text-gray-400">{acteurRoleLabel[slot.role] || slot.label}</p>
+                </>
+              ) : estTemoin && peutEnregistrerTemoin ? (
+                <div className="space-y-1.5">
+                  <p className="text-xs text-gray-400">{slot.label}</p>
+                  <select className="select text-xs py-1" value={idTemoin} onChange={e=>setIdTemoin(e.target.value)}>
+                    <option value="">Choisir le membre…</option>
+                    {membres.map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
+                  </select>
+                  <button onClick={handleEnregistrerTemoin} disabled={!idTemoin}
+                    className={clsx('w-full text-xs py-1 rounded-lg font-semibold', idTemoin ? 'bg-primary-600 text-white' : 'bg-gray-100 text-gray-300')}>
+                    Enregistrer sa signature
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <Lock size={16} className="mx-auto mb-1 text-gray-300"/>
+                  <p className="text-xs text-gray-400 italic">En attente</p>
+                  <p className="text-xs text-gray-400">{acteurRoleLabel[slot.role] || slot.label}</p>
+                </>
+              )}
+              {estPresident && !sig && <p className="text-[10px] text-amber-600 mt-1 font-semibold">Verrouille tout à la signature</p>}
+            </div>
+          );
+        })}
+      </div>
+
+      {peutEnregistrerTemoin && (
+        <p className="text-xs text-gray-400 -mt-1">Le membre témoin n'ayant pas de compte, {roleLabel[roleUser] || roleUser} enregistre sa signature en son nom, une fois signée physiquement sur le PV papier.</p>
+      )}
+
+      {verrouillee ? (
+        <p className="text-xs text-gray-400 text-center py-1">PV définitivement scellé.</p>
+      ) : monSlot ? (
+        dejaSigne ? (
+          <p className="text-xs text-gray-400 text-center py-1">Vous avez déjà signé.</p>
+        ) : (
+          <button onClick={handleSigner} className="btn-primary w-full justify-center">
+            <Pencil size={14}/> Signer en tant que {roleLabel[roleUser] || acteurRoleLabel[roleUser] || monSlot.label}
+            {roleUser==='president' && ' (verrouille définitivement)'}
+          </button>
+        )
+      ) : (
+        <p className="text-xs text-gray-400 text-center py-1">Votre rôle n'est pas prévu comme signataire du PV.</p>
       )}
     </div>
   );
@@ -2027,6 +2185,8 @@ function PanneauTransactions({ reunion, onClose }) {
 
 // ── Page principale ───────────────────────────────────────────
 export function Reunions() {
+  const { id: routeId } = useParams();
+  const navigate = useNavigate();
   const {
     reunions, membres, user, presences,
     addReunion, updateReunion, ouvrirSeance,
@@ -2035,14 +2195,13 @@ export function Reunions() {
   } = useApp();
 
   const [showAdd,        setShowAdd]        = useState(false);
-  const [showDetail,     setShowDetail]     = useState(null);
   const [showEdit,       setShowEdit]       = useState(null);
   const [showOuverture,  setShowOuverture]  = useState(null);
   const [showCloture,    setShowCloture]    = useState(null);
   const [showAddPoint,   setShowAddPoint]   = useState(null);
   const [showEditPoint,  setShowEditPoint]  = useState(null);
   const [showRapport,    setShowRapport]    = useState(null);
-  const [detailTab,      setDetailTab]      = useState('info'); // 'info' | 'transactions' | 'rapport'
+  const [detailTab,      setDetailTab]      = useState('info'); // onglet actif de la fiche réunion
 
   const [formReunion,  setFormReunion]  = useState(EMPTY_REUNION);
   const [formOuv,      setFormOuv]      = useState(EMPTY_OUVERTURE);
@@ -2111,6 +2270,7 @@ export function Reunions() {
 
   return (
     <div className="space-y-6">
+      {!routeId && (<>
       <PageHeader title="Réunions" subtitle={`${reunions.length} réunions au total`}
         action={<button onClick={()=>{ setFormReunion({ ...EMPTY_REUNION, numero: reunions.length + 1, date: new Date().toISOString().split('T')[0] }); setShowAdd(true); }} className="btn-primary">
           <CalendarPlus size={15}/> Planifier une réunion
@@ -2138,10 +2298,10 @@ export function Reunions() {
               {r.ouverture && <p className="text-xs text-amber-700 mt-0.5">Ouverte à {r.ouverture.heureOuverture} par {r.ouverture.presidentSeance}</p>}
             </div>
             <div className="flex gap-2">
-              <button onClick={()=>{ setShowDetail(r); setDetailTab('transactions'); }} className="btn-secondary text-xs">
-                <Receipt size={13}/> Transactions
+              <button onClick={()=>{ navigate(`/reunions/${r.id}`); setDetailTab('feuille_cotisation'); }} className="btn-secondary text-xs">
+                <ClipboardCheck size={13}/> Cotisation
               </button>
-              <button onClick={()=>{ setShowDetail(r); setDetailTab('info'); }} className="btn-secondary text-xs">
+              <button onClick={()=>{ navigate(`/reunions/${r.id}`); setDetailTab('info'); }} className="btn-secondary text-xs">
                 <FileText size={13}/> Gérer
               </button>
               <button onClick={()=>{ setShowCloture(r); setFormCloture(EMPTY_CLOTURE); }} className="btn-primary text-xs">
@@ -2180,7 +2340,7 @@ export function Reunions() {
           const cloture = r.cloture;
           const txCount = seanceTransactions.filter(t => t.reunionId === r.id).length;
           return (
-            <div key={r.id} onClick={()=>{ setShowDetail(r); setDetailTab('info'); }}
+            <div key={r.id} onClick={()=>{ navigate(`/reunions/${r.id}`); setDetailTab('info'); }}
               className="card cursor-pointer hover:shadow-md transition-all border border-gray-100 hover:border-primary-200">
               <div className="flex items-start justify-between mb-3">
                 <div className="w-11 h-11 rounded-xl gradient-primary flex flex-col items-center justify-center text-white shrink-0">
@@ -2209,67 +2369,112 @@ export function Reunions() {
                   {cloture.absents>0 && <span className="text-red-500">{cloture.absents} absent(s)</span>}
                 </div>
               )}
-              {r.statutReunion==='cloturee' && (
+              {r.verrouillee && (
                 <div className="flex items-center gap-1 text-xs text-gray-300 mt-2 pt-2 border-t border-gray-100">
-                  <Lock size={10}/><span>Séance verrouillée</span>
+                  <Lock size={10}/><span>Séance verrouillée (signée par le Président)</span>
+                </div>
+              )}
+              {r.statutReunion==='cloturee' && !r.verrouillee && (
+                <div className="flex items-center gap-1 text-xs text-amber-500 mt-2 pt-2 border-t border-gray-100">
+                  <AlertCircle size={10}/><span>En attente de la signature du Président</span>
                 </div>
               )}
             </div>
           );
         })}
       </div>
+      </>)}
 
-      {/* ══ MODAL DÉTAIL ═══════════════════════════════════ */}
-      {showDetail && (() => {
-        const r = reunions.find(x=>x.id===showDetail.id) || showDetail;
+      {/* ══ PAGE DÉTAIL RÉUNION (route /reunions/:id) ═══════ */}
+      {routeId && (() => {
+        const r = reunions.find(x=>x.id===routeId);
+        if (!r) {
+          return (
+            <div className="card text-center py-16">
+              <p className="text-gray-400">Réunion introuvable.</p>
+              <button onClick={()=>navigate('/reunions')} className="btn-secondary mt-4">
+                <ArrowLeft size={14}/> Retour aux réunions
+              </button>
+            </div>
+          );
+        }
         const cfg = sCfg[r.statutReunion];
-        const locked = r.statutReunion === 'cloturee';
-        const tabs = [
+        const locked = !!r.verrouillee;
+        const roleUser = user?.role || 'membre';
+        const lectureSeule = ROLES_LECTURE_SEULE.includes(roleUser);
+        const allTabs = [
           { id:'info',              label:'Informations',       icon: ClipboardList  },
           { id:'presences',         label:'Présences',           icon: Users          },
           { id:'feuille_cotisation',label:'Feuille Cotisation', icon: ClipboardCheck },
           { id:'beneficiaire',      label:'Bénéficiaire',       icon: Trophy         },
-          { id:'transactions',      label:'Transactions',        icon: Receipt        },
+          ...RUBRIQUES.map(rb => ({ id: rb.id, label: rb.label, icon: rb.icon })),
+          { id:'signatures',        label:'Signatures',          icon: FileText       },
         ];
+        // Chaque acteur ne voit que les onglets qui le concernent (RG-SEC-002)
+        const tabs = allTabs.filter(t => (TAB_ACCESS[t.id]||[]).includes(roleUser));
+        const effectiveTab = tabs.some(t => t.id === detailTab) ? detailTab : 'info';
 
         return (
-          <Modal open={true} onClose={()=>setShowDetail(null)} title={`Réunion N°${r.numero}`}
-            footer={
-              <div className="flex gap-2 flex-wrap w-full">
-                {r.statutReunion==='planifiee' && (
-                  <>
-                    <button onClick={()=>{ setShowEdit(r); setFormReunion({date:r.date,lieu:r.lieu,numero:r.numero,observation:r.observation||''}); setShowDetail(null); }} className="btn-secondary">
-                      <Pencil size={13}/> Modifier
+          <div className="space-y-4">
+            <PageHeader
+              title={`Réunion N°${r.numero}`}
+              subtitle={`${fmtDate(r.date)} · ${r.lieu}`}
+              action={<button onClick={()=>navigate('/reunions')} className="btn-secondary">
+                <ArrowLeft size={14}/> Retour aux réunions
+              </button>}
+            />
+
+            <div className="card space-y-4">
+              <div className="flex items-center justify-between flex-wrap gap-3 pb-4 border-b border-gray-100">
+                <Badge variant={cfg.v}>{cfg.label}</Badge>
+                <div className="flex gap-2 flex-wrap">
+                  {r.statutReunion==='planifiee' && (
+                    <>
+                      <button onClick={()=>{ setShowEdit(r); setFormReunion({date:r.date,lieu:r.lieu,numero:r.numero,observation:r.observation||''}); }} className="btn-secondary">
+                        <Pencil size={13}/> Modifier
+                      </button>
+                      <button onClick={()=>{ setShowOuverture(r); setFormOuv(EMPTY_OUVERTURE); }} className="btn-primary">
+                        <PlayCircle size={13}/> Ouvrir la séance
+                      </button>
+                    </>
+                  )}
+                  {r.statutReunion==='en_cours' && (
+                    <button onClick={()=>{ setShowCloture(r); setFormCloture(EMPTY_CLOTURE); }} className="btn-primary">
+                      <CheckCircle size={13}/> Clôturer la séance
                     </button>
-                    <button onClick={()=>{ setShowOuverture(r); setFormOuv(EMPTY_OUVERTURE); setShowDetail(null); }} className="btn-primary">
-                      <PlayCircle size={13}/> Ouvrir la séance
+                  )}
+                  {r.statutReunion==='cloturee' && !locked && (
+                    <button onClick={()=>setDetailTab('signatures')} className="btn-primary">
+                      <Lock size={13}/> Signer / Verrouiller
                     </button>
-                  </>
-                )}
-                {r.statutReunion==='en_cours' && (
-                  <button onClick={()=>{ setShowCloture(r); setFormCloture(EMPTY_CLOTURE); setShowDetail(null); }} className="btn-primary">
-                    <CheckCircle size={13}/> Clôturer la séance
-                  </button>
-                )}
-                {(r.statutReunion==='cloturee' || seanceTransactions.filter(t=>t.reunionId===r.id).length > 0) && (
-                  <button onClick={()=>{ setShowRapport(r); }} className="btn-secondary">
-                    <FileText size={13}/> Rapport PV
-                  </button>
-                )}
-                <button onClick={()=>setShowDetail(null)} className="btn-secondary ml-auto">Fermer</button>
+                  )}
+                  {(r.statutReunion==='cloturee' || seanceTransactions.filter(t=>t.reunionId===r.id).length > 0) && (
+                    <button onClick={()=>{ setShowRapport(r); }} className="btn-secondary">
+                      <FileText size={13}/> Rapport PV
+                    </button>
+                  )}
+                </div>
               </div>
-            }>
-            <div className="space-y-4">
+              {lectureSeule && (
+                <div className="p-2.5 bg-blue-50 border border-blue-100 rounded-xl text-xs text-blue-700 flex items-center gap-2">
+                  <Lock size={13}/>
+                  <span>Vous êtes connecté en tant que <strong>{roleLabel[roleUser] || acteurRoleLabel[roleUser] || roleUser}</strong> : consultation uniquement, aucune saisie possible. Pour saisir la cotisation, reconnectez-vous avec le rôle Trésorier ; pour les présences, avec le rôle Secrétaire.</span>
+                </div>
+              )}
               {/* Tabs */}
-              <div className="flex gap-1 p-1 bg-gray-100 rounded-xl">
-                {tabs.map(tab => (
+              <div className="flex flex-wrap gap-1.5 p-1.5 bg-gray-100 rounded-xl">
+                {tabs.map(tab => {
+                  const rubriqueCount = RUBRIQUES.find(rb => rb.id === tab.id)
+                    ? seanceTransactions.filter(t => t.reunionId === r.id && RUBRIQUES.find(rb => rb.id === tab.id).types.includes(t.type)).length
+                    : 0;
+                  return (
                   <button key={tab.id} onClick={()=>setDetailTab(tab.id)}
-                    className={clsx('flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-xs font-medium transition-all',
-                      detailTab===tab.id ? 'bg-white text-primary-700 shadow-sm' : 'text-gray-500 hover:text-gray-700')}>
+                    className={clsx('flex items-center justify-center gap-1.5 py-2 px-3.5 rounded-lg text-xs font-medium transition-all',
+                      effectiveTab===tab.id ? 'bg-white text-primary-700 shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-white/60')}>
                     <tab.icon size={13}/>{tab.label}
-                    {tab.id==='transactions' && seanceTransactions.filter(t=>t.reunionId===r.id).length > 0 && (
+                    {rubriqueCount > 0 && (
                       <span className="ml-1 px-1.5 py-0.5 bg-primary-600 text-white rounded-full text-xs leading-none">
-                        {seanceTransactions.filter(t=>t.reunionId===r.id).length}
+                        {rubriqueCount}
                       </span>
                     )}
                     {tab.id==='beneficiaire' && (r.beneficiairesSeance||[]).length > 0 && (
@@ -2283,11 +2488,12 @@ export function Reunions() {
                       </span>
                     )}
                   </button>
-                ))}
+                  );
+                })}
               </div>
 
               {/* Tab: Informations */}
-              {detailTab === 'info' && (
+              {effectiveTab === 'info' && (
                 <div className="space-y-4">
                   <div className="grid grid-cols-2 gap-3 text-sm">
                     <div className="p-3 bg-gray-50 rounded-xl">
@@ -2335,7 +2541,7 @@ export function Reunions() {
                     </div>
                     {r.statutReunion === 'en_cours' && (
                       <p className="text-[11px] text-amber-600 bg-amber-50 border border-amber-100 rounded-lg px-2 py-1 mb-2">
-                        Séance ouverte — chaque acteur assigné saisit sa rubrique dans l'onglet Transactions. Vous êtes connecté en tant que <strong>{acteurRoleLabel[user?.role] || user?.role || '—'}</strong>.
+                        Séance ouverte — chaque acteur assigné saisit sa rubrique dans l'onglet correspondant (Cotisation, Prêt, Sanction, Aide sociale…). Vous êtes connecté en tant que <strong>{roleLabel[user?.role] || acteurRoleLabel[user?.role] || user?.role || '—'}</strong>.
                       </p>
                     )}
                     <div className="space-y-1.5">
@@ -2417,33 +2623,49 @@ export function Reunions() {
 
                   {locked && (
                     <div className="flex items-center gap-2 p-2.5 bg-gray-100 rounded-lg text-xs text-gray-500">
-                      <Lock size={12}/> Cette séance est clôturée. Aucune modification possible.
+                      <Lock size={12}/> Réunion verrouillée définitivement (signature du Président). Aucune modification possible.
+                    </div>
+                  )}
+                  {r.statutReunion==='cloturee' && !locked && (
+                    <div className="flex items-center gap-2 p-2.5 bg-amber-50 rounded-lg text-xs text-amber-700 border border-amber-200">
+                      <AlertCircle size={12}/> Séance clôturée mais encore modifiable — le verrouillage définitif interviendra à la signature du Président (onglet Signatures).
                     </div>
                   )}
                 </div>
               )}
 
               {/* Tab: Bénéficiaire */}
-              {detailTab === 'beneficiaire' && (
-                <BeneficiaireSeancePanel reunion={r}/>
+              {effectiveTab === 'beneficiaire' && (
+                <div className={clsx(lectureSeule && 'pointer-events-none opacity-95')}>
+                  <BeneficiaireSeancePanel reunion={r}/>
+                </div>
               )}
 
               {/* Tab: Présences */}
-              {detailTab === 'presences' && (
-                <PanneauPresences reunion={r} membres={membres}/>
+              {effectiveTab === 'presences' && (
+                <div className={clsx(lectureSeule && 'pointer-events-none opacity-95')}>
+                  <PanneauPresences reunion={r} membres={membres}/>
+                </div>
               )}
 
               {/* Tab: Feuille de cotisation */}
-              {detailTab === 'feuille_cotisation' && (
-                <FeuillePresenceTontine reunion={r} onClose={() => setShowDetail(null)}/>
+              {effectiveTab === 'feuille_cotisation' && (
+                <FeuillePresenceTontine reunion={r} onClose={() => navigate('/reunions')} readOnly={lectureSeule}/>
               )}
 
-              {/* Tab: Transactions */}
-              {detailTab === 'transactions' && (
-                <PanneauTransactions reunion={r} onClose={()=>setShowDetail(null)}/>
+              {/* Tabs: Rubriques financières individuelles (ex-Transactions) */}
+              {RUBRIQUES.map(rb => effectiveTab === rb.id && (
+                <div key={rb.id} className={clsx(lectureSeule && 'pointer-events-none opacity-95')}>
+                  <PanneauRubrique reunion={r} types={rb.types} titre={rb.label} readOnly={lectureSeule}/>
+                </div>
+              ))}
+
+              {/* Tab: Signatures */}
+              {effectiveTab === 'signatures' && (
+                <PanneauSignatures reunion={r}/>
               )}
             </div>
-          </Modal>
+          </div>
         );
       })()}
 

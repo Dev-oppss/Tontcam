@@ -14,10 +14,16 @@ export default function Utilisateurs() {
   const [form, setForm] = useState(EMPTY);
   const [confirm, setConfirm] = useState(null); // { u, action: 'activer'|'desactiver' }
 
+  const [erreur, setErreur] = useState('');
+
   const handleAdd = () => {
-    if (!form.nomUtilisateur.trim() || !form.idMembre) return;
+    setErreur('');
+    const email = form.nomUtilisateur.trim().toLowerCase();
+    if (!email || !form.idMembre) return;
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setErreur('Email de connexion invalide.'); return; }
+    if (utilisateurs.some(u => (u.nomUtilisateur||'').trim().toLowerCase() === email)) { setErreur('Un compte existe déjà avec cet email.'); return; }
     const m = membres.find(x=>x.id===form.idMembre);
-    addUtilisateur({ ...form, idMembre: form.idMembre, nomMembre:`${m.nom} ${m.prenom}` });
+    addUtilisateur({ ...form, nomUtilisateur: email, idMembre: form.idMembre, nomMembre:`${m.nom} ${m.prenom}` });
     setAdd(false);
     setForm(EMPTY);
   };
@@ -40,7 +46,7 @@ export default function Utilisateurs() {
   return (
     <div className="space-y-6">
       <PageHeader title="Utilisateurs" subtitle="Gestion des accès au système"
-        action={<button onClick={()=>setAdd(true)} className="btn-primary"><Plus size={15}/> Nouvel utilisateur</button>}/>
+        action={<button onClick={()=>{setErreur(''); setAdd(true);}} className="btn-primary"><Plus size={15}/> Nouvel utilisateur</button>}/>
 
       {/* Rôles */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
@@ -105,8 +111,8 @@ export default function Utilisateurs() {
       </div>
 
       {/* Modal ajout */}
-      <Modal open={add} onClose={()=>setAdd(false)} title="Nouvel utilisateur"
-        footer={<><button onClick={()=>setAdd(false)} className="btn-secondary">Annuler</button><button onClick={handleAdd} className="btn-primary"><UserCog size={14}/>Créer</button></>}>
+      <Modal open={add} onClose={()=>{setAdd(false); setErreur('');}} title="Nouvel utilisateur"
+        footer={<><button onClick={()=>{setAdd(false); setErreur('');}} className="btn-secondary">Annuler</button><button onClick={handleAdd} className="btn-primary"><UserCog size={14}/>Créer</button></>}>
         <div className="space-y-4">
           <FormField label="Membre lié" required>
             <S k="idMembre">
@@ -114,8 +120,8 @@ export default function Utilisateurs() {
               {membres.map(m=><option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
             </S>
           </FormField>
-          <FormField label="Nom d'utilisateur" required>
-            <F k="nomUtilisateur" placeholder="ex: tresorier2"/>
+          <FormField label="Email de connexion" required>
+            <F k="nomUtilisateur" type="email" placeholder="ex: tresorier@association.cm"/>
           </FormField>
           <FormField label="Rôle" required>
             <S k="role">
@@ -128,6 +134,7 @@ export default function Utilisateurs() {
           <FormField label="Mot de passe" required>
             <F k="motDePasse" type="password" placeholder="--------"/>
           </FormField>
+          {erreur && <p className="text-xs text-red-600 -mt-2">{erreur}</p>}
         </div>
       </Modal>
 
