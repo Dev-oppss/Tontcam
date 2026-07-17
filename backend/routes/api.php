@@ -38,6 +38,7 @@ Route::prefix('auth')->group(function () {
     Route::middleware(['auth:sanctum', 'association.context'])->group(function () {
         Route::post('/logout', [AuthController::class, 'logout']);
         Route::get('/me', [AuthController::class, 'me']);
+        Route::put('/me', [AuthController::class, 'updateMe']);
         Route::post('/change-password', [AuthController::class, 'changePassword']);
     });
 });

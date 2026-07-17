@@ -181,19 +181,28 @@ export default function Sidebar({ collapsed, setCollapsed }) {
         {collapsed ? (
           <button
             type="button"
-            onClick={() => { logout(); navigate('/login'); }}
+            onClick={() => navigate('/mon-profil')}
             className="avatar-soft"
-            title="Se déconnecter"
+            title="Mon profil"
           >
-            {(user?.name || 'A')[0].toUpperCase()}
+            {(user?.membre?.prenom || user?.email || 'A')[0].toUpperCase()}
           </button>
         ) : (
           <div className="flex items-center gap-2.5 px-2 py-2 rounded-2xl hover:bg-white/[0.08] transition-colors">
-            <div className="avatar-soft">{(user?.name || 'A')[0].toUpperCase()}</div>
-            <div className="min-w-0 flex-1">
-              <p className="text-white text-xs font-semibold truncate leading-tight">{user?.name || 'Administration'}</p>
-              <p className="text-white/[0.48] text-[11px] mt-0.5">{roleLabel[user?.role] || 'Accès administrateur'}</p>
-            </div>
+            <button
+              type="button"
+              onClick={() => navigate('/mon-profil')}
+              className="flex items-center gap-2.5 min-w-0 flex-1 text-left"
+              title="Mon profil"
+            >
+              <div className="avatar-soft">{(user?.membre?.prenom || user?.email || 'A')[0].toUpperCase()}</div>
+              <div className="min-w-0 flex-1">
+                <p className="text-white text-xs font-semibold truncate leading-tight">
+                  {user?.membre ? `${user.membre.prenom} ${user.membre.nom}` : (user?.email || 'Administration')}
+                </p>
+                <p className="text-white/[0.48] text-[11px] mt-0.5">{roleLabel[user?.role] || 'Accès administrateur'}</p>
+              </div>
+            </button>
             <button
               type="button"
               onClick={() => { logout(); navigate('/login'); }}

@@ -123,6 +123,47 @@ class AuthController extends Controller
         return response()->json($request->user()?->loadMissing('membre.association'));
     }
 
+    /**
+     * Permet à l'utilisateur connecté de modifier ses propres informations
+     * (email de connexion + coordonnées de sa fiche membre). Utile en particulier
+     * après une création de compte par un admin avec mot de passe provisoire :
+     * la personne peut ensuite corriger son email/nom/téléphone elle-même.
+     */
+    public function updateMe(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        $membre = $user->membre;
+
+        $data = $request->validate([
+            'email' => ['sometimes', 'email', 'max:200', 'unique:utilisateurs,email,' . $user->id],
+            'nom' => ['sometimes', 'string', 'max:100'],
+            'prenom' => ['sometimes', 'string', 'max:100'],
+            'telephone' => ['sometimes', 'string', 'max:30'],
+            'telephone2' => ['sometimes', 'nullable', 'string', 'max:30'],
+            'adresse' => ['sometimes', 'nullable', 'string'],
+            'ville' => ['sometimes', 'nullable', 'string', 'max:100'],
+            'profession' => ['sometimes', 'nullable', 'string', 'max:150'],
+        ]);
+
+        DB::transaction(function () use ($data, $user, $membre) {
+            if (isset($data['email'])) {
+                $user->update(['email' => $data['email']]);
+            }
+            $membreData = array_intersect_key($data, array_flip([
+                'nom', 'prenom', 'telephone', 'telephone2', 'adresse', 'ville', 'profession',
+            ]));
+            // L'email de la fiche membre reste aligné sur l'email de connexion pour cohérence.
+            if (isset($data['email'])) {
+                $membreData['email'] = $data['email'];
+            }
+            if ($membreData) {
+                $membre->update($membreData);
+            }
+        });
+
+        return response()->json($user->fresh()->loadMissing('membre.association'));
+    }
+
     public function forgotPassword(Request $request): JsonResponse
     {
         $request->validate(['email' => ['required', 'email']]);

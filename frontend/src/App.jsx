@@ -25,6 +25,7 @@ import Social        from './pages/Social';
 import RapprochementBancaire from './pages/RapprochementBancaire';
 import AuditLog from './pages/AuditLog';
 import ReglementInterieur from './pages/ReglementInterieur';
+import MonProfil from './pages/MonProfil';
 
 function WorkspaceGate({ children }) {
   const { currentAssociation, setupComplete, user, booting } = useApp();
@@ -76,6 +77,7 @@ export default function App() {
             <Route path="rapprochement"   element={<RapprochementBancaire />} />
             <Route path="audit"           element={<AuditLog />}       />
             <Route path="reglement"       element={<ReglementInterieur />} />
+            <Route path="mon-profil"      element={<MonProfil />}     />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

@@ -226,6 +226,30 @@ export const AppProvider = ({ children }) => {
     }
   };
 
+  // Permet à l'utilisateur connecté de corriger ses propres informations (email de
+  // connexion, nom/prénom/téléphone/adresse... de sa fiche membre) — utile notamment
+  // après une création de compte par un admin avec un mot de passe provisoire.
+  const updateMonProfil = async (data) => {
+    try {
+      const body = {};
+      if (data.email) body.email = data.email;
+      if (data.nom) body.nom = data.nom;
+      if (data.prenom) body.prenom = data.prenom;
+      if (data.telephone) body.telephone = data.telephone;
+      if ('telephone2' in data) body.telephone2 = data.telephone2 || null;
+      if ('adresse' in data) body.adresse = data.adresse || null;
+      if ('ville' in data) body.ville = data.ville || null;
+      if ('profession' in data) body.profession = data.profession || null;
+
+      const updated = await request('/auth/me', { method: 'PUT', body });
+      setUser(updated);
+      showToast('Profil mis à jour');
+      return updated;
+    } catch (err) {
+      return handleError(err);
+    }
+  };
+
   const logout = async () => {
     try { await request('/auth/logout', { method: 'POST' }); } catch { /* token déjà invalide, on ignore */ }
     clearApiToken();
@@ -1058,7 +1082,7 @@ export const AppProvider = ({ children }) => {
     comptesBanque: [], operationsBanque: [], seanceTransactions: seanceTransactionsState, transfertsCaisse,
     utilisateurs, planningTours, cyclesTontine, chargerCycles, dashboardStats, repartitionBanques, evolutionCaisse: mock.evolutionCaisse,
     showToast,
-    login, logout, changePassword, register, updateAssociation,
+    login, logout, changePassword, updateMonProfil, register, updateAssociation,
     addMembre, updateMembre, deleteMembre,
     addMandat, cloturerMandat,
     logAuditConsultation, addDecisionAG, addReglement, addRapprochement, justifierEcart,

@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { Navigate, useNavigate, Link } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
-import { ACTEUR_ROLES } from '../data/mockData';
 
 const pillars = [
   'Organisation claire',
@@ -14,7 +13,7 @@ const pillars = [
 export default function Login() {
   const { user, login, changePassword } = useApp();
   const navigate = useNavigate();
-  const [form, setForm] = useState({ name: '', email: '', password: '', role: 'president' });
+  const [form, setForm] = useState({ email: '', password: '' });
   const [mustChange, setMustChange] = useState(false);
   const [passwordForm, setPasswordForm] = useState({ current_password: '', password: '', password_confirmation: '' });
   const [error, setError] = useState(null);
@@ -123,16 +122,6 @@ export default function Login() {
           {!mustChange ? (
             <form onSubmit={submit} className="space-y-4">
               <div>
-                <label className="label">Nom complet</label>
-                <input
-                  type="text"
-                  value={form.name}
-                  onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  className="input"
-                  placeholder="Ex : Jean Mballa"
-                />
-              </div>
-              <div>
                 <label className="label">Email</label>
                 <input
                   type="email"
@@ -149,19 +138,6 @@ export default function Login() {
                   onChange={(e) => setForm({ ...form, password: e.target.value })}
                   className="input"
                 />
-              </div>
-              <div>
-                <label className="label">Rôle</label>
-                <select
-                  value={form.role}
-                  onChange={(e) => setForm({ ...form, role: e.target.value })}
-                  className="select"
-                >
-                  {ACTEUR_ROLES.map((r) => (
-                    <option key={r.value} value={r.value}>{r.label}</option>
-                  ))}
-                </select>
-                <p className="text-xs text-ink-600/45 mt-1">Détermine quelles rubriques de réunion vous pouvez saisir.</p>
               </div>
               {error && <div className="text-sm text-[#a64734]">{error}</div>}
               <button type="submit" className="btn-primary w-full justify-center">Se connecter</button>
