@@ -1,11 +1,16 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Gavel, Plus, Trophy, AlertTriangle } from 'lucide-react';
 import { fmt, fmtDate } from '../data/mockData';
 import { useApp } from '../context/AppContext';
 import { PageHeader, Table, Badge, Modal, FormField } from '../components/ui/index';
 
 export default function Encheres() {
-  const { membres, membresParTontine, encheres, rotations, addEnchere, attribuerTour, annulerEncheres } = useApp();
+  const { membres, membresParTontine, encheres, rotations, tontines, chargerRotations, addEnchere, attribuerTour, annulerEncheres } = useApp();
+
+  useEffect(() => {
+    tontines.filter(t => t.typeAttribution === 'enchere').forEach(t => chargerRotations(t.id));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tontines.map(t => t.id).join(',')]);
 
   const [addModal, setAddModal]   = useState(false);
   const [confirm,  setConfirm]    = useState(null); // { type:'attribuer'|'annuler', rotation, gagnant? }

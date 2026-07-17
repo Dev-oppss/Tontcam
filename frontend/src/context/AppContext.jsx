@@ -797,11 +797,26 @@ export const AppProvider = ({ children }) => {
       return pret;
     } catch (err) { return handleError(err); }
   };
+  // RG-ORG-012 — revue Trésorier avant transmission au Président : demande → en_attente_validation.
+  const validerPret = async (id) => {
+    try {
+      const p = await request(`/prets/${id}/valider`, { method: 'POST' });
+      setPrets((prev) => prev.map((x) => (x.id === id ? adapt.pretFromApi(p) : x)));
+      showToast('Prêt transmis pour approbation');
+    } catch (err) { return handleError(err); }
+  };
   const approuverPret = async (id) => {
     try {
       const p = await request(`/prets/${id}/approuver`, { method: 'POST' });
       setPrets((prev) => prev.map((x) => (x.id === id ? adapt.pretFromApi(p) : x)));
       showToast('Prêt approuvé');
+    } catch (err) { return handleError(err); }
+  };
+  const refuserPret = async (id, motif) => {
+    try {
+      const p = await request(`/prets/${id}/refuser`, { method: 'POST', body: { motif: motif || 'Refusé par le bureau' } });
+      setPrets((prev) => prev.map((x) => (x.id === id ? adapt.pretFromApi(p) : x)));
+      showToast('Prêt refusé');
     } catch (err) { return handleError(err); }
   };
   const decaisserPret = async (id) => {
@@ -811,8 +826,13 @@ export const AppProvider = ({ children }) => {
       showToast('Prêt décaissé');
     } catch (err) { return handleError(err); }
   };
-  const rembourserPret = async (id, montant, echeanceId) => {
+  // `options` peut contenir { echeanceId, modePaiement, detailsPaiement }. Auparavant,
+  // Prets.jsx passait cet objet directement à la place d'un id d'échéance : la
+  // comparaison e.id === {objet} ne matchait jamais et le remboursement échouait
+  // systématiquement. On isole désormais explicitement l'id d'échéance.
+  const rembourserPret = async (id, montant, options) => {
     try {
+      const echeanceId = typeof options === 'string' ? options : options?.echeanceId;
       const pret = await request(`/prets/${id}`);
       const echeance = echeanceId
         ? pret.echeances.find((e) => e.id === echeanceId)
@@ -956,6 +976,56 @@ export const AppProvider = ({ children }) => {
       return cycles;
     } catch (err) { return handleError(err); }
   };
+
+  // ── Cycle de tontine — écran 4 « Saisie d'un cycle » ────────────
+  // Ces quatre routes existaient côté backend mais n'étaient appelées nulle part
+  // côté frontend : impossible d'ouvrir un cycle, de saisir une cotisation ou de
+  // le clôturer autrement que via le raccourci « enregistrer-beneficiaire », qui
+  // clôture avec des cotisations à 0 (bulletin toujours à montant brut nul).
+  const ouvrirCycle = async (idTontine, idReunion) => {
+    try {
+      const c = await request(`/tontines/${idTontine}/cycles/ouvrir`, { method: 'POST', body: { reunion_id: idReunion } });
+      const cycle = adapt.cycleFromApi(c);
+      setCyclesTontine((prev) => [...prev.filter((x) => x.id !== cycle.id), cycle]);
+      showToast('Cycle ouvert — saisissez les cotisations');
+      return cycle;
+    } catch (err) { return handleError(err); }
+  };
+  const chargerCycle = async (idCycle) => {
+    try {
+      const c = await request(`/cycles/${idCycle}`);
+      const cycle = adapt.cycleFromApi(c);
+      setCyclesTontine((prev) => [...prev.filter((x) => x.id !== cycle.id), cycle]);
+      return cycle;
+    } catch (err) { return handleError(err); }
+  };
+  const saisirCotisationCycle = async (idCycle, idCotisation, montantVerse, options = {}) => {
+    try {
+      await request(`/cycles/${idCycle}/cotisations`, { method: 'POST', body: {
+        cotisation_id: idCotisation,
+        montant_verse: Number(montantVerse),
+        mode_paiement: options.modePaiement || undefined,
+        reference_paiement: options.referencePaiement || undefined,
+      } });
+      return await chargerCycle(idCycle);
+    } catch (err) { return handleError(err); }
+  };
+  const designerGagnantCycle = async (idCycle, idPartForcee) => {
+    try {
+      await request(`/cycles/${idCycle}/designer-gagnant`, { method: 'POST', body: idPartForcee ? { part_id: idPartForcee } : {} });
+      showToast('Gagnant désigné');
+      return await chargerCycle(idCycle);
+    } catch (err) { return handleError(err); }
+  };
+  const cloturerCycle = async (idCycle) => {
+    try {
+      await request(`/cycles/${idCycle}/cloturer`, { method: 'POST' });
+      showToast('Cycle clôturé — bulletin de gain généré');
+      const cycle = await chargerCycle(idCycle);
+      await chargerCycles(cycle.idTontine);
+      return cycle;
+    } catch (err) { return handleError(err); }
+  };
   const genererBulletin = async (idCycle) => {
     try {
       const data = await request(`/cycles/${idCycle}/bulletin`);
@@ -999,12 +1069,13 @@ export const AppProvider = ({ children }) => {
     chargerRotations, tirerAuSort, addEnchere, attribuerTour, annulerEncheres,
     addBanque, addCaisse: addBanque, doOperation, addMembreBanque, transfererCaisse, addCompteBancaire, chargerTransferts,
     addTypeSanction, updateTypeSanction, addSanction, payerSanction,
-    addPret, approuverPret, decaisserPret, rembourserPret, distribuerInteretsPret,
+    addPret, validerPret, approuverPret, refuserPret, decaisserPret, rembourserPret, distribuerInteretsPret,
     addAide, addAideSociale: addAide, validerAideSociale, verserAideSociale, addTypeAideSociale, membreEligibleAssurance, addCaisseEntry,
     addTourPlanning, marquerTourEncaisse, retirerTourPlanning, chargerPlanningTours,
     addSeanceTransaction, deleteSeanceTransaction, enregistrerBeneficiaireSeance, chargerSeanceTransactions,
     addUtilisateur, updateUtilisateur, desactiverUtilisateur, activerUtilisateur,
     genererBulletin, ouvrirBulletinPdf,
+    ouvrirCycle, chargerCycle, saisirCotisationCycle, designerGagnantCycle, cloturerCycle,
     resetWorkspace,
   };
 

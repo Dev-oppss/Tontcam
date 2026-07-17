@@ -7,7 +7,7 @@ import { ModePaiementFields, isModePaiementValid } from '../components/ui/ModePa
 import { computeEcheancesAvecPenalites, statutEcheanceLabel } from '../lib/penalites';
 
 export default function Prets() {
-  const { membres, prets, comptesBanque, caisses, addPret, rembourserPret, distribuerInteretsPret } = useApp();
+  const { membres, prets, comptesBanque, caisses, addPret, validerPret, approuverPret, refuserPret, decaisserPret, rembourserPret, distribuerInteretsPret } = useApp();
 
   const [add,        setAdd]        = useState(false);
   const [remModal,   setRemModal]   = useState(null);
@@ -21,12 +21,8 @@ export default function Prets() {
   const [remModePaiement, setRemModePaiement] = useState('especes');
   const [remDetailsPaiement, setRemDetailsPaiement] = useState('');
 
-  const enCours   = pretsLive.filter(p => p.statut === 'en_cours');
-  const enRetard  = pretsLive.filter(p => p.statut === 'en_cours' && p.nbEcheancesEnRetard > 0);
-  const rembourse = pretsLive.filter(p => p.statut === 'rembourse');
-
-  const sMap = { en_cours: 'blue', en_retard: 'red', rembourse: 'green' };
-  const sLbl = { en_cours: 'En cours', en_retard: 'En retard', rembourse: 'Remboursé' };
+  const sMap = { demande: 'gray', en_attente_validation: 'amber', approuve: 'blue', en_cours: 'blue', en_retard: 'red', rembourse: 'green', refuse: 'red', defaut: 'red' };
+  const sLbl = { demande: 'Demande déposée', en_attente_validation: 'À approuver', approuve: 'Approuvé — à décaisser', en_cours: 'En cours', en_retard: 'En retard', rembourse: 'Remboursé', refuse: 'Refusé', defaut: 'Défaut' };
   const formatAmortissement = (value) => (value === 'echelonne' ? 'Échelonné' : 'Remboursement unique');
 
   const calcEcheance = (datePret, dureeMois) => {
@@ -128,6 +124,12 @@ export default function Prets() {
     };
   }), [prets, caissesMap]);
 
+  const enAttente = pretsLive.filter(p => p.statut === 'demande' || p.statut === 'en_attente_validation');
+  const approuves = pretsLive.filter(p => p.statut === 'approuve');
+  const enCours   = pretsLive.filter(p => p.statut === 'en_cours');
+  const enRetard  = pretsLive.filter(p => p.statut === 'en_cours' && p.nbEcheancesEnRetard > 0);
+  const rembourse = pretsLive.filter(p => p.statut === 'rembourse');
+
   const handleAdd = () => {
     if (!form.idMembre || !form.montantPret || !form.caisseId) return;
     if (!pretSimule) return;
@@ -191,7 +193,15 @@ export default function Prets() {
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
+        <div className="card text-center border-t-4 border-t-amber-400">
+          <p className="text-2xl font-bold text-amber-600">{enAttente.length}</p>
+          <p className="text-xs text-gray-400 mt-1">À valider / approuver</p>
+        </div>
+        <div className="card text-center border-t-4 border-t-indigo-400">
+          <p className="text-2xl font-bold text-indigo-600">{approuves.length}</p>
+          <p className="text-xs text-gray-400 mt-1">Approuvés — à décaisser</p>
+        </div>
         <div className="card text-center border-t-4 border-t-primary-400">
           <p className="text-2xl font-bold text-primary-700">{enCours.length}</p>
           <p className="text-xs text-gray-400 mt-1">En cours</p>
@@ -208,6 +218,40 @@ export default function Prets() {
           <p className="text-xs text-gray-400">Intérêts encaissés</p>
         </div>
       </div>
+
+      {enAttente.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+          <p className="text-sm font-semibold text-amber-700 mb-2">Demandes en attente — Action requise</p>
+          {enAttente.map(p => (
+            <div key={p.id} className="flex items-center justify-between text-sm py-1.5 border-b border-amber-100 last:border-0">
+              <span className="font-medium text-amber-900">{p.nomMembre} <span className="text-amber-500 font-normal">— {fmt(p.montantPret)}</span></span>
+              <div className="flex items-center gap-2">
+                {p.statut === 'demande' && (
+                  <button onClick={() => validerPret(p.id)} className="btn-secondary py-1 px-2.5 text-xs">Valider (Trésorier)</button>
+                )}
+                {p.statut === 'en_attente_validation' && (
+                  <>
+                    <button onClick={() => approuverPret(p.id)} className="btn-primary py-1 px-2.5 text-xs">Approuver</button>
+                    <button onClick={() => refuserPret(p.id, 'Refusé par le bureau')} className="btn-secondary py-1 px-2.5 text-xs text-red-600">Refuser</button>
+                  </>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {approuves.length > 0 && (
+        <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4">
+          <p className="text-sm font-semibold text-indigo-700 mb-2">Approuvés — en attente de décaissement</p>
+          {approuves.map(p => (
+            <div key={p.id} className="flex items-center justify-between text-sm py-1.5 border-b border-indigo-100 last:border-0">
+              <span className="font-medium text-indigo-900">{p.nomMembre} <span className="text-indigo-500 font-normal">— {fmt(p.montantPret)}</span></span>
+              <button onClick={() => decaisserPret(p.id)} className="btn-primary py-1 px-2.5 text-xs">Décaisser</button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {enRetard.length > 0 && (
         <div className="bg-red-50 border border-red-200 rounded-xl p-4">
@@ -284,7 +328,7 @@ export default function Prets() {
                       </td>
                       <td className="td">
                         <div className="flex items-center gap-1">
-                          {p.statut !== 'rembourse' && (
+                          {(p.statut === 'en_cours' || p.statut === 'en_retard') && (
                             <button onClick={() => { setRemModal(p); setRemMontant(''); }}
                               className="btn-secondary py-1 px-2.5 text-xs flex items-center gap-1">
                               <CreditCard size={12}/>Payer

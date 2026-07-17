@@ -1,11 +1,18 @@
-import { rotations as initRotations, fmt, fmtDate } from '../data/mockData';
+import { useEffect } from 'react';
+import { fmt, fmtDate } from '../data/mockData';
 import { useApp } from '../context/AppContext';
 import { PageHeader, Table, Badge } from '../components/ui/index';
 import { Trophy } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 
 export default function Rotations() {
-  const { rotations } = useApp();
+  const { rotations, tontines, chargerRotations } = useApp();
+
+  useEffect(() => {
+    tontines.forEach(t => chargerRotations(t.id));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tontines.map(t => t.id).join(',')]);
+
   const done = rotations.filter(r=>r.dateAttribution);
 
   return (

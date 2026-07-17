@@ -134,11 +134,32 @@ export const tontineFromApi = (t) => !t ? null : ({
 export const cycleFromApi = (c) => !c ? null : ({
   id: c.id,
   idTontine: c.tontine_id,
+  idReunion: c.reunion_id,
   numeroCycle: c.numero_cycle,
   statut: c.statut,
+  montantCollectePrevu: Number(c.montant_collecte_prevu || 0),
+  montantCollecteReel: Number(c.montant_collecte_reel || 0),
   gagnantNom: c.gagnant?.membre ? `${c.gagnant.membre.nom} ${c.gagnant.membre.prenom}` : null,
+  idGagnantPart: c.gagnant_part_id || null,
   idBulletin: c.bulletin?.id || null,
+  dateOuverture: c.date_ouverture,
   dateCloture: c.date_cloture,
+  cotisations: (c.cotisations || []).map(cotisationFromApi),
+});
+
+// ── Cotisation de cycle (écran 4 du cahier des charges) ─────────
+export const cotisationFromApi = (co) => !co ? null : ({
+  id: co.id,
+  idCycle: co.cycle_id,
+  idPart: co.tontine_part_id,
+  idMembre: co.membre_id,
+  nomMembre: co.membre ? `${co.membre.nom} ${co.membre.prenom}` : undefined,
+  montantDu: Number(co.montant_du || 0),
+  montantVerse: Number(co.montant_verse || 0),
+  statut: co.statut, // due | partielle | payee | impayee
+  modePaiement: co.mode_paiement,
+  referencePaiement: co.reference_paiement,
+  dateVersement: co.date_versement,
 });
 
 export const tontineToApi = (t) => ({
@@ -239,7 +260,9 @@ export const pretFromApi = (p) => !p ? null : ({
 });
 
 function mapStatutPret(s) {
-  return { demande: 'en_attente', en_attente_validation: 'en_attente', approuve: 'approuve', en_cours: 'en_cours', en_retard: 'en_retard', defaut: 'defaut', solde: 'rembourse', refuse: 'refuse' }[s] || s;
+  // RG-PRT — chaque état du cycle de vie doit rester distinguable pour piloter
+  // les actions (Valider / Approuver / Décaisser) : ne pas les fusionner.
+  return { demande: 'demande', en_attente_validation: 'en_attente_validation', approuve: 'approuve', en_cours: 'en_cours', en_retard: 'en_retard', defaut: 'defaut', solde: 'rembourse', refuse: 'refuse' }[s] || s;
 }
 
 export const pretToApi = (p) => ({
