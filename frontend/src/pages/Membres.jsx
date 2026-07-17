@@ -1,4 +1,5 @@
 import { useState, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   UserPlus, Search, Eye, Pencil, Trash2, Users, Plus, Minus,
   Phone, MapPin, Briefcase, Calendar, CreditCard,
@@ -77,7 +78,7 @@ function FicheMembre({ membre, onClose, onEdit }) {
     { id:'assurance', label:'Fond Assur.', icon: Shield,     badge: aidesMembre.length > 0 ? aidesMembre.length : null },
   ];
 
-  return (
+  return createPortal((
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-box max-w-[100rem] w-full" onClick={e => e.stopPropagation()}>
 
@@ -427,7 +428,7 @@ function FicheMembre({ membre, onClose, onEdit }) {
         </div>
       </div>
     </div>
-  );
+  ), document.body);
 }
 
 // ── Page principale Membres ───────────────────────────────────
@@ -504,7 +505,7 @@ export default function Membres() {
     const e = validate(form, edit.id);
     setErrors(e);
     if (Object.keys(e).length > 0) return;
-    updateMembre({ ...edit, ...form });
+    updateMembre(edit.id, { ...edit, ...form });
     setEdit(null);
   };
 

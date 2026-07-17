@@ -1,25 +1,47 @@
 import { useState, useRef } from 'react';
-import { UserCog, Plus, ShieldCheck, Pencil, Power } from 'lucide-react';
+import { UserCog, Plus, ShieldCheck, Pencil, Power, Copy, Check, KeyRound } from 'lucide-react';
 import { roleLabel } from '../data/mockData';
 import { useApp } from '../context/AppContext';
 import { PageHeader, Table, Badge, Modal, FormField } from '../components/ui/index';
 
-const roleV = { admin:'red', president:'purple', tresorier:'blue', secretaire:'green' };
+const roleV = { super_admin:'red', president:'purple', vice_president:'purple', tresorier:'blue', secretaire:'green', controleur:'gray' };
 
-const EMPTY = { nomUtilisateur:'', role:'tresorier', idMembre:'', motDePasse:'' };
+const EMPTY = { email:'', role:'tresorier', idMembre:'' };
 
 export default function Utilisateurs() {
-  const { membres, utilisateurs, addUtilisateur, desactiverUtilisateur, activerUtilisateur } = useApp();
+  const { membres, utilisateurs, addUtilisateur, updateUtilisateur, desactiverUtilisateur, activerUtilisateur } = useApp();
   const [add,  setAdd]  = useState(false);
   const [form, setForm] = useState(EMPTY);
   const [confirm, setConfirm] = useState(null); // { u, action: 'activer'|'desactiver' }
+  const [edit, setEdit] = useState(null);
+  const [editRole, setEditRole] = useState('tresorier');
+  const [tempPassword, setTempPassword] = useState(null); // { email, mdp }
+  const [copied, setCopied] = useState(false);
 
-  const handleAdd = () => {
-    if (!form.nomUtilisateur.trim() || !form.idMembre) return;
+  const handleAdd = async () => {
+    if (!form.email.trim() || !form.idMembre) return;
     const m = membres.find(x=>x.id===form.idMembre);
-    addUtilisateur({ ...form, idMembre: form.idMembre, nomMembre:`${m.nom} ${m.prenom}` });
+    if (!m) return;
+    const res = await addUtilisateur({ ...form, idMembre: form.idMembre, nomMembre:`${m.nom} ${m.prenom}` });
     setAdd(false);
     setForm(EMPTY);
+    if (res?.motDePasseProvisoire) {
+      setCopied(false);
+      setTempPassword({ email: form.email, mdp: res.motDePasseProvisoire });
+    }
+  };
+
+  const handleCopyPassword = () => {
+    if (!tempPassword) return;
+    navigator.clipboard?.writeText(tempPassword.mdp);
+    setCopied(true);
+  };
+
+  const openEdit = (u) => { setEditRole(u.role); setEdit(u); };
+  const handleEditSave = async () => {
+    if (!edit) return;
+    await updateUtilisateur(edit.id, { role: editRole });
+    setEdit(null);
   };
 
   const handleToggle = () => {
@@ -83,7 +105,12 @@ export default function Utilisateurs() {
               <td className="td"><Badge variant={u.statut==='actif'?'green':'gray'}>{u.statut==='actif'?'Actif':'Inactif'}</Badge></td>
               <td className="td">
                 <div className="flex gap-1">
-                  {u.statut==='actif' && u.role!=='admin' && (
+                  <button
+                    onClick={()=>openEdit(u)}
+                    className="btn-secondary py-1 px-2.5 text-xs flex items-center gap-1">
+                    <Pencil size={12}/>Modifier
+                  </button>
+                  {u.statut==='actif' && u.role!=='super_admin' && (
                     <button
                       onClick={()=>setConfirm({u,action:'desactiver'})}
                       className="btn-danger py-1 px-2.5 text-xs flex items-center gap-1">
@@ -114,20 +141,59 @@ export default function Utilisateurs() {
               {membres.map(m=><option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
             </S>
           </FormField>
-          <FormField label="Nom d'utilisateur" required>
-            <F k="nomUtilisateur" placeholder="ex: tresorier2"/>
+          <FormField label="Email" required>
+            <F k="email" type="email" placeholder="ex: tresorier2@exemple.com"/>
           </FormField>
           <FormField label="Rôle" required>
             <S k="role">
               <option value="president">Président</option>
+              <option value="vice_president">Vice-Président</option>
               <option value="tresorier">Trésorier</option>
               <option value="secretaire">Secrétaire</option>
-              <option value="admin">Administrateur</option>
+              <option value="controleur">Contrôleur</option>
+              <option value="super_admin">Super Administrateur</option>
             </S>
           </FormField>
-          <FormField label="Mot de passe" required>
-            <F k="motDePasse" type="password" placeholder="--------"/>
+          <p className="text-xs text-ink-500">Un mot de passe provisoire sera généré et affiché après la création.</p>
+        </div>
+      </Modal>
+
+      {/* Modal édition rôle */}
+      <Modal open={!!edit} onClose={()=>setEdit(null)} title="Modifier l'utilisateur"
+        footer={<><button onClick={()=>setEdit(null)} className="btn-secondary">Annuler</button><button onClick={handleEditSave} className="btn-primary"><Pencil size={14}/>Enregistrer</button></>}>
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600">
+            {edit?.nomUtilisateur} — {edit?.nomMembre}
+          </p>
+          <FormField label="Rôle" required>
+            <select className="select" value={editRole} onChange={e=>setEditRole(e.target.value)}>
+              <option value="president">Président</option>
+              <option value="vice_president">Vice-Président</option>
+              <option value="tresorier">Trésorier</option>
+              <option value="secretaire">Secrétaire</option>
+              <option value="controleur">Contrôleur</option>
+              <option value="super_admin">Super Administrateur</option>
+            </select>
           </FormField>
+        </div>
+      </Modal>
+
+      {/* Modal mot de passe provisoire : reste ouverte, copiable, pas de disparition automatique */}
+      <Modal open={!!tempPassword} onClose={()=>setTempPassword(null)} title="Compte créé"
+        footer={<button onClick={()=>setTempPassword(null)} className="btn-primary">J'ai noté le mot de passe</button>}>
+        <div className="space-y-3">
+          <p className="text-sm text-gray-600">
+            Communiquez ces identifiants à <strong>{tempPassword?.email}</strong> — ce mot de passe provisoire
+            ne sera plus jamais affiché après fermeture de cette fenêtre.
+          </p>
+          <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5">
+            <KeyRound size={16} className="text-gray-400 shrink-0"/>
+            <span className="font-mono text-sm font-semibold text-gray-800 flex-1 select-all">{tempPassword?.mdp}</span>
+            <button onClick={handleCopyPassword} className="btn-secondary py-1 px-2 text-xs flex items-center gap-1 shrink-0">
+              {copied ? <Check size={12}/> : <Copy size={12}/>}
+              {copied ? 'Copié' : 'Copier'}
+            </button>
+          </div>
         </div>
       </Modal>
 

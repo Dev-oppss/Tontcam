@@ -38,7 +38,62 @@ export const membreToApi = (m) => ({
   motif_exclusion: m.motifExclusion,
 });
 
-// ── Postes & mandats ───────────────────────────────────────────
+// ── Journal d'audit ──────────────────────────────────────────────
+export const auditLogFromApi = (l) => !l ? null : ({
+  id: l.id,
+  module: l.table_name,
+  action: l.action,
+  date: l.created_at,
+  utilisateur: l.utilisateur?.membre ? `${l.utilisateur.membre.nom} ${l.utilisateur.membre.prenom}` : (l.utilisateur?.email || '—'),
+  avant: l.valeur_avant ? JSON.stringify(l.valeur_avant) : null,
+  apres: l.valeur_apres ? JSON.stringify(l.valeur_apres) : null,
+});
+
+// ── Décisions d'AG ───────────────────────────────────────────────
+export const decisionAgFromApi = (d) => !d ? null : ({
+  id: d.id,
+  numero: d.numero_decision,
+  idReunion: d.reunion_id,
+  type: d.type,
+  objet: d.objet,
+  description: d.description,
+  dateAG: d.reunion?.date_reunion || d.date_effet,
+  pour: d.votes_pour,
+  contre: d.votes_contre,
+  abstentions: d.votes_abstention,
+  quorumPresent: d.quorum_present,
+  statut: d.statut,
+});
+
+// ── Règlement intérieur ──────────────────────────────────────────
+export const reglementFromApi = (r) => !r ? null : ({
+  id: r.id,
+  version: r.version,
+  titre: r.titre,
+  fichier: r.fichier_url,
+  dateAdoption: r.date_adoption,
+  decisionAG: r.numero_decision_ag,
+  notes: r.contenu_html,
+  statut: r.date_adoption ? 'adopte' : 'brouillon',
+});
+
+// ── Rapprochement bancaire ───────────────────────────────────────
+export const rapprochementFromApi = (r) => !r ? null : ({
+  id: r.id,
+  idCaisse: r.caisse_id,
+  nomCaisse: r.caisse?.libelle,
+  idCompteBancaire: r.compte_bancaire_id,
+  soldeLogiciel: Number(r.solde_logiciel ?? 0),
+  soldeReleve: Number(r.solde_banque ?? 0),
+  ecart: Number(r.ecart ?? 0),
+  dateReleve: r.periode_fin,
+  periodeDebut: r.periode_debut,
+  periodeFin: r.periode_fin,
+  statut: Number(r.ecart ?? 0) === 0 ? 'ok' : 'ecart',
+  justifie: !!r.valide_at,
+  motifEcart: r.justification,
+});
+
 export const mandatFromApi = (m) => !m ? null : ({
   id: m.id,
   idPoste: m.poste_id,
@@ -131,6 +186,10 @@ export const reunionFromApi = (r) => !r ? null : ({
     idRapporteur: it.rapporteur_id,
   })),
   signatures: (r.signataires || []).map((s) => ({ idMembre: s.membre_id, nom: s.membre?.nom, role: s.role_signature, signeLe: s.signed_at })),
+  presencesReunion: (r.presences || []).map((p) => ({
+    reunionId: r.id, idMembre: p.membre_id, statut: p.statut,
+    heureArrivee: p.heure_arrivee, motifAbsence: p.motif_absence,
+  })),
 });
 
 export const reunionToApi = (r) => ({
@@ -208,10 +267,14 @@ export const aideFromApi = (a) => !a ? null : ({
   id: a.id,
   idMembre: a.membre_id,
   nomMembre: a.membre ? `${a.membre.nom} ${a.membre.prenom}` : undefined,
+  typeAideId: a.type_aide_id,
   typeEvenement: a.type_aide?.type_evenement || a.type_aide_id,
   description: a.description,
   dateEvenement: a.date_evenement,
+  montantDemande: Number(a.montant_demande || 0),
+  montantAccorde: a.montant_accorde != null ? Number(a.montant_accorde) : null,
   montantAide: Number(a.montant_accorde || a.montant_demande || 0),
+  piecesJointes: a.pieces_jointes || [],
   statut: a.statut === 'versee' ? 'verse' : a.statut,
 });
 
@@ -226,12 +289,14 @@ export const caisseFromApi = (c) => !c ? null : ({
   tauxInteret: Number(c.taux_interet_mensuel || 0) * 100,
   statut: c.actif ? 'active' : 'inactive',
   dateCreation: c.date_ouverture || c.created_at,
+  compteBancaireId: c.compte_bancaire_id || null,
 });
 
 export const caisseToApi = (c) => ({
   libelle: c.nom,
   description: c.description || null,
   type: c.type || 'autre',
+  compte_bancaire_id: c.compteBancaireId || null,
   solde_initial: Number(c.soldeInitial || 0),
   pret_autorise: !!c.pretAutorise,
   taux_interet_mensuel: c.tauxInteret ? Number(c.tauxInteret) / 100 : undefined,

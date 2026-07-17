@@ -74,7 +74,7 @@ export default function ReglementInterieur() {
           <FormField label="Décision d'AG associée" required hint="Requis avant publication (RG-ORG-006)">
             <select className="select" value={form.decisionAG} onChange={(e) => setForm((f) => ({ ...f, decisionAG: e.target.value }))}>
               <option value="">Sélectionner…</option>
-              {decisionsAG.filter((d) => d.type === 'Règlement').map((d) => (
+              {decisionsAG.filter((d) => d.type === 'statutaire').map((d) => (
                 <option key={d.id} value={d.numero}>{d.numero} — {d.objet}</option>
               ))}
             </select>

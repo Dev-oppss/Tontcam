@@ -4,36 +4,24 @@ import { useApp } from '../context/AppContext';
 import { fmt, fmtDate } from '../data/mockData';
 import { PageHeader, SectionCard, Table, Badge, Modal, FormField } from '../components/ui/index';
 
-const EMPTY = { idCaisse: '', soldeReleve: '', dateReleve: new Date().toISOString().split('T')[0], commentaire: '' };
+const EMPTY = { idCompteBancaire: '', idCaisse: '', soldeReleve: '', periodeDebut: new Date(new Date().setDate(1)).toISOString().split('T')[0], periodeFin: new Date().toISOString().split('T')[0] };
 
 const joursDepuis = (date) => Math.floor((Date.now() - new Date(date).getTime()) / 86400000);
 
 export default function RapprochementBancaire() {
-  const { banques = [], caisses = [], rapprochements = [], addRapprochement, justifierEcart } = useApp();
+  const { caisses = [], comptesBancaire = [], rapprochements = [], addRapprochement, justifierEcart } = useApp();
   const [add, setAdd] = useState(false);
   const [form, setForm] = useState(EMPTY);
   const [justifModal, setJustifModal] = useState(null);
   const [motif, setMotif] = useState('');
 
-  // Dans ce modèle frontend, toute caisse peut faire l'objet d'un rapprochement
-  // bancaire (pas d'entité "compte bancaire" séparée pour l'instant — à affiner
-  // côté backend avec la table comptes_bancaires du schéma SQL).
-  const caissesBancaires = caisses.length ? caisses : banques;
+  // Seules les caisses explicitement liées au compte bancaire choisi sont éligibles (RG-CAI-017)
+  const caissesEligibles = caisses.filter((c) => c.compteBancaireId === form.idCompteBancaire);
 
   const handleAdd = () => {
-    if (!form.idCaisse || form.soldeReleve === '') return;
-    const c = caissesBancaires.find((x) => x.id === form.idCaisse);
-    const soldeLogiciel = Number(c?.totalSolde || 0);
-    const ecart = Number(form.soldeReleve) - soldeLogiciel;
-    addRapprochement?.({
-      idCaisse: form.idCaisse,
-      nomCaisse: c?.nom || c?.libelle,
-      soldeLogiciel,
-      soldeReleve: Number(form.soldeReleve),
-      ecart,
-      dateReleve: form.dateReleve,
-      statut: ecart === 0 ? 'ok' : 'ecart',
-    });
+    if (!form.idCompteBancaire || !form.idCaisse || form.soldeReleve === '') return;
+    if (form.periodeFin <= form.periodeDebut) return;
+    addRapprochement?.(form);
     setAdd(false);
     setForm(EMPTY);
   };
@@ -107,18 +95,29 @@ export default function RapprochementBancaire() {
           <button onClick={handleAdd} className="btn-primary"><Landmark size={14} />Comparer</button>
         </>}>
         <div className="space-y-4">
-          <FormField label="Caisse liée à un compte bancaire" required>
-            <select className="select" value={form.idCaisse} onChange={(e) => setForm((f) => ({ ...f, idCaisse: e.target.value }))}>
+          <FormField label="Compte bancaire" required>
+            <select className="select" value={form.idCompteBancaire} onChange={(e) => setForm((f) => ({ ...f, idCompteBancaire: e.target.value, idCaisse: '' }))}>
               <option value="">Sélectionner…</option>
-              {caissesBancaires.map((c) => <option key={c.id} value={c.id}>{c.nom || c.libelle}</option>)}
+              {comptesBancaire.map((c) => <option key={c.id} value={c.id}>{c.banque} — {c.numeroCompte}</option>)}
+            </select>
+          </FormField>
+          <FormField label="Caisse liée à ce compte" required hint={form.idCompteBancaire && caissesEligibles.length === 0 ? "Aucune caisse n'est encore liée à ce compte (à faire depuis Finance → Caisses)." : undefined}>
+            <select className="select" value={form.idCaisse} onChange={(e) => setForm((f) => ({ ...f, idCaisse: e.target.value }))} disabled={!form.idCompteBancaire}>
+              <option value="">Sélectionner…</option>
+              {caissesEligibles.map((c) => <option key={c.id} value={c.id}>{c.nom}</option>)}
             </select>
           </FormField>
           <FormField label="Solde du relevé bancaire (FCFA)" required>
             <input type="number" className="input" value={form.soldeReleve} onChange={(e) => setForm((f) => ({ ...f, soldeReleve: e.target.value }))} />
           </FormField>
-          <FormField label="Date du relevé">
-            <input type="date" className="input" value={form.dateReleve} onChange={(e) => setForm((f) => ({ ...f, dateReleve: e.target.value }))} />
-          </FormField>
+          <div className="grid sm:grid-cols-2 gap-4">
+            <FormField label="Début de période">
+              <input type="date" className="input" value={form.periodeDebut} onChange={(e) => setForm((f) => ({ ...f, periodeDebut: e.target.value }))} />
+            </FormField>
+            <FormField label="Fin de période">
+              <input type="date" className="input" value={form.periodeFin} onChange={(e) => setForm((f) => ({ ...f, periodeFin: e.target.value }))} />
+            </FormField>
+          </div>
         </div>
       </Modal>
 

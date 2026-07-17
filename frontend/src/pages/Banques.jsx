@@ -98,6 +98,7 @@ const typeLabels = {
 const createEmptyBanque = () => ({
   nom: '', description: '',
   type: 'autre',
+  compteBancaireId: '',
   montantCotisation: '',
   operationsAutorisees: ['epargne'],
   pretAutorise: false,
@@ -111,7 +112,7 @@ const createEmptyBanque = () => ({
 
 export default function Banques() {
   const {
-    membres, banques, comptesBanque, operationsBanque,
+    membres, banques, comptesBanque, operationsBanque, comptesBancaire,
     addBanque, doOperation, addMembreBanque,
   } = useApp();
 
@@ -461,6 +462,19 @@ export default function Banques() {
                 <option value="annuelle">Annuelle</option>
                 <option value="banque">Banque</option>
                 <option value="autre">Autre</option>
+              </select>
+            </FormField>
+
+            <FormField label="Compte bancaire lié (optionnel)" hint="Nécessaire pour faire un rapprochement bancaire sur cette caisse plus tard.">
+              <select
+                className="select"
+                value={newBanque.compteBancaireId}
+                onChange={e => setNewBanque(f => ({ ...f, compteBancaireId: e.target.value }))}
+              >
+                <option value="">Aucun</option>
+                {(comptesBancaire || []).map(c => (
+                  <option key={c.id} value={c.id}>{c.banque} — {c.numeroCompte}</option>
+                ))}
               </select>
             </FormField>
 

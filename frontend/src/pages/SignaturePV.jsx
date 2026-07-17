@@ -1,5 +1,5 @@
 import { PenLine, Lock, CheckCircle2 } from 'lucide-react';
-import { useApp } from '../../context/AppContext';
+import { useApp } from '../context/AppContext';
 
 /**
  * Workflow de signature électronique d'un PV de réunion (RG-REU-021 à 025).

@@ -4,31 +4,30 @@ import { useApp } from '../context/AppContext';
 import { fmtDate } from '../data/mockData';
 import { PageHeader, Table, Badge, Modal, FormField } from '../components/ui/index';
 
-const TYPES = ['Financier', 'Règlement', 'Calendrier tontine', 'Sortie de défaut', 'Autre'];
+const TYPES = [
+  { value: 'financier', label: 'Financier' },
+  { value: 'statutaire', label: 'Statutaire' },
+  { value: 'disciplinaire', label: 'Disciplinaire' },
+  { value: 'organisationnel', label: 'Organisationnel' },
+  { value: 'autre', label: 'Autre' },
+];
 
 const EMPTY = {
-  objet: '', description: '', type: 'Autre',
+  objet: '', description: '', type: 'organisationnel', idReunion: '',
   dateAG: new Date().toISOString().split('T')[0],
   pour: '', contre: '', abstentions: '', quorumPresent: '',
 };
 
 export default function DecisionsAG() {
-  const { decisionsAG = [], addDecisionAG, membres = [] } = useApp();
+  const { decisionsAG = [], addDecisionAG, membres = [], reunions = [] } = useApp();
   const [add, setAdd] = useState(false);
   const [form, setForm] = useState(EMPTY);
 
   const adopte = (d) => Number(d.pour) > Number(d.contre);
 
   const handleAdd = () => {
-    if (!form.objet.trim()) return;
-    addDecisionAG?.({
-      ...form,
-      pour: Number(form.pour) || 0,
-      contre: Number(form.contre) || 0,
-      abstentions: Number(form.abstentions) || 0,
-      quorumPresent: Number(form.quorumPresent) || 0,
-      numero: `AG-${new Date(form.dateAG).getFullYear()}-${String(decisionsAG.length + 1).padStart(3, '0')}`,
-    });
+    if (!form.objet.trim() || !form.idReunion) return;
+    addDecisionAG?.(form);
     setAdd(false);
     setForm(EMPTY);
   };
@@ -46,7 +45,7 @@ export default function DecisionsAG() {
           <tr key={d.id} className="hover:bg-white/40 transition-colors">
             <td className="td font-mono text-xs">{d.numero}</td>
             <td className="td font-medium max-w-[220px] truncate">{d.objet}</td>
-            <td className="td"><Badge variant="gray">{d.type}</Badge></td>
+            <td className="td"><Badge variant="gray">{TYPES.find(t => t.value === d.type)?.label || d.type}</Badge></td>
             <td className="td text-ink-600/60">{fmtDate(d.dateAG)}</td>
             <td className="td">
               <div className="flex items-center gap-2 text-xs">
@@ -76,10 +75,18 @@ export default function DecisionsAG() {
           <FormField label="Description">
             <textarea className="input" rows={3} value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} />
           </FormField>
+          <FormField label="Réunion associée" required>
+            <select className="select" value={form.idReunion} onChange={(e) => setForm((f) => ({ ...f, idReunion: e.target.value }))}>
+              <option value="">Sélectionner…</option>
+              {reunions.map((r) => (
+                <option key={r.id} value={r.id}>N°{r.numReunion} — {r.date}</option>
+              ))}
+            </select>
+          </FormField>
           <div className="grid sm:grid-cols-2 gap-4">
             <FormField label="Type" required>
               <select className="select" value={form.type} onChange={(e) => setForm((f) => ({ ...f, type: e.target.value }))}>
-                {TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                {TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
               </select>
             </FormField>
             <FormField label="Date de l'AG" required>
@@ -95,7 +102,7 @@ export default function DecisionsAG() {
           <FormField label="Quorum présent" hint={`Total membres actifs : ${membres.filter(m => m.statut === 'actif').length}`}>
             <input type="number" className="input" value={form.quorumPresent} onChange={(e) => setForm((f) => ({ ...f, quorumPresent: e.target.value }))} />
           </FormField>
-          {form.type === 'Financier' && (
+          {form.type === 'financier' && (
             <div className="rounded-xl bg-amber-50/60 border border-amber-100 p-3 text-xs text-amber-800">
               Une décision financière prend effet au prochain cycle suivant son adoption (RG-SOC-013).
             </div>

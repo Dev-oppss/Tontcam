@@ -30,7 +30,7 @@ class DecisionAgController extends Controller
         $this->authorize('create', DecisionAg::class);
         $data = $request->validate([
             'reunion_id' => ['required', 'uuid'],
-            'type' => ['required', 'in:financier,reglement,calendrier_tontine,sortie_defaut,autre'],
+            'type' => ['required', 'in:financier,statutaire,disciplinaire,organisationnel,autre'],
             'objet' => ['required', 'string'],
             'description' => ['nullable', 'string'],
             'quorum_present' => ['required', 'integer', 'min:0'],

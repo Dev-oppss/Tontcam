@@ -1,9 +1,7 @@
-import { useState, useMemo } from 'react';
-import { Landmark, UserCheck, History, Plus, LogOut } from 'lucide-react';
+import { useState } from 'react';
+import { Landmark, UserCheck, History, LogOut } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { PageHeader, SectionCard, Table, Badge, Modal, FormField } from '../components/ui/index';
-
-const POSTES_OBLIGATOIRES = ['Président', 'Secrétaire Général', 'Trésorier Général'];
 
 export default function Postes() {
   const { membres = [], postes = [], mandats = [], addMandat, cloturerMandat, parametres } = useApp();
@@ -12,16 +10,7 @@ export default function Postes() {
 
   const plafond = Number(parametres?.plafondCumulPostes || 2);
 
-  const listePostes = useMemo(() => {
-    const custom = postes.filter((p) => !POSTES_OBLIGATOIRES.includes(p.nom)).map((p) => p.nom);
-    return [...POSTES_OBLIGATOIRES, ...custom];
-  }, [postes]);
-
-  const titulaireActuel = (poste) =>
-    mandats.find((m) => m.poste === poste && !m.dateFin);
-
-  const historique = (poste) =>
-    mandats.filter((m) => m.poste === poste).sort((a, b) => new Date(b.dateDebut) - new Date(a.dateDebut));
+  const titulaireActuel = (poste) => poste.mandats?.[0];
 
   const nbPostesMembre = (idMembre) =>
     mandats.filter((m) => m.idMembre === idMembre && !m.dateFin).length;
@@ -29,14 +18,7 @@ export default function Postes() {
   const handleAssign = () => {
     if (!form.idMembre || !assignModal) return;
     if (nbPostesMembre(form.idMembre) >= plafond) return; // garde-fou RG-ORG-010
-    const m = membres.find((x) => x.id === form.idMembre);
-    addMandat?.({
-      poste: assignModal.poste,
-      idMembre: form.idMembre,
-      nomMembre: `${m?.nom || ''} ${m?.prenom || ''}`.trim(),
-      dateDebut: form.dateDebut,
-      dateFin: null,
-    });
+    addMandat?.({ idPoste: assignModal.poste.id, idMembre: form.idMembre, dateDebut: form.dateDebut });
     setAssignModal(null);
     setForm({ idMembre: '', dateDebut: new Date().toISOString().split('T')[0] });
   };
@@ -49,17 +31,16 @@ export default function Postes() {
       />
 
       <div className="grid sm:grid-cols-3 gap-4">
-        {listePostes.map((poste) => {
+        {postes.map((poste) => {
           const titulaire = titulaireActuel(poste);
-          const obligatoire = POSTES_OBLIGATOIRES.includes(poste);
           return (
-            <div key={poste} className="card">
+            <div key={poste.id} className="card">
               <div className="flex items-start justify-between">
                 <div className="flex items-center gap-2">
                   <Landmark size={16} className="text-indigo-500" />
-                  <p className="font-display font-semibold text-ink-900 text-sm">{poste}</p>
+                  <p className="font-display font-semibold text-ink-900 text-sm">{poste.libelle}</p>
                 </div>
-                {obligatoire && <Badge variant="amber">Obligatoire</Badge>}
+                {poste.estObligatoire && <Badge variant="amber">Obligatoire</Badge>}
               </div>
               {titulaire ? (
                 <div className="mt-3 flex items-center gap-2">
@@ -89,13 +70,16 @@ export default function Postes() {
             </div>
           );
         })}
+        {postes.length === 0 && (
+          <p className="text-sm text-ink-600/50 italic col-span-3">Chargement des postes…</p>
+        )}
       </div>
 
       <SectionCard title="Historique des mandats" subtitle="Conservé indéfiniment (RG-ORG-009)" className="p-0 overflow-hidden">
         <Table headers={['Poste', 'Titulaire', 'Début', 'Fin', 'Statut']}>
           {mandats.slice().sort((a, b) => new Date(b.dateDebut) - new Date(a.dateDebut)).map((m) => (
             <tr key={m.id} className="hover:bg-white/40 transition-colors">
-              <td className="td font-medium">{m.poste}</td>
+              <td className="td font-medium">{m.poste || postes.find((p) => p.id === m.idPoste)?.libelle}</td>
               <td className="td">{m.nomMembre}</td>
               <td className="td text-ink-600/60 num">{m.dateDebut}</td>
               <td className="td text-ink-600/60 num">{m.dateFin || '—'}</td>
@@ -111,7 +95,7 @@ export default function Postes() {
       <Modal
         open={!!assignModal}
         onClose={() => setAssignModal(null)}
-        title={`Attribuer : ${assignModal?.poste || ''}`}
+        title={`Attribuer : ${assignModal?.poste?.libelle || ''}`}
         footer={<>
           <button onClick={() => setAssignModal(null)} className="btn-secondary">Annuler</button>
           <button onClick={handleAssign} className="btn-primary"><UserCheck size={14} />Attribuer</button>

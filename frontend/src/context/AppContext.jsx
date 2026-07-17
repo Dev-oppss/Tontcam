@@ -38,6 +38,10 @@ export const AppProvider = ({ children }) => {
   const [fondAssurance, setFondAssurance] = useState([]);
   const [typesAideSociale, setTypesAideSociale] = useState([]);
   const [comptesBancaire, setComptesBancaire] = useState([]);
+  const [auditLog, setAuditLog] = useState([]);
+  const [decisionsAG, setDecisionsAG] = useState([]);
+  const [reglements, setReglements] = useState([]);
+  const [rapprochements, setRapprochements] = useState([]);
   const [caisseJournal, setCaisseJournal] = useState([]);
   const [utilisateurs, setUtilisateurs] = useState([]);
   const [planningTours, setPlanningTours] = useState([]);
@@ -88,7 +92,7 @@ export const AppProvider = ({ children }) => {
     if (!user || !currentAssociation) return;
     (async () => {
       try {
-        const [mRes, tRes, rRes, cRes, pRes, sRes, paramRes, aRes, uRes, typeSancRes, typeAideRes, comptesRes, postesRes] = await Promise.all([
+        const [mRes, tRes, rRes, cRes, pRes, sRes, paramRes, aRes, uRes, typeSancRes, typeAideRes, comptesRes, postesRes, decAgRes, reglRes, rapproRes] = await Promise.all([
           request('/membres?per_page=200'),
           request('/tontines'),
           request('/reunions?per_page=100'),
@@ -102,6 +106,9 @@ export const AppProvider = ({ children }) => {
           request('/types-aide-sociale').catch(() => []),
           request('/comptes-bancaires').catch(() => []),
           request('/postes').catch(() => []),
+          request('/decisions-ag?per_page=200').catch(() => ({ data: [] })),
+          request('/reglements').catch(() => []),
+          request('/rapprochements').catch(() => []),
         ]);
 
         setMembres((mRes.data || mRes).map(adapt.membreFromApi));
@@ -130,6 +137,10 @@ export const AppProvider = ({ children }) => {
           postesAdapted.map((p) => request(`/postes/${p.id}/mandats`).catch(() => []))
         );
         setMandats(histories.flatMap((h) => h.map(adapt.mandatFromApi)));
+
+        setDecisionsAG((decAgRes.data || decAgRes).map(adapt.decisionAgFromApi));
+        setReglements((reglRes || []).map(adapt.reglementFromApi));
+        setRapprochements((rapproRes || []).map(adapt.rapprochementFromApi));
 
         // Parts de tontine : agrégées depuis le détail de chaque tontine
         const tontinesDetail = await Promise.all(
@@ -290,6 +301,80 @@ export const AppProvider = ({ children }) => {
     } catch (err) { return handleError(err); }
   };
 
+  // ── Journal d'audit (lecture seule, accès restreint côté backend) ──
+  const logAuditConsultation = async () => {
+    try {
+      const res = await request('/audit-log?per_page=200');
+      setAuditLog((res.data || res).map(adapt.auditLogFromApi));
+    } catch { /* 403 si rôle non autorisé : on laisse la page gérer l'affichage */ }
+  };
+
+  // ── Décisions d'AG ────────────────────────────────────────────────
+  const addDecisionAG = async (data) => {
+    try {
+      const d = await request('/decisions-ag', { method: 'POST', body: {
+        reunion_id: data.idReunion,
+        type: data.type,
+        objet: data.objet,
+        description: data.description || null,
+        quorum_present: Number(data.quorumPresent) || 0,
+        votes_pour: Number(data.pour) || 0,
+        votes_contre: Number(data.contre) || 0,
+        votes_abstention: Number(data.abstentions) || 0,
+        date_effet: data.dateAG || null,
+      } });
+      const decision = adapt.decisionAgFromApi(d);
+      setDecisionsAG((prev) => [decision, ...prev]);
+      showToast('Décision d\'AG enregistrée');
+      return decision;
+    } catch (err) { return handleError(err); }
+  };
+
+  // ── Règlement intérieur ───────────────────────────────────────────
+  const addReglement = async (data) => {
+    try {
+      const r = await request('/reglements', { method: 'POST', body: {
+        version: data.version,
+        titre: data.titre || null,
+        contenu_html: data.notes || null,
+        fichier_url: data.fichier,
+        date_adoption: data.dateAdoption,
+        numero_decision_ag: data.decisionAG,
+        signataires: null,
+      } });
+      const reglement = adapt.reglementFromApi(r);
+      setReglements((prev) => [reglement, ...prev]);
+      showToast('Version publiée');
+      return reglement;
+    } catch (err) { return handleError(err); }
+  };
+
+  // ── Rapprochement bancaire ────────────────────────────────────────
+  const addRapprochement = async (data) => {
+    try {
+      const r = await request('/rapprochements', { method: 'POST', body: {
+        compte_bancaire_id: data.idCompteBancaire,
+        caisse_id: data.idCaisse,
+        solde_banque: Number(data.soldeReleve),
+        periode_debut: data.periodeDebut,
+        periode_fin: data.periodeFin,
+      } });
+      const rapprochement = adapt.rapprochementFromApi(r);
+      setRapprochements((prev) => [rapprochement, ...prev]);
+      showToast(rapprochement.ecart === 0 ? 'Rapprochement conforme' : 'Écart détecté');
+      return rapprochement;
+    } catch (err) { return handleError(err); }
+  };
+  const justifierEcart = async (id, motif) => {
+    try {
+      const r = await request(`/rapprochements/${id}/justifier`, { method: 'POST', body: { motif } });
+      const rapprochement = adapt.rapprochementFromApi(r);
+      setRapprochements((prev) => prev.map((x) => (x.id === id ? rapprochement : x)));
+      showToast('Écart justifié');
+      return rapprochement;
+    } catch (err) { return handleError(err); }
+  };
+
   // ── Tontines ──────────────────────────────────────────────────
   const addTontine = async (data) => {
     try {
@@ -370,6 +455,29 @@ export const AppProvider = ({ children }) => {
       const r = await request(`/reunions/${id}/signer`, { method: 'POST', body: { membre_id: user?.membre_id, role_signature: user?.role } });
       setReunions((prev) => prev.map((x) => (x.id === id ? adapt.reunionFromApi(r) : x)));
       showToast('Signature enregistrée');
+    } catch (err) { return handleError(err); }
+  };
+
+  const setPresenceMembre = async (idReunion, idMembre, { statut, heureArrivee, motifAbsence }) => {
+    try {
+      const res = await request(`/reunions/${idReunion}/presences`, { method: 'POST', body: { presences: [{
+        membre_id: idMembre, statut, heure_arrivee: heureArrivee || null, motif_absence: motifAbsence || null,
+      }] } });
+      const p = res[0];
+      const entry = { reunionId: idReunion, idMembre, statut: p?.statut || statut, heureArrivee: p?.heure_arrivee, motifAbsence: p?.motif_absence };
+      setReunions((prev) => prev.map((r) => (r.id === idReunion
+        ? { ...r, presencesReunion: [...(r.presencesReunion || []).filter((x) => x.idMembre !== idMembre), entry] }
+        : r)));
+    } catch (err) { return handleError(err); }
+  };
+  const signerPV = async (idReunion, { idMembre, role }) => {
+    try {
+      const s = await request(`/reunions/${idReunion}/signer`, { method: 'POST', body: { membre_id: idMembre, role_signature: role } });
+      const signature = { idMembre: s.membre_id, nom: s.membre?.nom, role: s.role_signature, signeLe: s.signed_at };
+      setReunions((prev) => prev.map((r) => (r.id === idReunion
+        ? { ...r, signatures: [...(r.signatures || []).filter((x) => x.idMembre !== idMembre), signature] }
+        : r)));
+      showToast('PV signé');
     } catch (err) { return handleError(err); }
   };
 
@@ -724,6 +832,24 @@ export const AppProvider = ({ children }) => {
       return aide;
     } catch (err) { return handleError(err); }
   };
+  const validerAideSociale = async (id, montantAccorde) => {
+    try {
+      const a = await request(`/aides-sociales/${id}/valider`, { method: 'POST', body: { montant_accorde: Number(montantAccorde) } });
+      const aide = adapt.aideFromApi(a);
+      setFondAssurance((prev) => prev.map((x) => (x.id === id ? aide : x)));
+      showToast('Aide approuvée');
+      return aide;
+    } catch (err) { return handleError(err); }
+  };
+  const verserAideSociale = async (id) => {
+    try {
+      const a = await request(`/aides-sociales/${id}/verser`, { method: 'POST' });
+      const aide = adapt.aideFromApi(a);
+      setFondAssurance((prev) => prev.map((x) => (x.id === id ? aide : x)));
+      showToast('Aide versée');
+      return aide;
+    } catch (err) { return handleError(err); }
+  };
   const addTypeAideSociale = async (data) => {
     try {
       const t = await request('/types-aide-sociale', { method: 'POST', body: {
@@ -806,10 +932,13 @@ export const AppProvider = ({ children }) => {
   const value = {
     booting, user, currentAssociation, setupComplete, toast, parametres,
     membres, tontines, membresParTontine, reunions, rotations, encheres,
+    presences: reunions.flatMap((r) => r.presencesReunion || []),
     postes, mandats,
     banques, caisses: banques, prets, sanctions, typesSanction,
     fondAssurance, aidesAssurance: fondAssurance, caisseSociale: fondAssurance, caisseJournal,
     typesAideSociale, comptesBancaire,
+    aidesSociales: fondAssurance,
+    auditLog, decisionsAG, reglements, rapprochements,
     // Concepts hérités du mock sans équivalent backend réel pour l'instant (RG ne modélise
     // que des caisses partagées, pas de sous-comptes individuels par membre, ni de journal
     // de transactions par réunion distinct du journal de caisse) — exposés vides pour éviter
@@ -820,14 +949,16 @@ export const AppProvider = ({ children }) => {
     login, logout, changePassword, register, updateAssociation,
     addMembre, updateMembre, deleteMembre,
     addMandat, cloturerMandat,
+    logAuditConsultation, addDecisionAG, addReglement, addRapprochement, justifierEcart,
     addTontine, updateTontine, addMembreTontine, removeMembreTontine, updateMembreTontine,
     addReunion, updateReunion, ouvrirReunion, cloturerReunion, ouvrirSeance, cloturerSeance,
     addPointODJ, updatePointODJ, removePointODJ,
+    setPresenceMembre, signerPV,
     chargerRotations, tirerAuSort, addEnchere, attribuerTour, annulerEncheres,
     addBanque, addCaisse: addBanque, doOperation, addMembreBanque, transfererCaisse, addCompteBancaire, chargerTransferts,
     addTypeSanction, updateTypeSanction, addSanction, payerSanction,
     addPret, approuverPret, decaisserPret, rembourserPret, distribuerInteretsPret,
-    addAide, addTypeAideSociale, membreEligibleAssurance, addCaisseEntry,
+    addAide, addAideSociale: addAide, validerAideSociale, verserAideSociale, addTypeAideSociale, membreEligibleAssurance, addCaisseEntry,
     addPlanningTour, addTourPlanning, marquerTourEncaisse, retirerTourPlanning, chargerPlanningTours,
     addSeanceTransaction, deleteSeanceTransaction, enregistrerBeneficiaireSeance, chargerSeanceTransactions,
     addUtilisateur, updateUtilisateur, desactiverUtilisateur, activerUtilisateur,
