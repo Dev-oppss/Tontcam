@@ -28,3 +28,4 @@ script postgreSQL.sql
 TontineApp_Regles_de_Gestion.docx
 CDC_ET_TESTS.md
 cahier de charges TONTIX_020731.pdf
+*.patch

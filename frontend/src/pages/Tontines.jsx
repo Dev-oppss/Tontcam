@@ -97,8 +97,9 @@ export default function Tontines() {
   );
   const caissesMap = Object.fromEntries((caisses || []).map((c) => [c.id, c]));
   const caissesTontine = (caisses || []).filter((c) =>
-    String(c?.type || '').toLowerCase() === 'tontine' && c.statut !== 'inactive'
+    ['tontine', 'autre'].includes(String(c?.type || '').toLowerCase()) && c.statut !== 'inactive'
   );
+  const aucuneCaisseDisponible = (caisses || []).length > 0 && caissesTontine.length === 0;
 
   const getTourPlanning   = (id) => (planningTours || []).filter(p => p.idTontine === id).sort((a,b) => a.numeroTour - b.numeroTour);
   const getMembresActifs  = (id) => membresParTontine.filter(mt => mt.idTontine === id && mt.statut === 'actif');
@@ -744,7 +745,8 @@ export default function Tontines() {
               <FormField label="Cotisation / part (FCFA)" required><F k="cotisation" type="number" placeholder="50 000"/></FormField>
               <FormField label="Périodicité"><S k="periode"><option value="hebdomadaire">Hebdomadaire</option><option value="mensuel">Mensuelle</option><option value="bimestriel">Bimestrielle</option><option value="trimestriel">Trimestrielle</option></S></FormField>
             </div>
-            <FormField label="Caisse liée" required>
+            <FormField label="Caisse liée" required
+              hint={aucuneCaisseDisponible ? "Aucune caisse éligible : vérifiez qu'au moins une caisse existante n'est pas de type Mutuelle/Scolaire/Événement/Annuelle/Banque, ou créez-en une nouvelle dans Caisses." : undefined}>
               <S k="caisseId">
                 <option value="">Sélectionner une caisse…</option>
                 {caissesTontine.map((c) => <option key={c.id} value={c.id}>{c.nom}</option>)}
@@ -800,7 +802,8 @@ export default function Tontines() {
             </FormField>
             <FormField label="Périodicité"><S k="periode"><option value="hebdomadaire">Hebdomadaire</option><option value="mensuel">Mensuelle</option><option value="bimestriel">Bimestrielle</option><option value="trimestriel">Trimestrielle</option></S></FormField>
           </div>
-          <FormField label="Caisse liée" required>
+          <FormField label="Caisse liée" required
+            hint={aucuneCaisseDisponible ? "Aucune caisse éligible : vérifiez qu'au moins une caisse existante n'est pas de type Mutuelle/Scolaire/Événement/Annuelle/Banque, ou créez-en une nouvelle dans Caisses." : undefined}>
             <S k="caisseId">
               <option value="">Sélectionner une caisse…</option>
               {caissesTontine.map((c) => <option key={c.id} value={c.id}>{c.nom}</option>)}
