@@ -89,13 +89,18 @@ class SanctionController extends Controller
             return response()->json(['message' => 'Cette sanction n\'est pas due.'], 422);
         }
 
-        $data = $request->validate(['caisse_id' => ['sometimes', 'nullable', 'uuid']]);
+        $data = $request->validate([
+            'caisse_id' => ['sometimes', 'nullable', 'uuid'],
+            'mode_paiement' => ['sometimes', 'nullable', 'string'],
+            'details_paiement' => ['sometimes', 'nullable', 'string'],
+        ]);
         $caisse = !empty($data['caisse_id'])
             ? \App\Models\Caisse::findOrFail($data['caisse_id'])
             : \App\Models\Caisse::where('association_id', $this->scope->associationId())->orderBy('created_at')->firstOrFail();
 
         $transaction = $this->caisseService->entree($caisse, (float) $sanction->montant, "Paiement sanction — {$sanction->motif}", [
             'reference_type' => 'sanction_membre', 'reference_id' => $sanction->id, 'created_by' => $request->user()->id, 'valide_par' => $request->user()->id,
+            'mode_paiement' => $data['mode_paiement'] ?? null, 'cheque_numero' => $data['details_paiement'] ?? null,
         ]);
 
         $sanction->update(['statut' => 'payee', 'payee_at' => now(), 'transaction_id' => $transaction->id]);

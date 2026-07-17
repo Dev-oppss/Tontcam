@@ -772,9 +772,16 @@ export const AppProvider = ({ children }) => {
       return sanction;
     } catch (err) { return handleError(err); }
   };
-  const payerSanction = async (id, idCaisse) => {
+  const payerSanction = async (id, options = {}) => {
     try {
-      const s = await request(`/sanctions/${id}/payer`, { method: 'POST', body: { caisse_id: idCaisse } });
+      // Sanctions.jsx appelle payerSanction(id, { modePaiement, detailsPaiement }) — pas un
+      // id de caisse. La caisse est optionnelle (le serveur prend la 1ère caisse par défaut).
+      const idCaisse = typeof options === 'string' ? options : options?.idCaisse;
+      const s = await request(`/sanctions/${id}/payer`, { method: 'POST', body: {
+        caisse_id: idCaisse || undefined,
+        mode_paiement: options?.modePaiement,
+        details_paiement: options?.detailsPaiement,
+      } });
       setSanctions((prev) => prev.map((x) => (x.id === id ? adapt.sanctionFromApi(s) : x)));
       showToast('Sanction réglée');
     } catch (err) { return handleError(err); }
