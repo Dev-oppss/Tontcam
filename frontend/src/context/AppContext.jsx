@@ -560,6 +560,19 @@ export const AppProvider = ({ children }) => {
     } catch (err) { return handleError(err); }
   };
 
+  const movePointODJ = (reunionId, pointId, direction) => {
+    setReunions((prev) => prev.map((r) => {
+      if (r.id !== reunionId) return r;
+      const points = (r.pointsOrdreJour || []).slice().sort((a, b) => (a.ordre ?? 0) - (b.ordre ?? 0));
+      const idx = points.findIndex((p) => p.id === pointId);
+      const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
+      if (idx < 0 || swapIdx < 0 || swapIdx >= points.length) return r;
+      [points[idx], points[swapIdx]] = [points[swapIdx], points[idx]];
+      const reordered = points.map((p, i) => ({ ...p, ordre: i + 1 }));
+      return { ...r, pointsOrdreJour: reordered };
+    }));
+  };
+
   // ── Rotations / Enchères : dérivées des cycles de tontine ──────
   const chargerRotations = useCallback(async (idTontine) => {
     try {
@@ -1088,7 +1101,7 @@ export const AppProvider = ({ children }) => {
     logAuditConsultation, addDecisionAG, addReglement, addRapprochement, justifierEcart,
     addTontine, updateTontine, addMembreTontine, removeMembreTontine, updateMembreTontine,
     addReunion, updateReunion, ouvrirReunion, cloturerReunion, ouvrirSeance, cloturerSeance,
-    addPointODJ, updatePointODJ, removePointODJ,
+    addPointODJ, updatePointODJ, removePointODJ, movePointODJ,
     setPresenceMembre, signerPV,
     chargerRotations, tirerAuSort, addEnchere, attribuerTour, annulerEncheres,
     addBanque, addCaisse: addBanque, doOperation, addMembreBanque, transfererCaisse, addCompteBancaire, chargerTransferts,
