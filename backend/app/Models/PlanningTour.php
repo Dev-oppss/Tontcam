@@ -14,7 +14,7 @@ class PlanningTour extends Model
     protected $table = 'planning_tours';
 
     protected $fillable = [
-        'tontine_id', 'numero_tour', 'beneficiaire_membre_id',
+        'tontine_id', 'numero_tour', 'beneficiaire_membre_id', 'tontine_part_id',
         'montant_prevu', 'date_prevue', 'statut', 'notes',
     ];
 
@@ -32,5 +32,10 @@ class PlanningTour extends Model
     public function beneficiaire()
     {
         return $this->belongsTo(Membre::class, 'beneficiaire_membre_id');
+    }
+
+    public function part()
+    {
+        return $this->belongsTo(TontinePart::class, 'tontine_part_id');
     }
 }

@@ -30,6 +30,11 @@ class TontinePart extends Model
             'ordre_rotation' => 'integer'
     ];
 
+    public function planningTour()
+    {
+        return $this->hasOne(PlanningTour::class, 'tontine_part_id');
+    }
+
     public function tontine()
     {
         return $this->belongsTo(Tontine::class);

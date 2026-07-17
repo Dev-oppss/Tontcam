@@ -600,18 +600,30 @@ export const AppProvider = ({ children }) => {
       const list = await request(`/tontines/${idTontine}/planning`);
       setPlanningTours((prev) => [...prev.filter((t) => t.idTontine !== idTontine), ...(list || []).map((t) => ({
         id: t.id, idTontine: t.tontine_id, numeroTour: t.numero_tour,
-        idBeneficiaire: t.beneficiaire_membre_id, nomBeneficiaire: t.beneficiaire ? `${t.beneficiaire.nom} ${t.beneficiaire.prenom}` : null,
-        montantPrevu: Number(t.montant_prevu), datePrevue: t.date_prevue, statut: t.statut, notes: t.notes,
+        idPart: t.tontine_part_id, numeroPart: t.part?.numero_part,
+        idMembre: t.beneficiaire_membre_id, nomMembre: t.beneficiaire ? `${t.beneficiaire.nom} ${t.beneficiaire.prenom}` : null,
+        montantPot: Number(t.montant_prevu), datePrevue: t.date_prevue, statut: t.statut, note: t.notes,
       }))]);
     } catch (err) { showToast(err.message, 'error'); }
   }, [showToast]);
   const addTourPlanning = async (data) => {
     try {
+      // RG-TON : le tour est toujours rattaché à une PART précise (data.idPart), jamais
+      // directement au membre — un membre avec plusieurs parts occupe plusieurs tours distincts.
+      if (!data.idPart) {
+        showToast('Aucune part sélectionnée pour ce tour.', 'error');
+        return;
+      }
       const t = await request(`/tontines/${data.idTontine}/planning`, {
         method: 'POST',
-        body: { numero_tour: Number(data.numeroTour), beneficiaire_membre_id: data.idBeneficiaire || undefined, montant_prevu: Number(data.montantPrevu || 0), date_prevue: data.datePrevue || undefined, notes: data.notes },
+        body: { numero_tour: Number(data.numeroTour), tontine_part_id: data.idPart, montant_prevu: Number(data.montantPot || 0), date_prevue: data.datePrevue || undefined, notes: data.note },
       });
-      const item = { id: t.id, idTontine: data.idTontine, numeroTour: t.numero_tour, montantPrevu: Number(t.montant_prevu), datePrevue: t.date_prevue, statut: t.statut };
+      const item = {
+        id: t.id, idTontine: data.idTontine, numeroTour: t.numero_tour,
+        idPart: t.tontine_part_id, numeroPart: t.part?.numero_part,
+        idMembre: t.beneficiaire_membre_id, nomMembre: t.beneficiaire ? `${t.beneficiaire.nom} ${t.beneficiaire.prenom}` : data.nomMembre,
+        montantPot: Number(t.montant_prevu), datePrevue: t.date_prevue, statut: t.statut, note: t.notes,
+      };
       setPlanningTours((prev) => [...prev, item]);
       showToast('Tour planifié');
       return item;
@@ -811,11 +823,11 @@ export const AppProvider = ({ children }) => {
   // ── Social ────────────────────────────────────────────────────
   const addAide = async (data) => {
     try {
-      // data.typeEvenement peut être soit déjà un UUID de type, soit un code catégorie (naissance, mariage...) —
-      // dans ce 2e cas on résout vers le premier type actif correspondant dans le catalogue réel.
-      const typeId = typesAideSociale.some((t) => t.id === data.typeEvenement)
-        ? data.typeEvenement
-        : typesAideSociale.find((t) => t.typeEvenement === data.typeEvenement)?.id;
+      // Social.jsx envoie data.categorie (code catégorie : naissance, mariage...) — on résout
+      // vers le premier type actif correspondant dans le catalogue réel des barèmes.
+      const typeId = typesAideSociale.some((t) => t.id === (data.categorie ?? data.typeEvenement))
+        ? (data.categorie ?? data.typeEvenement)
+        : typesAideSociale.find((t) => t.typeEvenement === (data.categorie ?? data.typeEvenement))?.id;
 
       if (!typeId) {
         showToast("Aucun barème configuré pour cette catégorie. Créez-le d'abord dans Paramètres → Social.", 'error');
@@ -824,8 +836,8 @@ export const AppProvider = ({ children }) => {
 
       const a = await request('/aides-sociales', { method: 'POST', body: {
         membre_id: data.idMembre, type_aide_id: typeId, description: data.description,
-        date_evenement: data.dateEvenement, montant_demande: data.montantAide,
-        pieces_jointes: data.piecesJointes?.length ? data.piecesJointes : ['justificatif.pdf'],
+        date_evenement: data.dateDeclaration ?? data.dateEvenement, montant_demande: data.montant ?? data.montantAide,
+        pieces_jointes: data.justificatif ? [data.justificatif] : (data.piecesJointes?.length ? data.piecesJointes : ['justificatif.pdf']),
       } });
       const aide = adapt.aideFromApi(a);
       setFondAssurance((prev) => [...prev, aide]);
@@ -833,8 +845,21 @@ export const AppProvider = ({ children }) => {
       return aide;
     } catch (err) { return handleError(err); }
   };
-  const validerAideSociale = async (id, montantAccorde) => {
+  const validerAideSociale = async (id, decisionOuMontant) => {
     try {
+      // Social.jsx appelle validerAideSociale(id, 'approuvee' | 'refusee').
+      if (decisionOuMontant === 'refusee') {
+        const a = await request(`/aides-sociales/${id}/refuser`, { method: 'POST' });
+        const aide = adapt.aideFromApi(a);
+        setFondAssurance((prev) => prev.map((x) => (x.id === id ? aide : x)));
+        showToast('Aide refusée');
+        return aide;
+      }
+      // 'approuvee' (ou un montant explicite fourni par un autre appelant) : le montant
+      // accordé par défaut est le montant demandé, modifiable ensuite si besoin.
+      const montantAccorde = typeof decisionOuMontant === 'number'
+        ? decisionOuMontant
+        : fondAssurance.find((x) => x.id === id)?.montant ?? fondAssurance.find((x) => x.id === id)?.montantDemande ?? 0;
       const a = await request(`/aides-sociales/${id}/valider`, { method: 'POST', body: { montant_accorde: Number(montantAccorde) } });
       const aide = adapt.aideFromApi(a);
       setFondAssurance((prev) => prev.map((x) => (x.id === id ? aide : x)));
@@ -842,9 +867,11 @@ export const AppProvider = ({ children }) => {
       return aide;
     } catch (err) { return handleError(err); }
   };
-  const verserAideSociale = async (id) => {
+  const verserAideSociale = async (id, options = {}) => {
     try {
-      const a = await request(`/aides-sociales/${id}/verser`, { method: 'POST' });
+      const a = await request(`/aides-sociales/${id}/verser`, { method: 'POST', body: {
+        mode_paiement: options.modePaiement, details_paiement: options.detailsPaiement,
+      } });
       const aide = adapt.aideFromApi(a);
       setFondAssurance((prev) => prev.map((x) => (x.id === id ? aide : x)));
       showToast('Aide versée');
@@ -879,7 +906,6 @@ export const AppProvider = ({ children }) => {
   const membreEligibleAssurance = (idMembre) => membres.some((m) => m.id === idMembre && m.statut === 'actif');
 
   const addCaisseEntry = async (data) => doOperation(data);
-  const addPlanningTour = (data) => setPlanningTours((prev) => [...prev, { id: crypto.randomUUID(), ...data }]);
 
   // ── Utilisateurs ──────────────────────────────────────────────
   const addUtilisateur = async (data) => {
@@ -968,7 +994,7 @@ export const AppProvider = ({ children }) => {
     addTypeSanction, updateTypeSanction, addSanction, payerSanction,
     addPret, approuverPret, decaisserPret, rembourserPret, distribuerInteretsPret,
     addAide, addAideSociale: addAide, validerAideSociale, verserAideSociale, addTypeAideSociale, membreEligibleAssurance, addCaisseEntry,
-    addPlanningTour, addTourPlanning, marquerTourEncaisse, retirerTourPlanning, chargerPlanningTours,
+    addTourPlanning, marquerTourEncaisse, retirerTourPlanning, chargerPlanningTours,
     addSeanceTransaction, deleteSeanceTransaction, enregistrerBeneficiaireSeance, chargerSeanceTransactions,
     addUtilisateur, updateUtilisateur, desactiverUtilisateur, activerUtilisateur,
     genererBulletin, ouvrirBulletinPdf,

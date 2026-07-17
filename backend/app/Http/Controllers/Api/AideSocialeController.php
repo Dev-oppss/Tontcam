@@ -18,7 +18,7 @@ class AideSocialeController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $query = $this->scope->scopeAssociation(EvenementSocial::query())->with('membre', 'typeAide');
+        $query = $this->scope->scopeAssociation(EvenementSocial::query())->with('membre', 'typeAide', 'transaction');
         if ($request->filled('statut')) {
             $query->where('statut', $request->statut);
         }
@@ -105,6 +105,25 @@ class AideSocialeController extends Controller
         return response()->json($evenement);
     }
 
+    public function refuser(Request $request, string $id): JsonResponse
+    {
+        $evenement = $this->scope->scopeAssociation(EvenementSocial::query())->findOrFail($id);
+        $this->authorize('update', $evenement);
+        if ($evenement->statut !== 'en_attente') {
+            return response()->json(['message' => 'Cette demande a déjà été traitée.'], 422);
+        }
+
+        $data = $request->validate(['motif' => ['nullable', 'string']]);
+
+        $evenement->update([
+            'statut' => 'refusee',
+            'refuse_par' => $request->user()->id,
+            'motif_refus' => $data['motif'] ?? null,
+        ]);
+
+        return response()->json($evenement);
+    }
+
     /**
      * Versement effectif — sortie de la caisse source de l'aide.
      */
@@ -114,6 +133,11 @@ class AideSocialeController extends Controller
         if ($evenement->statut !== 'approuvee') {
             return response()->json(['message' => 'L\'aide doit être approuvée avant versement.'], 422);
         }
+
+        $data = $request->validate([
+            'mode_paiement' => ['sometimes', 'nullable', 'string'],
+            'details_paiement' => ['sometimes', 'nullable', 'string'],
+        ]);
 
         $caisse = $evenement->typeAide->caisseSource;
         if (! $caisse) {
@@ -125,7 +149,12 @@ class AideSocialeController extends Controller
                 $caisse,
                 (float) $evenement->montant_accorde,
                 "Aide sociale — {$evenement->membre->nom} {$evenement->membre->prenom}",
-                ['reference_type' => 'evenement_social', 'reference_id' => $evenement->id, 'created_by' => $request->user()->id, 'valide_par' => $request->user()->id]
+                [
+                    'reference_type' => 'evenement_social', 'reference_id' => $evenement->id,
+                    'created_by' => $request->user()->id, 'valide_par' => $request->user()->id,
+                    'mode_paiement' => $data['mode_paiement'] ?? null,
+                    'cheque_numero' => $data['details_paiement'] ?? null,
+                ]
             );
         } catch (RuntimeException $e) {
             return response()->json(['message' => $e->getMessage()], 422);

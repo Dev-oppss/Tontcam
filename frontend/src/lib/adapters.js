@@ -280,13 +280,21 @@ export const aideFromApi = (a) => !a ? null : ({
   nomMembre: a.membre ? `${a.membre.nom} ${a.membre.prenom}` : undefined,
   typeAideId: a.type_aide_id,
   typeEvenement: a.type_aide?.type_evenement || a.type_aide_id,
+  categorie: a.type_aide?.type_evenement || a.type_aide_id, // alias utilisé par Social.jsx
   description: a.description,
   dateEvenement: a.date_evenement,
+  dateDeclaration: a.date_declaration || a.date_evenement, // alias utilisé par Social.jsx
   montantDemande: Number(a.montant_demande || 0),
+  montant: Number(a.montant_demande || 0), // alias utilisé par Social.jsx
   montantAccorde: a.montant_accorde != null ? Number(a.montant_accorde) : null,
   montantAide: Number(a.montant_accorde || a.montant_demande || 0),
   piecesJointes: a.pieces_jointes || [],
-  statut: a.statut === 'versee' ? 'verse' : a.statut,
+  justificatif: (a.pieces_jointes || []).length > 0,
+  // Social.jsx distingue explicitement 'en_attente' | 'approuvee' | 'refusee' | 'versee' —
+  // l'ancien remappage 'versee' → 'verse' cassait le badge de statut et le bouton "Verser".
+  statut: a.statut,
+  modePaiement: a.transaction?.mode_paiement,
+  detailsPaiement: a.transaction?.cheque_numero,
 });
 
 // ── Caisses (banques) ──────────────────────────────────────────

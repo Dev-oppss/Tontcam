@@ -12,6 +12,7 @@ import { fmtDate, typePointLabel, statutPointLabel, fmt, periodeLabel, ACTEUR_RO
 import { useApp, TX_TYPES, TX_LABELS } from '../context/AppContext';
 import { PageHeader, Badge, Modal, FormField } from '../components/ui/index';
 import { ModePaiementFields, isModePaiementValid, ModePaiementBadge } from '../components/ui/ModePaiement';
+import SignaturePV from './SignaturePV';
 import clsx from 'clsx';
 
 // ── Config statuts ────────────────────────────────────────────
@@ -2414,6 +2415,8 @@ export function Reunions() {
                       Séance en cours — non encore clôturée
                     </div>
                   ) : null}
+
+                  {r.cloture && <SignaturePV reunion={r} />}
 
                   {locked && (
                     <div className="flex items-center gap-2 p-2.5 bg-gray-100 rounded-lg text-xs text-gray-500">

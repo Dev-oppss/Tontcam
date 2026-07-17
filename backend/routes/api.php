@@ -122,6 +122,7 @@ Route::middleware(['auth:sanctum', 'association.context'])->group(function () {
 
     Route::apiResource('aides-sociales', AideSocialeController::class)->except(['destroy']);
     Route::post('/aides-sociales/{id}/valider', [AideSocialeController::class, 'valider']);
+    Route::post('/aides-sociales/{id}/refuser', [AideSocialeController::class, 'refuser']);
     Route::post('/aides-sociales/{id}/verser', [AideSocialeController::class, 'verser']);
     Route::get('/types-aide-sociale', [TypeAideSocialeController::class, 'index']);
     Route::post('/types-aide-sociale', [TypeAideSocialeController::class, 'store']);

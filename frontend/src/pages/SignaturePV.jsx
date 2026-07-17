@@ -18,13 +18,13 @@ export default function SignaturePV({ reunion, rapportsComplets = true, signatai
   const requis = signatairesRequis ?? Number(parametres.nbSignatairesPV || 3);
   const signatures = reunion?.signatures || [];
   const verrouille = signatures.length >= requis;
-  const dejaSigne = signatures.some((s) => s.idMembre === user?.idMembre);
+  const dejaSigne = signatures.some((s) => s.idMembre === user?.membre_id);
 
   const handleSign = () => {
     if (!reunion || verrouille || dejaSigne || !rapportsComplets) return;
-    const m = membres.find((x) => x.id === user?.idMembre);
+    const m = membres.find((x) => x.id === user?.membre_id);
     signerPV?.(reunion.id, {
-      idMembre: user?.idMembre,
+      idMembre: user?.membre_id,
       nom: `${m?.nom || ''} ${m?.prenom || ''}`.trim() || user?.name,
       role: user?.role,
       signeLe: new Date().toISOString(),

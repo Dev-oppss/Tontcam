@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import {
   Plus, RefreshCw, Calendar, Users, UserPlus, Trash2, Pencil,
   BadgeCheck, TrendingUp, Info, Trophy, Shuffle, ChevronRight,
@@ -61,10 +61,18 @@ export default function Tontines() {
   const {
     tontines, caisses, addTontine, updateTontine,
     membres, membresParTontine, addMembreTontine, removeMembreTontine,
-    planningTours, addTourPlanning, marquerTourEncaisse, retirerTourPlanning, tirerAuSort,
+    planningTours, addTourPlanning, marquerTourEncaisse, retirerTourPlanning, tirerAuSort, chargerPlanningTours,
     encheres, rotations, attribuerTour,
     genererBulletin, ouvrirBulletinPdf, cyclesTontine, chargerCycles,
   } = useApp();
+
+  // Le planning des tours n'est pas inclus dans le chargement initial global de
+  // l'application : sans cet appel, `planningTours` reste vide après chaque
+  // rechargement de page et l'ordre de rotation semblait "disparaître".
+  useEffect(() => {
+    tontines.filter(t => t.typeAttribution === 'rotation').forEach(t => chargerPlanningTours(t.id));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tontines.map(t => t.id).join(',')]);
 
   const [searchParams] = useSearchParams();
   const initialTab = ['toutes', 'rotation', 'tirage', 'enchere'].includes(searchParams.get('type'))
@@ -227,7 +235,7 @@ export default function Tontines() {
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
           { l:'Pot total cumulé',  v: fmt(tontines.reduce((s,t)=>s+potTontine(t),0)), c:'text-primary-600', bg:'bg-primary-50', icon:'' },
-          { l:'Membres inscrits',  v: membresParTontine.filter(mt=>mt.statut==='actif').length,   c:'text-blue-600',   bg:'bg-blue-50',   icon:'' },
+          { l:'Membres inscrits',  v: new Set(membresParTontine.filter(mt=>mt.statut==='actif').map(mt=>mt.idMembre)).size,   c:'text-blue-600',   bg:'bg-blue-50',   icon:'' },
           { l:'Tours encaissés',   v: (planningTours||[]).filter(p=>p.statut==='encaisse').length, c:'text-amber-600',  bg:'bg-amber-50',  icon:'' },
           { l:'Parts totales',     v: tontines.reduce((s,t)=>s+Number(t.totalParts||0),0),                    c:'text-purple-600', bg:'bg-purple-50', icon:'' },
         ].map(s => (
@@ -347,7 +355,7 @@ export default function Tontines() {
                 <button onClick={() => { setShowMembres(t); setShowAddMembre(false); }} className="btn-secondary text-xs py-1.5 justify-center">
                   <Users size={12}/> Membres ({nbActifs})
                 </button>
-                <button onClick={() => { setShowBenef(t); setAddTourMode(false); setFormTour({ idMembre:'', datePrevue:'', note:'' }); }}
+                <button onClick={() => { setShowBenef(t); setAddTourMode(false); setFormTour({ idMembre:'', datePrevue:'', note:'' }); chargerPlanningTours(t.id); }}
                   className="btn-secondary text-xs py-1.5 justify-center">
                   <cfg.ActionIcon size={12}/> Tours
                 </button>
@@ -378,8 +386,10 @@ export default function Tontines() {
         const planning  = getTourPlanning(t.id);
         const encaisses = getNbEncaisses(t.id);
         const prochain  = getProchainTour(t.id, t.nbTours);
+        const partsActives = partsDeTontine(t.id).filter(p => p.statut === 'actif' || p.statut === 'disponible' || p.statut === 'reservee');
         const membresActifs = getMembresActifs(t.id).map(mt=>{const m=membres.find(x=>x.id===mt.idMembre);return m?{...m,parts:mt.nombreParts}:null;}).filter(Boolean);
         const dejaBenef = new Set(planning.filter(p=>p.statut!=='saute').map(p=>p.idMembre));
+        const dejaBenefPart = new Set(planning.filter(p=>p.statut!=='saute').map(p=>p.idPart));
         const enCoursEnch = getEncheresDuTour(t.id);
 
         return (
@@ -405,7 +415,7 @@ export default function Tontines() {
                       <div className={clsx('w-8 h-8 rounded-lg flex items-center justify-center text-sm font-bold shrink-0',
                         p.statut==='encaisse'?'bg-primary-500 text-white':p.statut==='planifie'?'bg-blue-500 text-white':'bg-gray-300 text-gray-600')}>{p.numeroTour}</div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-gray-800">{p.nomMembre}</p>
+                        <p className="text-sm font-semibold text-gray-800">{p.nomMembre}{p.numeroPart ? ` · part n°${p.numeroPart}` : ''}</p>
                         <p className="text-xs text-gray-400">{p.datePrevue?fmtDate(p.datePrevue):'Date non définie'}{p.note&&` · ${p.note}`}</p>
                       </div>
                       <span className="text-xs font-bold text-gray-700 shrink-0">{fmt(p.montantPot)}</span>
@@ -429,25 +439,20 @@ export default function Tontines() {
                     <p className="text-xs font-bold text-gray-600 flex items-center gap-1.5"><ListOrdered size={13}/> Ordre de rotation</p>
                     {encaisses < t.nbTours && !rankingMode && (
                       <button onClick={() => {
-                        // Initialiser le ranking : membres déjà planifiés en tête (dans l'ordre), puis les non planifiés
-                        const planifies = planning.filter(p => p.statut !== 'saute').sort((a,b) => a.numeroTour - b.numeroTour);
-                        const idsPlanifies = new Set(planifies.map(p => p.idMembre));
-                        const nonPlanifies = membresActifs.filter(m => !idsPlanifies.has(m.id));
-                        // Un membre avec plusieurs parts peut apparaître plusieurs fois dans
-                        // `planning` (une ligne par part/tour) : on ne garde qu'une occurrence
-                        // par membre (la plus ancienne, déjà trié par numeroTour) pour que le
-                        // classement reste un rang par membre — évite aussi les clés React dupliquées.
-                        const planifiesUniques = [];
-                        const vusPlanifies = new Set();
-                        for (const p of planifies) {
-                          if (!vusPlanifies.has(p.idMembre)) { vusPlanifies.add(p.idMembre); planifiesUniques.push(p); }
-                        }
+                        // Initialiser le ranking par PART (RG-TON : chaque part a son propre
+                        // cycle de gain — un membre avec plusieurs parts occupe plusieurs
+                        // positions distinctes, jamais regroupées sur un seul tour).
+                        const planifies = planning.filter(p => p.statut !== 'saute' && p.idPart).sort((a,b) => a.numeroTour - b.numeroTour);
+                        const idsPartsPlanifiees = new Set(planifies.map(p => p.idPart));
+                        const partsNonPlanifiees = partsActives.filter(p => !idsPartsPlanifiees.has(p.id));
+
                         const initOrder = [
-                          ...planifiesUniques.map(p => {
+                          ...planifies.map(p => {
                             const m = membres.find(x => x.id === p.idMembre);
-                            return { idMembre: p.idMembre, nom: `${m?.nom||''} ${m?.prenom||''}`.trim(), parts: m ? membresParTontine.find(mt=>mt.idMembre===m.id&&mt.idTontine===t.id)?.nombreParts||1 : 1, encaisse: p.statut==='encaisse', tourNum: p.numeroTour };
+                            const part = partsActives.find(x => x.id === p.idPart);
+                            return { idPart: p.idPart, idMembre: p.idMembre, nom: `${m?.nom||p.nomMembre||''} ${m?.prenom||''}`.trim(), numeroPart: part?.numeroPart, encaisse: p.statut==='encaisse', tourNum: p.numeroTour };
                           }),
-                          ...nonPlanifies.map(m => ({ idMembre: m.id, nom: `${m.nom} ${m.prenom}`, parts: m.parts||1, encaisse: false, tourNum: null }))
+                          ...partsNonPlanifiees.map(p => ({ idPart: p.id, idMembre: p.idMembre, nom: `${p.nom||''} ${p.prenom||''}`.trim(), numeroPart: p.numeroPart, encaisse: false, tourNum: null }))
                         ];
                         setRankingOrder(initOrder);
                         setRankingMode(true);
@@ -475,7 +480,7 @@ export default function Tontines() {
 
                       <div className="space-y-1.5">
                         {rankingOrder.map((item, idx) => (
-                          <div key={item.idMembre}
+                          <div key={item.idPart}
                             draggable={!item.encaisse}
                             onDragStart={() => setDragIdx(idx)}
                             onDragOver={e => { e.preventDefault(); }}
@@ -503,7 +508,7 @@ export default function Tontines() {
                                 {item.nom}
                                 {item.encaisse && <span className="ml-2 text-xs text-primary-600 font-normal">OK Encaissé</span>}
                               </p>
-                              <p className="text-xs text-gray-400">{item.parts} part{item.parts>1?'s':''} · {fmt(t.cotisation * item.parts)} / tour</p>
+                              <p className="text-xs text-gray-400">Part n°{item.numeroPart ?? '?'} · {fmt(t.cotisation)} / tour</p>
                             </div>
                             {/* Flèches déplacement */}
                             {!item.encaisse && (
@@ -537,11 +542,10 @@ export default function Tontines() {
 
                       <button onClick={() => {
                         // Enregistrer tous les tours non encore planifiés dans l'ordre défini
-                        const dejaEncaisses = new Set(planning.filter(p=>p.statut==='encaisse').map(p=>p.idMembre));
-                        const dejaPlanifies = new Set(planning.filter(p=>p.statut==='planifie').map(p=>p.idMembre));
+                        const dejaEncaissesPart = new Set(planning.filter(p=>p.statut==='encaisse').map(p=>p.idPart));
                         let tourNum = encaisses; // commencer après les encaissés
                         rankingOrder.forEach((item) => {
-                          if (dejaEncaisses.has(item.idMembre)) return; // déjà encaissé, skip
+                          if (dejaEncaissesPart.has(item.idPart)) return; // cette part est déjà encaissée, skip
                           tourNum++;
                           // Calculer date prévue en fonction de la périodicité
                           let datePrevue = '';
@@ -559,10 +563,13 @@ export default function Tontines() {
                           }
                           addTourPlanning({
                             idTontine: t.id,
+                            idPart: item.idPart,
                             idMembre: item.idMembre,
                             nomMembre: item.nom,
                             numeroTour: tourNum,
                             datePrevue,
+                            // RG-TON : le pot d'un tour = cotisation × parts actives de la tontine
+                            // (tout le monde cotise à chaque tour), pas le nombre de parts du bénéficiaire.
                             montantPot: potTontine(t),
                             statut: 'planifie',
                             note: `Rotation — position ${tourNum}`,

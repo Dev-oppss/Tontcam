@@ -17,7 +17,7 @@ export default function PortailMembre() {
   } = useApp();
 
   // Isolation stricte : on ne travaille qu'avec les données du membre lié à l'utilisateur connecté (RG-SEC-006 / RG-SEC-007)
-  const moi = useMemo(() => membres.find((m) => m.id === user?.idMembre), [membres, user]);
+  const moi = useMemo(() => membres.find((m) => m.id === user?.membre_id), [membres, user]);
 
   const mesParts = useMemo(
     () => membresParTontine.filter((mt) => mt.idMembre === moi?.id).map((mt) => ({ ...mt, tontine: tontines.find((t) => t.id === mt.idTontine) })),
