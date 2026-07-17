@@ -63,7 +63,7 @@ class Reunion extends Model
 
     public function ordreDuJour()
     {
-        return $this->hasMany(OrdreDuJourItem::class);
+        return $this->hasMany(OrdreDuJourItem::class)->orderBy('ordre');
     }
 
 

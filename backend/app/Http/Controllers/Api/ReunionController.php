@@ -146,6 +146,7 @@ class ReunionController extends Controller
         $item->update($request->validate([
             'titre' => ['sometimes', 'string', 'max:200'],
             'description' => ['sometimes', 'nullable', 'string'],
+            'ordre' => ['sometimes', 'integer', 'min:1'],
         ]) + array_filter(['libelle_libre' => $request->input('titre'), 'contenu_rapport' => $request->input('description')]));
 
         return response()->json($item);
