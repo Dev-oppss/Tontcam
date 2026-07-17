@@ -103,7 +103,10 @@ export default function Tontines() {
 
   const getTourPlanning   = (id) => (planningTours || []).filter(p => p.idTontine === id).sort((a,b) => a.numeroTour - b.numeroTour);
   const potTontine = (t) => Number(t?.cotisation || 0) * Number(t?.totalParts || 0);
-  const getMembresActifs  = (id) => membresParTontine.filter(mt => mt.idTontine === id && mt.statut === 'actif');
+  const getMembresActifs  = (id) => {
+    const vus = new Set();
+    return membresParTontine.filter(mt => mt.idTontine === id && mt.statut === 'actif' && !vus.has(mt.idMembre) && vus.add(mt.idMembre));
+  };
   const getNbEncaisses    = (id) => (planningTours || []).filter(p => p.idTontine === id && p.statut === 'encaisse').length;
   const getProchainTour   = (id, nb) => Math.min(getNbEncaisses(id) + 1, nb);
 
