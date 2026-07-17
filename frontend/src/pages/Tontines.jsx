@@ -60,7 +60,7 @@ const EMPTY_MT   = { idMembre:'', nombreParts:'1', dateAdhesion: new Date().toIS
 export default function Tontines() {
   const {
     tontines, caisses, addTontine, updateTontine,
-    membres, membresParTontine, addMembreTontine, updateMembreTontine, removeMembreTontine,
+    membres, membresParTontine, addMembreTontine, removeMembreTontine,
     planningTours, addTourPlanning, marquerTourEncaisse, retirerTourPlanning, tirerAuSort,
     encheres, rotations, attribuerTour,
     genererBulletin, ouvrirBulletinPdf,
@@ -121,9 +121,31 @@ export default function Tontines() {
     setShowEdit(null);
   };
 
-  const handleAddMembre = () => {
+  const nextNumeroPart = (idTontine) => {
+    const existants = membresParTontine.filter(mt => mt.idTontine === idTontine);
+    return existants.length ? Math.max(...existants.map(mt => mt.numeroPart || 0)) + 1 : 1;
+  };
+
+  const handleAddMembre = async () => {
     if (!formMT.idMembre || !showMembres) return;
-    addMembreTontine({ idTontine: showMembres.id, idMembre: formMT.idMembre, nombreParts: Number(formMT.nombreParts) || 1, dateAdhesion: formMT.dateAdhesion, idAvaliste: formMT.idAvaliste || null });
+    const idTontine = showMembres.id;
+    const nb = Math.max(1, Number(formMT.nombreParts) || 1);
+    let numero = nextNumeroPart(idTontine);
+    // Chaque part est un enregistrement indépendant avec son propre numéro
+    // (RG-TON — parts multiples, cahier des charges 4.3) : la contrainte d'unicité
+    // côté serveur exige un numero_part distinct par part, jamais envoyé auparavant.
+    try {
+      for (let i = 0; i < nb; i += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        await addMembreTontine({
+          idTontine, idMembre: formMT.idMembre, numeroPart: numero,
+          dateAdhesion: formMT.dateAdhesion, idAvaliste: formMT.idAvaliste || null,
+        });
+        numero += 1;
+      }
+    } catch {
+      return; // le toast d'erreur est déjà affiché par handleError
+    }
     setShowAddMembre(false); setFormMT(EMPTY_MT);
   };
 
@@ -147,7 +169,24 @@ export default function Tontines() {
     if (result) setShowTirage(result);
   };
 
-  const membresDeTontine  = (id) => membresParTontine.filter(mt => mt.idTontine === id).map(mt => ({ ...mt, ...membres.find(m => m.id === mt.idMembre) }));
+  const partsDeTontine    = (id) => membresParTontine.filter(mt => mt.idTontine === id).map(mt => ({ ...mt, ...membres.find(m => m.id === mt.idMembre) }));
+  // Le backend modélise chaque part individuellement (une ligne = une part) ; on
+  // regroupe ici par membre pour l'affichage (CDC 4.3 — parts multiples).
+  const membresDeTontine  = (id) => {
+    const parts = partsDeTontine(id);
+    const groupes = new Map();
+    parts.forEach((p) => {
+      if (!groupes.has(p.idMembre)) {
+        groupes.set(p.idMembre, { ...p, partIds: [p.id], nombreParts: 1 });
+      } else {
+        const g = groupes.get(p.idMembre);
+        g.partIds.push(p.id);
+        g.nombreParts += 1;
+        if (p.statut === 'actif') g.statut = 'actif';
+      }
+    });
+    return Array.from(groupes.values());
+  };
   const membresDisponibles = (id) => membres.filter(m => !membresParTontine.some(mt => mt.idTontine === id && mt.idMembre === m.id));
   const getEncheresDuTour = (id) => {
     const rotation = rotations.find(r => r.idTontine === id && !r.dateAttribution);
@@ -643,7 +682,7 @@ export default function Tontines() {
                       <Badge variant={mt.statut==='actif'?'green':'gray'}>{mt.statut==='actif'?'Actif':'Suspendu'}</Badge>
                       <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button onClick={()=>{setShowEditMT(mt);setFormMT({idMembre:mt.idMembre,nombreParts:mt.nombreParts});}} className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg"><Pencil size={12}/></button>
-                        <button onClick={()=>removeMembreTontine(mt.id)} className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg"><Trash2 size={12}/></button>
+                        <button onClick={()=>{if(confirm(`Retirer ${mt.nom} ${mt.prenom} de la tontine (${mt.nombreParts} part(s)) ?`)) (mt.partIds||[mt.id]).forEach(pid=>removeMembreTontine(pid, t.id));}} className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg"><Trash2 size={12}/></button>
                       </div>
                     </div>
                   ))}
@@ -704,7 +743,30 @@ export default function Tontines() {
       </Modal>
 
       <Modal open={!!showEditMT} onClose={()=>setShowEditMT(null)} title="Modifier les parts"
-        footer={<><button onClick={()=>setShowEditMT(null)} className="btn-secondary">Annuler</button><button onClick={()=>{updateMembreTontine({...showEditMT,nombreParts:Number(formMT.nombreParts)});setShowEditMT(null);}} className="btn-primary"><Pencil size={14}/>Enregistrer</button></>}>
+        footer={<><button onClick={()=>setShowEditMT(null)} className="btn-secondary">Annuler</button><button onClick={async()=>{
+          const cible = Math.max(1, Number(formMT.nombreParts) || 1);
+          const actuel = showEditMT.nombreParts || 1;
+          const idTontine = showMembres?.id || showEditMT.idTontine;
+          try {
+            if (cible > actuel) {
+              let numero = nextNumeroPart(idTontine);
+              for (let i = 0; i < cible - actuel; i += 1) {
+                // eslint-disable-next-line no-await-in-loop
+                await addMembreTontine({ idTontine, idMembre: showEditMT.idMembre, numeroPart: numero, dateAdhesion: new Date().toISOString().split('T')[0], idAvaliste: showEditMT.idAvaliste || null });
+                numero += 1;
+              }
+            } else if (cible < actuel) {
+              const aRetirer = (showEditMT.partIds || []).slice(cible);
+              for (const pid of aRetirer) {
+                // eslint-disable-next-line no-await-in-loop
+                await removeMembreTontine(pid, idTontine);
+              }
+            }
+          } catch {
+            return;
+          }
+          setShowEditMT(null);
+        }} className="btn-primary"><Pencil size={14}/>Enregistrer</button></>}>
         <div className="space-y-4">
           <p className="text-sm text-gray-600">Parts de <strong>{showEditMT?.nom} {showEditMT?.prenom}</strong></p>
           <FormField label="Nombre de parts"><input className="input" type="number" min="1" max="20" value={formMT.nombreParts} onChange={e=>setFormMT(f=>({...f,nombreParts:e.target.value}))}/></FormField>
