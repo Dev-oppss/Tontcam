@@ -433,8 +433,17 @@ export default function Tontines() {
                         const planifies = planning.filter(p => p.statut !== 'saute').sort((a,b) => a.numeroTour - b.numeroTour);
                         const idsPlanifies = new Set(planifies.map(p => p.idMembre));
                         const nonPlanifies = membresActifs.filter(m => !idsPlanifies.has(m.id));
+                        // Un membre avec plusieurs parts peut apparaître plusieurs fois dans
+                        // `planning` (une ligne par part/tour) : on ne garde qu'une occurrence
+                        // par membre (la plus ancienne, déjà trié par numeroTour) pour que le
+                        // classement reste un rang par membre — évite aussi les clés React dupliquées.
+                        const planifiesUniques = [];
+                        const vusPlanifies = new Set();
+                        for (const p of planifies) {
+                          if (!vusPlanifies.has(p.idMembre)) { vusPlanifies.add(p.idMembre); planifiesUniques.push(p); }
+                        }
                         const initOrder = [
-                          ...planifies.map(p => {
+                          ...planifiesUniques.map(p => {
                             const m = membres.find(x => x.id === p.idMembre);
                             return { idMembre: p.idMembre, nom: `${m?.nom||''} ${m?.prenom||''}`.trim(), parts: m ? membresParTontine.find(mt=>mt.idMembre===m.id&&mt.idTontine===t.id)?.nombreParts||1 : 1, encaisse: p.statut==='encaisse', tourNum: p.numeroTour };
                           }),
