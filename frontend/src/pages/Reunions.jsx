@@ -163,9 +163,9 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
       addSeanceTransaction(reunion.id, {
         type: 'cotisation', idMembre: m.id, montant: m.montantDu,
         libelle: `Cotisation ${tontineSelectee.nom} — ${m.nombreParts} part(s)`,
-        idTontine: tontineSelectee.id,
+        idTontine: tontineSelectee.id, idBanque: tontineSelectee.idCaisse,
         modePaiement: mode.modePaiement, detailsPaiement: mode.detailsPaiement,
-      }, [], membres);
+      });
     });
     defaillants.forEach(m => {
       addSanction({
@@ -1091,7 +1091,7 @@ function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, san
     const t = tontines.find(x => x.id === form._idTontine);
     if (t && val) {
       const mt = membresParTontine.find(x => x.idTontine === t.id && x.idMembre === val && x.statut === 'actif');
-      if (mt) { sf('montant', String(t.cotisation * mt.nombreParts)); sf('libelle', `Cotisation ${t.nom} — ${mt.nombreParts} part(s) — Séance N°${reunion.numero}`); }
+      if (mt) { sf('montant', String(t.cotisation * mt.nombreParts)); sf('libelle', `Cotisation ${t.nom} — ${mt.nombreParts} part(s) — Séance N°${reunion.numero}`); sf('idBanque', t.idCaisse || ''); }
     }
   };
   const onSanctionChange = (val) => {
@@ -1107,7 +1107,7 @@ function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, san
   const onTontineAttrChange = (val) => {
     sf('_idTontine', val); sf('idMembre', '');
     const t = tontines.find(x => x.id === val);
-    if (t) { sf('montant', String(t.cotisation * t.totalParts)); sf('libelle', `Versement pot — ${t.nom} — Séance N°${reunion.numero}`); }
+    if (t) { sf('montant', String(t.cotisation * t.totalParts)); sf('libelle', `Versement pot — ${t.nom} — Séance N°${reunion.numero}`); sf('idBanque', t.idCaisse || ''); }
   };
   const onBenefChange = (val) => {
     sf('idMembre', val);

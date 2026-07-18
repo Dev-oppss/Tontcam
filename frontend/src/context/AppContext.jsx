@@ -719,10 +719,10 @@ export const AppProvider = ({ children }) => {
   };
 
   // ── Désignation du bénéficiaire directement depuis l'écran de réunion ──
-  const enregistrerBeneficiaireSeance = async (idTontine, idReunion, idMembre) => {
+  const enregistrerBeneficiaireSeance = async (idReunion, data) => {
     try {
-      const cycle = await request(`/tontines/${idTontine}/enregistrer-beneficiaire`, {
-        method: 'POST', body: { reunion_id: idReunion, membre_id: idMembre || undefined },
+      const cycle = await request(`/tontines/${data.idTontine}/enregistrer-beneficiaire`, {
+        method: 'POST', body: { reunion_id: idReunion, membre_id: data.idMembre || undefined },
       });
       showToast('Bénéficiaire enregistré, bulletin généré');
       return cycle;
@@ -800,8 +800,20 @@ export const AppProvider = ({ children }) => {
 
   const addSanction = async (data) => {
     try {
+      // data.typeSanction peut être un UUID direct ou un code catalogue (non_paiement, retard...) —
+      // dans ce 2e cas on résout vers le type réel (même logique que addAide pour les aides sociales).
+      const typeId = typesSanction.some((t) => t.id === data.typeSanction)
+        ? data.typeSanction
+        : typesSanction.find((t) => t.code === data.typeSanction)?.id;
+
+      if (!typeId) {
+        showToast("Aucun type de sanction configuré pour ce motif. Créez-le d'abord dans Paramètres → Sanctions.", 'error');
+        return;
+      }
+
       const s = await request('/sanctions', { method: 'POST', body: {
-        membre_id: data.idMembre, type_sanction_id: data.typeSanction, motif: data.motif, reunion_id: data.numReunion || undefined,
+        membre_id: data.idMembre, type_sanction_id: typeId, motif: data.motif,
+        reunion_id: data.numReunion || data.reunionId || undefined,
       } });
       const sanction = adapt.sanctionFromApi(s);
       setSanctions((prev) => [...prev, sanction]);
