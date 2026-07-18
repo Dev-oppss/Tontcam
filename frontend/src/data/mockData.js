@@ -58,10 +58,11 @@ export const typeSancLabel = {
 export const roleLabel = {
   super_admin: 'Super administrateur',
   controleur: 'Contrôleur',
-  admin: 'Administrateur',
   president: 'Président',
+  vice_president: 'Vice-président',
   tresorier: 'Trésorier',
   secretaire: 'Secrétaire',
+  membre: 'Membre',
 };
 
 export const periodeLabel = {
