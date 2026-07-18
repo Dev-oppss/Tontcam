@@ -20,6 +20,8 @@ class OrdreDuJourItem extends Model
         'contenu_rapport',
         'rapport_valide',
         'pieces_jointes',
+        'type',
+        'acteur_role',
     ];
 
     protected $casts = [

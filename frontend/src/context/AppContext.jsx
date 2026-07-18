@@ -511,14 +511,16 @@ export const AppProvider = ({ children }) => {
     try {
       const item = await request(`/reunions/${reunionId}/points`, {
         method: 'POST',
-        body: { titre: data.titre, type: data.type, description: data.description },
+        body: { titre: data.titre, type: data.type, description: data.description, acteur_role: data.acteurRole || undefined },
       });
       const point = {
         id: item.id,
         titre: item.libelle_libre ?? data.titre,
-        type: data.type,
+        type: item.type ?? data.type,
         description: item.contenu_rapport ?? data.description,
-        statut: data.statut || 'prevu',
+        acteurRole: item.acteur_role,
+        statut: item.rapport_valide ? 'traite' : (data.statut || 'prevu'),
+        ordre: item.ordre,
       };
       setReunions((prev) => prev.map((r) => (r.id === reunionId
         ? { ...r, pointsOrdreJour: [...(r.pointsOrdreJour || []), point] }
@@ -531,7 +533,11 @@ export const AppProvider = ({ children }) => {
     try {
       const item = await request(`/reunions/${reunionId}/points/${pointId}`, {
         method: 'PUT',
-        body: { titre: data.titre, description: data.description },
+        body: {
+          titre: data.titre, description: data.description,
+          type: data.type, acteur_role: data.acteurRole || null,
+          statut: data.statut,
+        },
       });
       setReunions((prev) => prev.map((r) => (r.id === reunionId
         ? {
@@ -541,8 +547,9 @@ export const AppProvider = ({ children }) => {
                   ...p,
                   titre: item.libelle_libre ?? data.titre,
                   description: item.contenu_rapport ?? data.description,
-                  type: data.type ?? p.type,
-                  statut: data.statut ?? p.statut,
+                  type: item.type ?? data.type ?? p.type,
+                  acteurRole: item.acteur_role ?? data.acteurRole,
+                  statut: item.rapport_valide ? 'traite' : (data.statut ?? p.statut),
                 }
               : p)),
           }
@@ -733,11 +740,27 @@ export const AppProvider = ({ children }) => {
     try {
       await request(`/reunions/${id}`, {
         method: 'PUT',
-        body: { notes: `Présents: ${data?.presents ?? '-'} / Absents: ${data?.absents ?? '-'}. ${data?.observation || ''}` },
+        body: {
+          statut: 'tenue',
+          notes: `Présents: ${data?.presents ?? '-'} / Absents: ${data?.absents ?? '-'}. ${data?.observation || ''}`,
+        },
       });
-      const r = await request(`/reunions/${id}/signer`, { method: 'POST', body: { membre_id: user?.membre_id, role_signature: user?.role } });
-      setReunions((prev) => prev.map((x) => (x.id === id ? adapt.reunionFromApi(r) : x)));
-      showToast('Séance clôturée');
+      // La clôture réelle (verrouillage du PV) exige 3 signatures distinctes (Président +
+      // Secrétaire + 1 membre élu — RG-REU-021) : cet appel n'enregistre QUE la signature
+      // de l'utilisateur courant. On ne peut donc jamais prétendre que « la séance est
+      // clôturée » après ce seul clic — les 2 autres signataires doivent encore passer
+      // par l'onglet Signatures.
+      await request(`/reunions/${id}/signer`, { method: 'POST', body: { membre_id: user?.membre_id, role_signature: user?.role } });
+      const r = await request(`/reunions/${id}`);
+      const reunion = adapt.reunionFromApi(r);
+      setReunions((prev) => prev.map((x) => (x.id === id ? reunion : x)));
+      if (reunion.statutReunion === 'cloturee') {
+        showToast('Séance clôturée — PV verrouillé (3 signatures réunies)');
+      } else {
+        const nb = (reunion.signatures || []).length;
+        showToast(`Séance tenue, votre signature enregistrée (${nb}/3) — les autres signataires doivent encore signer dans l'onglet Signatures.`, 'info');
+      }
+      return reunion;
     } catch (err) { return handleError(err); }
   };
 

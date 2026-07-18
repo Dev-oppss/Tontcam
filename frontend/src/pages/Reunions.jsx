@@ -17,9 +17,11 @@ import clsx from 'clsx';
 
 // ── Config statuts ────────────────────────────────────────────
 const sCfg = {
-  planifiee: { label:'Planifiée',  v:'blue',  icon: Clock       },
-  en_cours:  { label:'En cours',   v:'amber', icon: PlayCircle  },
-  cloturee:  { label:'Clôturée',   v:'green', icon: CheckCircle },
+  planifiee: { label:'Planifiée',       v:'blue',  icon: Clock       },
+  en_cours:  { label:'En cours',        v:'amber', icon: PlayCircle  },
+  tenue:     { label:'Tenue — à signer',v:'amber', icon: FileText    },
+  cloturee:  { label:'Clôturée',        v:'green', icon: CheckCircle },
+  annulee:   { label:'Annulée',         v:'red',   icon: AlertCircle },
 };
 const typeCfg = {
   administratif:{ v:'blue',  label:'Administratif' },
@@ -2374,9 +2376,9 @@ export function Reunions() {
                   <Lock size={10}/><span>Séance verrouillée (signée par le Président)</span>
                 </div>
               )}
-              {r.statutReunion==='cloturee' && !r.verrouillee && (
+              {r.statutReunion==='tenue' && !r.verrouillee && (
                 <div className="flex items-center gap-1 text-xs text-amber-500 mt-2 pt-2 border-t border-gray-100">
-                  <AlertCircle size={10}/><span>En attente de la signature du Président</span>
+                  <AlertCircle size={10}/><span>En attente des signatures (Président, Secrétaire, membre élu)</span>
                 </div>
               )}
             </div>
@@ -2443,7 +2445,7 @@ export function Reunions() {
                       <CheckCircle size={13}/> Clôturer la séance
                     </button>
                   )}
-                  {r.statutReunion==='cloturee' && !locked && (
+                  {r.statutReunion==='tenue' && !locked && (
                     <button onClick={()=>setDetailTab('signatures')} className="btn-primary">
                       <Lock size={13}/> Signer / Verrouiller
                     </button>
@@ -2626,9 +2628,9 @@ export function Reunions() {
                       <Lock size={12}/> Réunion verrouillée définitivement (signature du Président). Aucune modification possible.
                     </div>
                   )}
-                  {r.statutReunion==='cloturee' && !locked && (
+                  {r.statutReunion==='tenue' && !locked && (
                     <div className="flex items-center gap-2 p-2.5 bg-amber-50 rounded-lg text-xs text-amber-700 border border-amber-200">
-                      <AlertCircle size={12}/> Séance clôturée mais encore modifiable — le verrouillage définitif interviendra à la signature du Président (onglet Signatures).
+                      <AlertCircle size={12}/> Séance tenue, en attente des 3 signatures — le verrouillage définitif interviendra à la dernière signature (onglet Signatures).
                     </div>
                   )}
                 </div>

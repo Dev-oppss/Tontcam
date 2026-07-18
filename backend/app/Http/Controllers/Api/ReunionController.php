@@ -124,6 +124,7 @@ class ReunionController extends Controller
             'titre' => ['required', 'string', 'max:200'],
             'type' => ['nullable', 'string', 'max:50'],
             'description' => ['nullable', 'string'],
+            'acteur_role' => ['nullable', 'string', 'max:50'],
         ]);
 
         $ordre = OrdreDuJourItem::where('reunion_id', $reunion->id)->max('ordre') + 1;
@@ -131,6 +132,8 @@ class ReunionController extends Controller
         $item = OrdreDuJourItem::create([
             'reunion_id' => $reunion->id,
             'libelle_libre' => $data['titre'],
+            'type' => $data['type'] ?? null,
+            'acteur_role' => $data['acteur_role'] ?? null,
             'ordre' => $ordre,
             'contenu_rapport' => $data['description'] ?? null,
         ]);
@@ -143,11 +146,21 @@ class ReunionController extends Controller
         $item = OrdreDuJourItem::whereHas('reunion', fn ($q) => $this->scope->scopeAssociation($q))
             ->where('reunion_id', $id)->findOrFail($pointId);
 
-        $item->update($request->validate([
+        $data = $request->validate([
             'titre' => ['sometimes', 'string', 'max:200'],
             'description' => ['sometimes', 'nullable', 'string'],
             'ordre' => ['sometimes', 'integer', 'min:1'],
-        ]) + array_filter(['libelle_libre' => $request->input('titre'), 'contenu_rapport' => $request->input('description')]));
+            'type' => ['sometimes', 'nullable', 'string', 'max:50'],
+            'acteur_role' => ['sometimes', 'nullable', 'string', 'max:50'],
+            'statut' => ['sometimes', 'string', 'in:prevu,en_cours,traite'],
+        ]);
+
+        if (array_key_exists('statut', $data)) {
+            $data['rapport_valide'] = $data['statut'] === 'traite';
+            unset($data['statut']);
+        }
+
+        $item->update($data + array_filter(['libelle_libre' => $request->input('titre'), 'contenu_rapport' => $request->input('description')]));
 
         return response()->json($item);
     }

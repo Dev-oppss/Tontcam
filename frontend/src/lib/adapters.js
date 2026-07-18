@@ -206,7 +206,8 @@ export const reunionFromApi = (r) => !r ? null : ({
   date: r.date_reunion,
   heureDebut: r.heure_debut,
   lieu: r.lieu,
-  statutReunion: r.statut === 'ouverte' ? 'en_cours' : r.statut === 'cloturee' ? 'cloturee' : 'planifiee',
+  statutReunion: { ouverte: 'en_cours', cloturee: 'cloturee', tenue: 'tenue', annulee: 'annulee' }[r.statut] || 'planifiee',
+  verrouillee: r.statut === 'cloturee',
   quorumRequis: r.quorum_requis,
   quorumAtteint: r.quorum_atteint,
   pointsOrdreJour: (r.ordre_du_jour || []).map((it) => ({
@@ -216,6 +217,8 @@ export const reunionFromApi = (r) => !r ? null : ({
     description: it.contenu_rapport,
     statut: it.rapport_valide ? 'traite' : 'prevu',
     idRapporteur: it.rapporteur_id,
+    acteurRole: it.acteur_role,
+    ordre: it.ordre,
   })),
   signatures: (r.signataires || []).map((s) => ({ idMembre: s.membre_id, nom: s.membre?.nom, role: s.role_signature, signeLe: s.signed_at })),
   presencesReunion: (r.presences || []).map((p) => ({
