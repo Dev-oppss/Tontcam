@@ -44,19 +44,18 @@ const statutPointCfg = {
 // a accès complet à tout, y compris la saisie — c'est le seul rôle à la
 // fois "voit tout" et "peut tout modifier".
 const TAB_ACCESS = {
-  info:               ['admin','president','vice_president','tresorier','secretaire','controleur','membre'],
-  presences:          ['admin','president','secretaire','controleur'],
-  feuille_cotisation: ['admin','president','tresorier','controleur'],
-  beneficiaire:       ['admin','president','tresorier','secretaire','controleur'],
-  remboursement:      ['admin','president','tresorier','controleur'],
-  pret:               ['admin','president','tresorier','controleur'],
-  sanction:           ['admin','president','tresorier','secretaire','controleur'],
-  aide:               ['admin','president','tresorier','secretaire','controleur'],
-  banque:             ['admin','president','tresorier','controleur'],
-  divers:             ['admin','president','tresorier','controleur'],
-  signatures:         ['admin','president','vice_president','tresorier','secretaire','controleur'],
-};
-const ROLES_LECTURE_SEULE = ['president','controleur'];
+  info:               ['admin','super_admin','president','vice_president','tresorier','secretaire','controleur','membre'],
+  presences:          ['admin','super_admin','president','secretaire','controleur'],
+  feuille_cotisation: ['admin','super_admin','president','tresorier','controleur'],
+  beneficiaire:       ['admin','super_admin','president','tresorier','secretaire','controleur'],
+  remboursement:      ['admin','super_admin','president','tresorier','controleur'],
+  pret:               ['admin','super_admin','president','tresorier','controleur'],
+  sanction:           ['admin','super_admin','president','tresorier','secretaire','controleur'],
+  aide:               ['admin','super_admin','president','tresorier','secretaire','controleur'],
+  banque:             ['admin','super_admin','president','tresorier','controleur'],
+  divers:             ['admin','super_admin','president','tresorier','controleur'],
+  signatures:         ['admin','super_admin','president','vice_president','tresorier','secretaire','controleur'],};
+  const ROLES_LECTURE_SEULE = ['president','controleur'];
 
 const EMPTY_REUNION   = { date:'', lieu:'', numero:'', observation:'' };
 const EMPTY_OUVERTURE = { heureOuverture:'', presidentSeance:'', secretaireSeance:'', motOuverture:'' };
@@ -2069,7 +2068,7 @@ const SIGNATAIRES_ATTENDUS = [
   { role: 'membre',      label: 'Membre témoin' },
 ];
 
-const ROLES_PEUVENT_ENREGISTRER_TEMOIN = ['admin','president','secretaire','tresorier'];
+const ROLES_PEUVENT_ENREGISTRER_TEMOIN = ['admin','super_admin','president','secretaire','tresorier'];
 
 function PanneauSignatures({ reunion }) {
   const { user, membres, signerPV } = useApp();
