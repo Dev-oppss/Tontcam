@@ -93,7 +93,7 @@ export const AppProvider = ({ children }) => {
     if (!user || !currentAssociation) return;
     (async () => {
       try {
-        const [mRes, tRes, rRes, cRes, pRes, sRes, paramRes, aRes, uRes, typeSancRes, typeAideRes, comptesRes, postesRes, decAgRes, reglRes, rapproRes] = await Promise.all([
+        const [mRes, tRes, rRes, cRes, pRes, sRes, paramRes, aRes, uRes, typeSancRes, typeAideRes, comptesRes, postesRes, decAgRes, reglRes, rapproRes, transfRes] = await Promise.all([
           request('/membres?per_page=200'),
           request('/tontines'),
           request('/reunions?per_page=100'),
@@ -110,6 +110,7 @@ export const AppProvider = ({ children }) => {
           request('/decisions-ag?per_page=200').catch(() => ({ data: [] })),
           request('/reglements').catch(() => []),
           request('/rapprochements').catch(() => []),
+          request('/caisses/transferts').catch(() => []),
         ]);
 
         setMembres((mRes.data || mRes).map(adapt.membreFromApi));
@@ -142,6 +143,7 @@ export const AppProvider = ({ children }) => {
         setDecisionsAG((decAgRes.data || decAgRes).map(adapt.decisionAgFromApi));
         setReglements((reglRes || []).map(adapt.reglementFromApi));
         setRapprochements((rapproRes || []).map(adapt.rapprochementFromApi));
+        setTransfertsCaisse(transfRes || []);
 
         // Parts de tontine : agrégées depuis le détail de chaque tontine
         const tontinesDetail = await Promise.all(
@@ -149,6 +151,17 @@ export const AppProvider = ({ children }) => {
         );
         const parts = tontinesDetail.flatMap((t) => (t.parts || []).map(adapt.partFromApi));
         setMembresParTontine(parts);
+
+        // Cycles de tontine : chargés ici une fois pour toutes (Rotations, Encheres, Caisse,
+        // Tontines en dépendent tous) plutôt que de dépendre de la page visitée en premier —
+        // /tontines/{id} charge déjà 'cycles.encherites.membre, cycles.gagnant.membre'.
+        const cycles = tontinesDetail.flatMap((t) => (t.cycles || []).map(adapt.cycleFromApi));
+        setCyclesTontine(cycles);
+        setRotations(cycles.map(adapt.cycleToRotation));
+
+        // Tours planifiés (rotation) : même logique — Reunions.jsx les lit (bénéficiaire
+        // planifié pour la tontine sélectionnée) sans jamais déclencher leur chargement.
+        (tRes.data || tRes).filter((t) => t.mode_attribution === 'rotation').forEach((t) => chargerPlanningTours(t.id));
       } catch (err) {
         showToast(err.message || 'Impossible de charger les données', 'error');
       }
@@ -460,6 +473,14 @@ export const AppProvider = ({ children }) => {
       return reunion;
     } catch (err) { return handleError(err); }
   };
+  const chargerReunion = async (id) => {
+    try {
+      const r = await request(`/reunions/${id}`);
+      const reunion = adapt.reunionFromApi(r);
+      setReunions((prev) => (prev.some((x) => x.id === id) ? prev.map((x) => (x.id === id ? reunion : x)) : [...prev, reunion]));
+      return reunion;
+    } catch (err) { return handleError(err); }
+  };
   const updateReunion = async (idOrData, maybeData) => {
     const dataIn = maybeData || idOrData;
     const id = maybeData ? idOrData : dataIn.id;
@@ -477,7 +498,11 @@ export const AppProvider = ({ children }) => {
   };
   const cloturerReunion = async (id) => {
     try {
-      const r = await request(`/reunions/${id}/signer`, { method: 'POST', body: { membre_id: user?.membre_id, role_signature: user?.role } });
+      await request(`/reunions/${id}/signer`, { method: 'POST', body: { membre_id: user?.membre_id, role_signature: user?.role } });
+      // La réponse de /signer est une SIGNATURE, pas une réunion — on recharge la vraie
+      // réunion pour ne jamais corrompre son id en state (bug corrigé : reunionFromApi
+      // était appliqué directement sur l'objet signature).
+      const r = await request(`/reunions/${id}`);
       setReunions((prev) => prev.map((x) => (x.id === id ? adapt.reunionFromApi(r) : x)));
       showToast('Signature enregistrée');
     } catch (err) { return handleError(err); }
@@ -792,6 +817,7 @@ export const AppProvider = ({ children }) => {
         caisse_source_id: data.idSource, caisse_destination_id: data.idDestination,
         montant: Number(data.montant), motif: data.motif || 'Transfert',
       } });
+      await chargerTransferts();
       showToast('Transfert enregistré');
       return res;
     } catch (err) { return handleError(err); }
@@ -1135,7 +1161,7 @@ export const AppProvider = ({ children }) => {
     addMandat, cloturerMandat,
     logAuditConsultation, addDecisionAG, addReglement, addRapprochement, justifierEcart,
     addTontine, updateTontine, addMembreTontine, removeMembreTontine, updateMembreTontine,
-    addReunion, updateReunion, ouvrirReunion, cloturerReunion, ouvrirSeance, cloturerSeance,
+    addReunion, updateReunion, chargerReunion, ouvrirReunion, cloturerReunion, ouvrirSeance, cloturerSeance,
     addPointODJ, updatePointODJ, removePointODJ, movePointODJ,
     setPresenceMembre, signerPV,
     chargerRotations, tirerAuSort, addEnchere, attribuerTour, annulerEncheres,

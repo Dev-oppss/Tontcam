@@ -650,7 +650,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
 }
 
 function RapportSeance({ reunion, transactions, membres, onClose }) {
-  const txs = transactions.filter(t => t.reunionId === reunion.id);
+  const txs = transactions.filter(t => t.idReunion === reunion.id);
 
   const totalEntrees = txs.filter(t => TX_TYPES.find(tt => tt.value === t.type)?.dir === 'entree')
     .reduce((s, t) => s + t.montant, 0);
@@ -1906,7 +1906,7 @@ function PanneauRubrique({ reunion, types, titre, readOnly = false }) {
     return s;
   }, 0);
 
-  const txs     = seanceTransactions.filter(t => t.reunionId === reunion.id && types.includes(t.type));
+  const txs     = seanceTransactions.filter(t => t.idReunion === reunion.id && types.includes(t.type));
   const locked  = !!reunion.verrouillee || readOnly;
   const notOpen = reunion.statutReunion === 'planifiee';
 
@@ -2191,10 +2191,19 @@ export function Reunions() {
   const navigate = useNavigate();
   const {
     reunions, membres, user, presences,
-    addReunion, updateReunion, ouvrirSeance,
+    addReunion, updateReunion, chargerReunion, ouvrirSeance,
     addPointODJ, updatePointODJ, removePointODJ, movePointODJ, cloturerSeance,
     seanceTransactions, showToast,
   } = useApp();
+
+  // La liste (index()) ne charge jamais l'ordre du jour / les présences / les
+  // signatures (trop coûteux pour un listing) : sans ce fetch dédié, ouvrir le
+  // détail d'une réunion depuis la liste affichait un ordre du jour vide tant
+  // qu'aucune action (ouvrir/modifier/clôturer) n'avait déjà rafraîchi l'objet.
+  useEffect(() => {
+    if (routeId) chargerReunion(routeId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeId]);
 
   const [showAdd,        setShowAdd]        = useState(false);
   const [showEdit,       setShowEdit]       = useState(null);
@@ -2340,7 +2349,7 @@ export function Reunions() {
           const cfg = sCfg[r.statutReunion];
           const Icon = cfg.icon;
           const cloture = r.cloture;
-          const txCount = seanceTransactions.filter(t => t.reunionId === r.id).length;
+          const txCount = seanceTransactions.filter(t => t.idReunion === r.id).length;
           return (
             <div key={r.id} onClick={()=>{ navigate(`/reunions/${r.id}`); setDetailTab('info'); }}
               className="card cursor-pointer hover:shadow-md transition-all border border-gray-100 hover:border-primary-200">
@@ -2450,7 +2459,7 @@ export function Reunions() {
                       <Lock size={13}/> Signer / Verrouiller
                     </button>
                   )}
-                  {(r.statutReunion==='cloturee' || seanceTransactions.filter(t=>t.reunionId===r.id).length > 0) && (
+                  {(r.statutReunion==='cloturee' || seanceTransactions.filter(t=>t.idReunion===r.id).length > 0) && (
                     <button onClick={()=>{ setShowRapport(r); }} className="btn-secondary">
                       <FileText size={13}/> Rapport PV
                     </button>
@@ -2467,7 +2476,7 @@ export function Reunions() {
               <div className="flex flex-wrap gap-1.5 p-1.5 bg-gray-100 rounded-xl">
                 {tabs.map(tab => {
                   const rubriqueCount = RUBRIQUES.find(rb => rb.id === tab.id)
-                    ? seanceTransactions.filter(t => t.reunionId === r.id && RUBRIQUES.find(rb => rb.id === tab.id).types.includes(t.type)).length
+                    ? seanceTransactions.filter(t => t.idReunion === r.id && RUBRIQUES.find(rb => rb.id === tab.id).types.includes(t.type)).length
                     : 0;
                   return (
                   <button key={tab.id} onClick={()=>setDetailTab(tab.id)}

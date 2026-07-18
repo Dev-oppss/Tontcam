@@ -65,6 +65,7 @@ class ReunionController extends Controller
             'statut' => ['sometimes', 'in:planifiee,ouverte,tenue,cloturee,annulee'],
             'notes' => ['sometimes', 'nullable', 'string'],
         ]));
+        $reunion->load(['ordreDuJour.rubrique', 'ordreDuJour.rapporteur', 'presences.membre', 'signataires.membre']);
 
         return response()->json($reunion);
     }
@@ -74,6 +75,7 @@ class ReunionController extends Controller
         $reunion = $this->scope->scopeAssociation(Reunion::query())->findOrFail($id);
         $this->authorize('update', $reunion);
         $reunion->update(['statut' => 'ouverte']);
+        $reunion->load(['ordreDuJour.rubrique', 'ordreDuJour.rapporteur', 'presences.membre', 'signataires.membre']);
 
         return response()->json($reunion);
     }
