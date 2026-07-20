@@ -28,6 +28,9 @@ class BulletinGainService
 
             $numero = 'BG-'.now()->format('Y').'-'.str_pad((string) (BulletinGain::whereYear('created_at', now()->year)->count() + 1), 3, '0', STR_PAD_LEFT);
 
+            // NB : total_retenues=0 à ce stade, donc montant_net doit valoir $brut
+            // (et non 0) pour respecter la contrainte CHECK montant_net = montant_brut - total_retenues
+            // dès cet INSERT initial, avant le calcul détaillé des retenues.
             $bulletin = BulletinGain::create([
                 'cycle_id' => $cycle->id,
                 'gagnant_membre_id' => $membre->id,
@@ -35,7 +38,7 @@ class BulletinGainService
                 'numero_bulletin' => $numero,
                 'montant_brut' => $brut,
                 'total_retenues' => 0,
-                'montant_net' => 0,
+                'montant_net' => $brut,
                 'statut' => 'brouillon',
                 'genere_par' => $auteur->id,
             ]);
@@ -44,9 +47,13 @@ class BulletinGainService
             $totalRetenues = collect($retenues)->sum('montant');
             $net = $this->calculerNet($brut, $totalRetenues);
 
+            // La contrainte CHECK bulletins_montant_net_ck impose montant_net = montant_brut - total_retenues
+            // (égalité stricte) : on ne doit donc jamais "clamper" montant_net à 0 ici, sous peine
+            // de violer la contrainte dès que les retenues dépassent le brut. Le cas négatif est
+            // géré séparément ci-dessous (report de dette).
             $bulletin->update([
                 'total_retenues' => $totalRetenues,
-                'montant_net' => max(0, $net),
+                'montant_net' => $net,
                 'statut' => 'genere',
             ]);
 

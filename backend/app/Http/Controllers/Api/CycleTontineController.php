@@ -114,10 +114,16 @@ class CycleTontineController extends Controller
             'membre_id' => ['nullable', 'uuid'],
         ]);
 
+        // On cherche d'abord un cycle déjà lié à CETTE réunion précise (peu importe son statut),
+        // car la contrainte unique (tontine_id, reunion_id) interdit d'en recréer un second.
         $cycle = \App\Models\CycleTontine::where('tontine_id', $tontine->id)
-            ->where('statut', '!=', 'clos')
+            ->where('reunion_id', $data['reunion_id'])
             ->latest('numero_cycle')
             ->first();
+
+        if ($cycle && $cycle->statut === 'clos') {
+            return response()->json(['message' => 'Un bénéficiaire a déjà été enregistré et le cycle clôturé pour cette réunion.'], 422);
+        }
 
         if (! $cycle) {
             $reunion = \App\Models\Reunion::findOrFail($data['reunion_id']);
