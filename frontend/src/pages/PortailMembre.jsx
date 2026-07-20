@@ -28,7 +28,7 @@ export default function PortailMembre() {
     ? Math.round((mesPresences.filter((p) => p.statut === 'present').length / mesPresences.length) * 100)
     : null, [mesPresences]);
 
-  const sanctionsDues = mesSanctions.filter((s) => s.statut === 'impayee').reduce((s, x) => s + Number(x.montant || 0), 0);
+  const sanctionsDues = mesSanctions.filter((s) => s.statut === 'due').reduce((s, x) => s + Number(x.montant || 0), 0);
   const pretsEnCours = mesPrets.filter((p) => ['en_cours', 'en_retard', 'retard'].includes(p.statut)).reduce((s, x) => s + Number(x.capital_restant ?? x.montant_principal ?? 0), 0);
 
   if (loading) {
@@ -111,7 +111,7 @@ export default function PortailMembre() {
               <td className="td text-ink-600/60">{s.motif}</td>
               <td className="td num text-red-600 font-semibold">{fmt(s.montant)}</td>
               <td className="td text-ink-600/60">{fmtDate(s.date_sanction)}</td>
-              <td className="td"><Badge variant={s.statut === 'payee' ? 'green' : 'red'}>{s.statut === 'payee' ? 'Payée' : 'Impayée'}</Badge></td>
+              <td className="td"><Badge variant={s.statut === 'payee' ? 'green' : s.statut === 'annulee' ? 'gray' : 'red'}>{s.statut === 'payee' ? 'Payée' : s.statut === 'annulee' ? 'Annulée' : 'Due'}</Badge></td>
             </tr>
           ))}
           {mesSanctions.length === 0 && <tr><td colSpan={4} className="td text-center text-ink-600/40 py-6">Aucune sanction</td></tr>}

@@ -316,8 +316,8 @@ export const aideFromApi = (a) => !a ? null : ({
   montantAide: Number(a.montant_accorde || a.montant_demande || 0),
   piecesJointes: a.pieces_jointes || [],
   justificatif: (a.pieces_jointes || []).length > 0,
-  // Social.jsx distingue explicitement 'en_attente' | 'approuvee' | 'refusee' | 'versee' —
-  // l'ancien remappage 'versee' → 'verse' cassait le badge de statut et le bouton "Verser".
+  // statut_aide (Postgres) : 'demandee' | 'en_validation' | 'approuvee' | 'refusee' | 'versee'.
+  // Passé tel quel (pas de remap) — Social.jsx doit filtrer sur ces valeurs exactes.
   statut: a.statut,
   modePaiement: a.transaction?.mode_paiement,
   detailsPaiement: a.transaction?.cheque_numero,

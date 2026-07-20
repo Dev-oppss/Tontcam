@@ -31,8 +31,8 @@ class PortalController extends Controller
             'membre' => $membre,
             'resume' => [
                 'parts' => $membre->parts()->count(),
-                'prets_en_cours' => $membre->prets()->whereIn('statut', ['en_cours', 'retard', 'defaut'])->count(),
-                'sanctions_impayees' => $membre->sanctions()->where('statut', 'impayee')->count(),
+                'prets_en_cours' => $membre->prets()->whereIn('statut', ['en_cours', 'en_retard', 'defaut'])->count(),
+                'sanctions_impayees' => $membre->sanctions()->where('statut', 'due')->count(),
                 'bulletins' => BulletinGain::query()->where('gagnant_membre_id', $membre->id)->count(),
             ],
             'prets' => $membre->prets()->latest()->limit(10)->get(),

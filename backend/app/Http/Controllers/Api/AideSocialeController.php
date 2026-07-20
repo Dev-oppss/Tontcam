@@ -65,7 +65,7 @@ class AideSocialeController extends Controller
             'date_evenement' => $data['date_evenement'],
             'date_declaration' => now()->toDateString(),
             'montant_demande' => $data['montant_demande'] ?? $type->montant_fixe,
-            'statut' => 'en_attente',
+            'statut' => 'demandee',
             'pieces_jointes' => $data['pieces_jointes'],
         ]);
 
@@ -89,7 +89,7 @@ class AideSocialeController extends Controller
     {
         $evenement = $this->scope->scopeAssociation(EvenementSocial::query())->findOrFail($id);
         $this->authorize('update', $evenement);
-        if ($evenement->statut !== 'en_attente') {
+        if ($evenement->statut !== 'demandee') {
             return response()->json(['message' => 'Cette demande a déjà été traitée.'], 422);
         }
 
@@ -109,7 +109,7 @@ class AideSocialeController extends Controller
     {
         $evenement = $this->scope->scopeAssociation(EvenementSocial::query())->findOrFail($id);
         $this->authorize('update', $evenement);
-        if ($evenement->statut !== 'en_attente') {
+        if ($evenement->statut !== 'demandee') {
             return response()->json(['message' => 'Cette demande a déjà été traitée.'], 422);
         }
 

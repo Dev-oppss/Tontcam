@@ -35,7 +35,7 @@ export default function Social() {
     return cat?.param ? Number(parametres[cat.param] || 0) : '';
   }, [form.categorie, parametres]);
 
-  const enAttente = aidesSociales.filter((a) => a.statut === 'en_attente');
+  const enAttente = aidesSociales.filter((a) => a.statut === 'demandee');
   const versees = aidesSociales.filter((a) => a.statut === 'versee');
   const totalVerse = versees.reduce((s, a) => s + Number(a.montant), 0);
 
@@ -48,7 +48,7 @@ export default function Social() {
       idMembre: form.idMembre,
       nomMembre: `${m?.nom || ''} ${m?.prenom || ''}`.trim(),
       montant: Number(form.montant || montantSuggere || 0),
-      statut: 'en_attente',
+      statut: 'demandee',
     });
     setAdd(false);
     setForm(EMPTY);
@@ -114,7 +114,7 @@ export default function Social() {
               </td>
               <td className="td">
                 <div className="flex items-center gap-1">
-                  {a.statut === 'en_attente' && (
+                  {a.statut === 'demandee' && (
                     <>
                       <button onClick={() => validerAideSociale?.(a.id, 'approuvee')} title="Approuver" className="btn-primary py-1 px-2.5 text-xs"><CheckCircle2 size={12} />Valider</button>
                       <button onClick={() => validerAideSociale?.(a.id, 'refusee')} title="Refuser" className="p-1.5 hover:bg-red-50 rounded-lg"><XCircle size={14} className="text-red-400"/></button>

@@ -29,7 +29,7 @@ class DecisionAgService
             'votes_pour' => $votesPour,
             'votes_contre' => $votesContre,
             'votes_abstention' => $data['votes_abstention'] ?? 0,
-            'statut' => $votesPour > $votesContre ? 'adoptee' : 'rejetee',
+            'statut' => $votesPour > $votesContre ? 'adopte' : 'rejete',
             'date_effet' => $data['date_effet'] ?? null,
             'notes' => $data['notes'] ?? null,
         ]);

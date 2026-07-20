@@ -18,7 +18,7 @@ class ReglementService
         $decision = DecisionAg::where('association_id', $associationId)
             ->where('numero_decision', $data['numero_decision_ag'])
             ->where('type', 'reglement')
-            ->where('statut', 'adoptee')
+            ->where('statut', 'adopte')
             ->first();
 
         if (! $decision) {
