@@ -61,10 +61,11 @@ export default function Tontines() {
   const {
     tontines, caisses, addTontine, updateTontine,
     membres, membresParTontine, addMembreTontine, removeMembreTontine,
-    planningTours, addTourPlanning, marquerTourEncaisse, retirerTourPlanning, tirerAuSort, chargerPlanningTours,
+    planningTours, addTourPlanning, marquerTourEncaisse, retirerTourPlanning, chargerPlanningTours,
     encheres, rotations, attribuerTour,
     genererBulletin, ouvrirBulletinPdf, cyclesTontine, chargerCycles,
     reunions, ouvrirCycle, chargerCycle, saisirCotisationCycle, designerGagnantCycle, cloturerCycle,
+    enregistrerBeneficiaireSeance, showToast,
   } = useApp();
 
   // Le planning des tours n'est pas inclus dans le chargement initial global de
@@ -180,10 +181,21 @@ export default function Tontines() {
     setFormTour({ idMembre:'', datePrevue:'', note:'' }); setAddTourMode(false);
   };
 
-  const handleTirage = (idTontine, nbTours) => {
+  const handleTirage = async (idTontine, nbTours) => {
     const numeroTour = getProchainTour(idTontine, nbTours);
-    const result = tirerAuSort(idTontine, numeroTour, formTour.datePrevue);
-    if (result) setShowTirage(result);
+    const reunionOuverte = reunions.find(r => r.statutReunion === 'en_cours');
+    if (!reunionOuverte) { showToast?.('Ouvrez une réunion avant de désigner un bénéficiaire.', 'error'); return; }
+    const t = tontines.find(x => x.id === idTontine);
+    const cycle = await enregistrerBeneficiaireSeance(reunionOuverte.id, {
+      idTontine, nomTontine: t?.nom, typeAttribution: 'tirage', numeroTour, modeDesignation: 'tirage_au_sort',
+    });
+    if (cycle?.gagnant?.membre) {
+      setShowTirage({
+        numeroTour,
+        nomMembre: `${cycle.gagnant.membre.nom} ${cycle.gagnant.membre.prenom}`,
+        montantPot: Number(cycle.bulletin?.montant_brut || 0),
+      });
+    }
   };
 
   // Chaque `mt` est une part (une ligne = une part côté serveur). On y ajoute les
@@ -444,7 +456,7 @@ export default function Tontines() {
                           <button onClick={()=>{setEncaisseModal(p);setEncModePaiement('especes');setEncDetails('');}} title="Marquer encaissé" className="p-1 hover:bg-primary-100 rounded text-primary-600"><CheckCircle size={13}/></button>
                         )}
                         {p.statut!=='encaisse'&&(
-                          <button onClick={()=>retirerTourPlanning(p.id)} title="Retirer" className="p-1 hover:bg-red-100 rounded text-red-400"><X size={12}/></button>
+                          <button onClick={()=>retirerTourPlanning(t.id, p.id)} title="Retirer" className="p-1 hover:bg-red-100 rounded text-red-400"><X size={12}/></button>
                         )}
                       </div>
                     </div>

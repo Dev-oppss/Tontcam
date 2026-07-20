@@ -73,7 +73,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
   const {
     tontines, membres, membresParTontine,
     addSeanceTransaction, addSanction, seanceTransactions,
-    planningTours, enregistrerBeneficiaireSeance, tirerAuSort,
+    planningTours, enregistrerBeneficiaireSeance,
     encheres,
   } = useApp();
 
@@ -196,16 +196,16 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
     setEtape('recap');
   };
 
-  const handleTirage = () => {
+  const handleTirage = async () => {
     const nbEncaisses = planningTours.filter(p => p.idTontine === tontineSelectee.id && p.statut === 'encaisse').length;
-    const result = tirerAuSort(tontineSelectee.id, nbEncaisses + 1, reunion.date);
-    if (result) {
-      enregistrerBeneficiaireSeance(reunion.id, {
-        idTontine: tontineSelectee.id, nomTontine: tontineSelectee.nom,
-        typeAttribution: 'tirage', idMembre: result.idMembre, nomMembre: result.nomMembre,
-        montantPot: result.montantPot, numeroTour: nbEncaisses + 1, modeDesignation: 'tirage_au_sort',
-      });
-      setGagnant({ nomMembre: result.nomMembre, montantPot: result.montantPot });
+    const cycle = await enregistrerBeneficiaireSeance(reunion.id, {
+      idTontine: tontineSelectee.id, nomTontine: tontineSelectee.nom,
+      typeAttribution: 'tirage', numeroTour: nbEncaisses + 1, modeDesignation: 'tirage_au_sort',
+    });
+    if (cycle?.gagnant?.membre) {
+      const nomMembre = `${cycle.gagnant.membre.nom} ${cycle.gagnant.membre.prenom}`;
+      const montant = Number(cycle.bulletin?.montant_brut || montantPot || 0);
+      setGagnant({ nomMembre, montantPot: montant });
       setTirageEffectue(true);
       setEtape('recap');
     }
@@ -1432,7 +1432,7 @@ function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, san
 function BeneficiaireSeancePanel({ reunion }) {
   const {
     tontines, membres, membresParTontine, planningTours,
-    encheres, enregistrerBeneficiaireSeance, tirerAuSort,
+    encheres, enregistrerBeneficiaireSeance,
   } = useApp();
 
   const [idTontine,    setIdTontine]    = useState('');
@@ -1497,23 +1497,17 @@ function BeneficiaireSeancePanel({ reunion }) {
     setGagnant({ nomMembre: tourPlanifieProchain.nomMembre, montantPot });
   };
 
-  const handleTirage = () => {
+  const handleTirage = async () => {
     if (!tontine) return;
     const nbEncaisses = planningTours.filter(p => p.idTontine === tontine.id && p.statut === 'encaisse').length;
-    const result = tirerAuSort(tontine.id, nbEncaisses + 1, reunion.date);
-    if (result) {
-      // enregistrerBeneficiaireSeance sera appelé dans tirerAuSort via addTourPlanning + marquerTourEncaisse
-      enregistrerBeneficiaireSeance(reunion.id, {
-        idTontine: tontine.id,
-        nomTontine: tontine.nom,
-        typeAttribution: 'tirage',
-        idMembre: result.idMembre,
-        nomMembre: result.nomMembre,
-        montantPot: result.montantPot,
-        numeroTour: nbEncaisses + 1,
-        modeDesignation: 'tirage_au_sort',
-      });
-      setGagnant({ nomMembre: result.nomMembre, montantPot: result.montantPot });
+    const cycle = await enregistrerBeneficiaireSeance(reunion.id, {
+      idTontine: tontine.id, nomTontine: tontine.nom,
+      typeAttribution: 'tirage', numeroTour: nbEncaisses + 1, modeDesignation: 'tirage_au_sort',
+    });
+    if (cycle?.gagnant?.membre) {
+      const nomMembre = `${cycle.gagnant.membre.nom} ${cycle.gagnant.membre.prenom}`;
+      const montant = Number(cycle.bulletin?.montant_brut || 0);
+      setGagnant({ nomMembre, montantPot: montant });
       setEtape('confirme');
     }
   };
@@ -2035,7 +2029,7 @@ function PanneauRubrique({ reunion, types, titre, readOnly = false }) {
                   </p>
                 </div>
                 {!locked && (
-                  <button onClick={() => deleteSeanceTransaction(tx.id)}
+                  <button onClick={() => deleteSeanceTransaction(tx.idReunion, tx.id)}
                     className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg opacity-0 group-hover:opacity-100 transition-all shrink-0">
                     <Trash2 size={13}/>
                   </button>
