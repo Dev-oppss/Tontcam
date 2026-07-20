@@ -187,7 +187,7 @@ export default function Social() {
             <textarea className="input" rows={2} value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} />
           </FormField>
           <FormField label="Justificatif" required hint="Certificat, acte — obligatoire (RG-SOC-006)">
-            <input type="file" className="input" onChange={(e) => setForm((f) => ({ ...f, justificatif: e.target.files?.[0]?.name || '' }))} />
+            <input type="file" className="input" onChange={(e) => { const file = e.target.files?.[0]; setForm((f) => ({ ...f, justificatif: file?.name || '', justificatifFile: file || null })); }} />
           </FormField>
           <FormField label="Date de déclaration">
             <input type="date" className="input" value={form.dateDeclaration} onChange={(e) => setForm((f) => ({ ...f, dateDeclaration: e.target.value }))} />

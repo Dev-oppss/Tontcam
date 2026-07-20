@@ -24,7 +24,7 @@ const EMPTY_FORM = {
 };
 
 export default function Setup() {
-  const { user, booting, updateAssociation, currentAssociation } = useApp();
+  const { user, booting, updateAssociation, uploadStatutsAssociation, currentAssociation } = useApp();
   const navigate = useNavigate();
   const [form, setForm] = useState(EMPTY_FORM);
   const [busy, setBusy] = useState(false);
@@ -194,6 +194,24 @@ export default function Setup() {
               </button>
             </div>
           </div>
+
+          {currentAssociation?.id && (
+            <div className="mt-6 rounded-2xl border border-[#e2e8f0] p-4">
+              <p className="text-sm font-semibold text-ink-900">Statuts de l'association (PDF)</p>
+              <p className="text-xs text-ink-500 mt-0.5">
+                {currentAssociation.statutsUrl ? 'Un document est déjà déposé — en choisir un nouveau le remplace.' : 'Aucun document déposé pour le moment.'}
+              </p>
+              <input
+                type="file" accept="application/pdf" className="input mt-2"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadStatutsAssociation(currentAssociation.id, f); }}
+              />
+              {currentAssociation.statutsUrl && (
+                <a href={currentAssociation.statutsUrl} target="_blank" rel="noreferrer" className="text-xs text-[#1f4aa6] font-semibold mt-2 inline-block">
+                  Voir le document actuel
+                </a>
+              )}
+            </div>
+          )}
 
           <p className="mt-6 text-xs text-ink-500 leading-relaxed">
             Vous pourrez revenir modifier ces informations à tout moment depuis « Organisation → Association ».

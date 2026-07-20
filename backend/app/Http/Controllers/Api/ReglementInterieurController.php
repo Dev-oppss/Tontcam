@@ -34,11 +34,22 @@ class ReglementInterieurController extends Controller
             'version' => ['required', 'string', 'max:20'],
             'titre' => ['nullable', 'string'],
             'contenu_html' => ['nullable', 'string'],
-            'fichier_url' => ['required', 'string'],
+            'fichier' => ['nullable', 'file', 'mimes:pdf', 'max:10240'],
+            'fichier_url' => ['nullable', 'string'],
             'date_adoption' => ['required', 'date'],
             'numero_decision_ag' => ['required', 'string'],
             'signataires' => ['nullable', 'array'],
         ]);
+
+        if ($request->hasFile('fichier')) {
+            $chemin = $request->file('fichier')->store('reglements', 'public');
+            $data['fichier_url'] = \Illuminate\Support\Facades\Storage::url($chemin);
+        }
+        unset($data['fichier']);
+
+        if (empty($data['fichier_url'])) {
+            return response()->json(['message' => 'Un fichier PDF est requis.'], 422);
+        }
 
         try {
             $reglement = $this->service->publier($this->scope->associationId(), $data);

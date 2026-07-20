@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\AideSocialeController;
 use App\Http\Controllers\Api\AssociationController;
+use App\Http\Controllers\Api\UploadController;
 use App\Http\Controllers\Api\AssuranceMembreController;
 use App\Http\Controllers\Api\AuditLogController;
 use App\Http\Controllers\Api\AuthController;
@@ -148,6 +149,7 @@ Route::middleware(['auth:sanctum', 'association.context'])->group(function () {
     Route::get('/reglements/{id}', [ReglementInterieurController::class, 'show']);
 
     // ── Paramètres ──────────────────────────────────────────────
+    Route::post('/uploads', [UploadController::class, 'store']);
     Route::get('/parametres', [ParametreController::class, 'index']);
     Route::put('/parametres', [ParametreController::class, 'update']);
 

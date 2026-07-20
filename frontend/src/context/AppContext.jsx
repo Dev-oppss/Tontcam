@@ -46,6 +46,7 @@ export const AppProvider = ({ children }) => {
   const [utilisateurs, setUtilisateurs] = useState([]);
   const [planningTours, setPlanningTours] = useState([]);
   const [cyclesTontine, setCyclesTontine] = useState([]);
+  const [portailMoi, setPortailMoi] = useState(null);
   const [parametres, setParametres] = useState({});
 
   const showToast = useCallback((message, type = 'success') => {
@@ -76,7 +77,7 @@ export const AppProvider = ({ children }) => {
           setCurrentAssociationState({
             id: asso.id, nom: asso.nom, abrege: asso.nom_abrege, ville: asso.ville,
             pays: asso.pays, devise: asso.devise, siege: asso.siege_social,
-            telephone: asso.telephone, email: asso.email, profilComplete: !!asso.profil_complete,
+            telephone: asso.telephone, email: asso.email, profilComplete: !!asso.profil_complete, statutsUrl: asso.statuts_url,
           });
           setSetupComplete(!!asso.profil_complete);
         }
@@ -88,9 +89,30 @@ export const AppProvider = ({ children }) => {
     })();
   }, []);
 
+  const chargerPortailMoi = async () => {
+    try {
+      const res = await request('/portail/moi');
+      setPortailMoi(res);
+      return res;
+    } catch (err) {
+      setPortailMoi(null);
+    }
+  };
+
   // ── Charge toutes les données de l'association une fois connecté ──
   useEffect(() => {
     if (!user || !currentAssociation) return;
+
+    // Le rôle "membre" n'a par défaut aucune permission sur /membres, /prets,
+    // /sanctions... (RG-SEC-006/007, appliqué côté serveur — vérifié fail-closed
+    // dans PermissionsRolesSeeder). Sans cette branche, le Promise.all ci-dessous
+    // rejetait dès le premier 403 et TOUT le bootstrap échouait pour ce rôle —
+    // y compris les réunions/tontines qu'il est pourtant autorisé à consulter.
+    if (user.role === 'membre') {
+      chargerPortailMoi();
+      return;
+    }
+
     (async () => {
       try {
         const [mRes, tRes, rRes, cRes, pRes, sRes, paramRes, aRes, uRes, typeSancRes, typeAideRes, comptesRes, postesRes, decAgRes, reglRes, rapproRes, transfRes] = await Promise.all([
@@ -194,7 +216,7 @@ export const AppProvider = ({ children }) => {
         setCurrentAssociationState({
           id: asso.id, nom: asso.nom, abrege: asso.nom_abrege, ville: asso.ville,
           pays: asso.pays, devise: asso.devise, siege: asso.siege_social,
-          telephone: asso.telephone, email: asso.email, profilComplete: !!asso.profil_complete,
+          telephone: asso.telephone, email: asso.email, profilComplete: !!asso.profil_complete, statutsUrl: asso.statuts_url,
         });
         setSetupComplete(!!asso.profil_complete);
       }
@@ -219,7 +241,7 @@ export const AppProvider = ({ children }) => {
         setCurrentAssociationState({
           id: asso.id, nom: asso.nom, abrege: asso.nom_abrege, ville: asso.ville,
           pays: asso.pays, devise: asso.devise, siege: asso.siege_social,
-          telephone: asso.telephone, email: asso.email, profilComplete: !!asso.profil_complete,
+          telephone: asso.telephone, email: asso.email, profilComplete: !!asso.profil_complete, statutsUrl: asso.statuts_url,
         });
         setSetupComplete(!!asso.profil_complete);
       }
@@ -271,6 +293,17 @@ export const AppProvider = ({ children }) => {
     showToast('Déconnecté');
   };
 
+  const uploadStatutsAssociation = async (id, file) => {
+    try {
+      const fd = new FormData();
+      fd.append('fichier', file);
+      const asso = await request(`/associations/${id}/statuts`, { method: 'POST', body: fd });
+      setCurrentAssociationState((prev) => ({ ...prev, statutsUrl: asso.statuts_url }));
+      showToast('Statuts déposés');
+      return asso;
+    } catch (err) { return handleError(err); }
+  };
+
   const updateAssociation = async (id, data) => {
     try {
       const asso = await request(`/associations/${id}`, { method: 'PUT', body: {
@@ -282,7 +315,7 @@ export const AppProvider = ({ children }) => {
       setCurrentAssociationState({
         id: asso.id, nom: asso.nom, abrege: asso.nom_abrege, ville: asso.ville, pays: asso.pays,
         devise: asso.devise, siege: asso.siege_social, telephone: asso.telephone, email: asso.email,
-        profilComplete: !!asso.profil_complete,
+        profilComplete: !!asso.profil_complete, statutsUrl: asso.statuts_url,
       });
       if (asso.profil_complete) setSetupComplete(true);
       showToast('Association mise à jour');
@@ -371,15 +404,15 @@ export const AppProvider = ({ children }) => {
   // ── Règlement intérieur ───────────────────────────────────────────
   const addReglement = async (data) => {
     try {
-      const r = await request('/reglements', { method: 'POST', body: {
-        version: data.version,
-        titre: data.titre || null,
-        contenu_html: data.notes || null,
-        fichier_url: data.fichier,
-        date_adoption: data.dateAdoption,
-        numero_decision_ag: data.decisionAG,
-        signataires: null,
-      } });
+      const fd = new FormData();
+      fd.append('version', data.version);
+      if (data.titre) fd.append('titre', data.titre);
+      if (data.notes) fd.append('contenu_html', data.notes);
+      if (data.fichierFile instanceof File) fd.append('fichier', data.fichierFile);
+      else if (data.fichier) fd.append('fichier_url', data.fichier);
+      fd.append('date_adoption', data.dateAdoption);
+      fd.append('numero_decision_ag', data.decisionAG);
+      const r = await request('/reglements', { method: 'POST', body: fd });
       const reglement = adapt.reglementFromApi(r);
       setReglements((prev) => [reglement, ...prev]);
       showToast('Version publiée');
@@ -799,6 +832,15 @@ export const AppProvider = ({ children }) => {
       return caisse;
     } catch (err) { return handleError(err); }
   };
+  const chargerJournalCaisse = async (idCaisse, filtres = {}) => {
+    try {
+      const qs = new URLSearchParams({ per_page: '100', ...filtres }).toString();
+      const res = await request(`/caisses/${idCaisse}/journal?${qs}`);
+      const lignes = (res.data || res).map(adapt.transactionFromApi);
+      setCaisseJournal((prev) => [...prev.filter((t) => t.idCaisse !== idCaisse), ...lignes]);
+      return lignes;
+    } catch (err) { return handleError(err); }
+  };
   const doOperation = async (data) => {
     try {
       const sens = data.type && TX_TYPES.find((t) => t.value === data.type)?.dir === 'sortie' ? 'sortie' : 'entree';
@@ -946,6 +988,15 @@ export const AppProvider = ({ children }) => {
   const distribuerInteretsPret = () => showToast('Non applicable : les intérêts sont calculés par échéance (amortissement linéaire).', 'info');
 
   // ── Social ────────────────────────────────────────────────────
+  const uploadFichier = async (file) => {
+    try {
+      const fd = new FormData();
+      fd.append('fichier', file);
+      const res = await request('/uploads', { method: 'POST', body: fd });
+      return res.url;
+    } catch (err) { return handleError(err); }
+  };
+
   const addAide = async (data) => {
     try {
       // Social.jsx envoie data.categorie (code catégorie : naissance, mariage...) — on résout
@@ -959,10 +1010,22 @@ export const AppProvider = ({ children }) => {
         return;
       }
 
+      let pieces = data.piecesJointes?.length ? data.piecesJointes : [];
+      if (data.justificatifFile instanceof File) {
+        const url = await uploadFichier(data.justificatifFile);
+        if (url) pieces = [url];
+      } else if (data.justificatif) {
+        pieces = [data.justificatif];
+      }
+      if (!pieces.length) {
+        showToast('Merci de joindre un justificatif.', 'error');
+        return;
+      }
+
       const a = await request('/aides-sociales', { method: 'POST', body: {
         membre_id: data.idMembre, type_aide_id: typeId, description: data.description,
         date_evenement: data.dateDeclaration ?? data.dateEvenement, montant_demande: data.montant ?? data.montantAide,
-        pieces_jointes: data.justificatif ? [data.justificatif] : (data.piecesJointes?.length ? data.piecesJointes : ['justificatif.pdf']),
+        pieces_jointes: pieces,
       } });
       const aide = adapt.aideFromApi(a);
       setFondAssurance((prev) => [...prev, aide]);
@@ -1153,10 +1216,11 @@ export const AppProvider = ({ children }) => {
     // que des caisses partagées, pas de sous-comptes individuels par membre, ni de journal
     // de transactions par réunion distinct du journal de caisse) — exposés vides pour éviter
     // les crashs sur Membres.jsx/Rapports.jsx ; à construire côté backend si le besoin est confirmé.
-    comptesBanque: [], operationsBanque: [], seanceTransactions: seanceTransactionsState, transfertsCaisse,
+    comptesBanque: [], operationsBanque: [], seanceTransactions: seanceTransactionsState, transfertsCaisse, chargerJournalCaisse,
     utilisateurs, planningTours, cyclesTontine, chargerCycles, dashboardStats, repartitionBanques, evolutionCaisse: mock.evolutionCaisse,
+    portailMoi, chargerPortailMoi,
     showToast,
-    login, logout, changePassword, updateMonProfil, register, updateAssociation,
+    login, logout, changePassword, updateMonProfil, register, updateAssociation, uploadStatutsAssociation,
     addMembre, updateMembre, deleteMembre,
     addMandat, cloturerMandat,
     logAuditConsultation, addDecisionAG, addReglement, addRapprochement, justifierEcart,
@@ -1168,7 +1232,7 @@ export const AppProvider = ({ children }) => {
     addBanque, addCaisse: addBanque, doOperation, addMembreBanque, transfererCaisse, addCompteBancaire, chargerTransferts,
     addTypeSanction, updateTypeSanction, addSanction, payerSanction,
     addPret, validerPret, approuverPret, refuserPret, decaisserPret, rembourserPret, distribuerInteretsPret,
-    addAide, addAideSociale: addAide, validerAideSociale, verserAideSociale, addTypeAideSociale, membreEligibleAssurance, addCaisseEntry,
+    addAide, addAideSociale: addAide, validerAideSociale, verserAideSociale, addTypeAideSociale, membreEligibleAssurance, addCaisseEntry, uploadFichier,
     addTourPlanning, marquerTourEncaisse, retirerTourPlanning, chargerPlanningTours,
     addSeanceTransaction, deleteSeanceTransaction, enregistrerBeneficiaireSeance, chargerSeanceTransactions,
     addUtilisateur, updateUtilisateur, desactiverUtilisateur, activerUtilisateur,

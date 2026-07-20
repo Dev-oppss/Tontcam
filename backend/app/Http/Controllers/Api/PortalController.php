@@ -25,7 +25,7 @@ class PortalController extends Controller
 
         Gate::authorize('view', $membre);
 
-        $membre->loadMissing(['association', 'parts', 'prets', 'sanctions', 'presences']);
+        $membre->loadMissing(['association', 'parts.tontine', 'prets', 'sanctions', 'presences']);
 
         return response()->json([
             'membre' => $membre,

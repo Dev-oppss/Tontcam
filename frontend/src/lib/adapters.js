@@ -347,6 +347,27 @@ export const caisseToApi = (c) => ({
   taux_interet_mensuel: c.tauxInteret ? Number(c.tauxInteret) / 100 : undefined,
 });
 
+const CATEGORIE_PAR_REFERENCE = {
+  sanction_membre: 'amende',
+  echeance_pret: 'remboursement_pret',
+  pret: 'pret_accorde',
+  evenement_social: 'aide_sociale',
+  transfert_caisse: 'depot_banque',
+  cotisation_tontine: 'cotisation',
+};
+
+const deriveCategorie = (t) => {
+  if (CATEGORIE_PAR_REFERENCE[t.reference_type]) return CATEGORIE_PAR_REFERENCE[t.reference_type];
+  // Les transactions saisies depuis une réunion (cotisation, versement de pot, enchère...)
+  // partagent toutes reference_type='seance_transaction' — on affine via le libellé,
+  // faute d'un sous-type exposé directement sur la table transactions.
+  const lib = (t.libelle || '').toLowerCase();
+  if (lib.includes('cotisation')) return 'cotisation';
+  if (lib.includes('enchère') || lib.includes('enchere')) return 'enchere';
+  if (lib.includes('remboursement')) return 'remboursement';
+  return undefined;
+};
+
 export const transactionFromApi = (t) => !t ? null : ({
   id: t.id,
   idCaisse: t.caisse_id,
@@ -357,6 +378,7 @@ export const transactionFromApi = (t) => !t ? null : ({
   sortie: t.type !== 'entree' ? Number(t.montant) : 0,
   libelle: t.libelle,
   modePaiement: t.mode_paiement,
+  categorie: deriveCategorie(t),
 });
 
 // ── Utilisateurs ────────────────────────────────────────────────

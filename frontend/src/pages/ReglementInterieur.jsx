@@ -83,7 +83,7 @@ export default function ReglementInterieur() {
             <input type="date" className="input" value={form.dateAdoption} onChange={(e) => setForm((f) => ({ ...f, dateAdoption: e.target.value }))} />
           </FormField>
           <FormField label="Document PDF" required>
-            <input type="file" accept="application/pdf" className="input" onChange={(e) => setForm((f) => ({ ...f, fichier: e.target.files?.[0]?.name || '' }))} />
+            <input type="file" accept="application/pdf" className="input" onChange={(e) => { const file = e.target.files?.[0]; setForm((f) => ({ ...f, fichier: file?.name || '', fichierFile: file || null })); }} />
           </FormField>
           <FormField label="Notes de version">
             <textarea className="input" rows={2} value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} />

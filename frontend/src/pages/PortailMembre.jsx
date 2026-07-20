@@ -1,38 +1,39 @@
-import { useMemo } from 'react';
-import { Wallet, Trophy, Landmark, ShieldAlert, HeartHandshake, TrendingUp } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Wallet, Landmark, ShieldAlert, HeartHandshake, TrendingUp } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { fmt, fmtDate } from '../data/mockData';
 import { PageHeader, SectionCard, Table, Badge, EmptyState } from '../components/ui/index';
 
 export default function PortailMembre() {
-  const {
-    user,
-    membres = [],
-    membresParTontine = [],
-    tontines = [],
-    prets = [],
-    sanctions = [],
-    reunions = [],
-    presences = [],
-  } = useApp();
+  const { portailMoi, chargerPortailMoi } = useApp();
+  const [loading, setLoading] = useState(true);
 
-  // Isolation stricte : on ne travaille qu'avec les données du membre lié à l'utilisateur connecté (RG-SEC-006 / RG-SEC-007)
-  const moi = useMemo(() => membres.find((m) => m.id === user?.membre_id), [membres, user]);
+  // Isolation stricte côté serveur (RG-SEC-006/007) : /portail/moi ne renvoie
+  // que les données du membre lié à l'utilisateur connecté — le rôle "membre"
+  // n'a de toute façon pas la permission de lire /membres, /prets, /sanctions
+  // globalement (vérifié fail-closed côté backend), donc plus aucun filtrage
+  // client sur des listes globales n'est nécessaire ni même possible ici.
+  useEffect(() => {
+    chargerPortailMoi?.().finally(() => setLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  const mesParts = useMemo(
-    () => membresParTontine.filter((mt) => mt.idMembre === moi?.id).map((mt) => ({ ...mt, tontine: tontines.find((t) => t.id === mt.idTontine) })),
-    [membresParTontine, tontines, moi]
-  );
-  const mesPrets = useMemo(() => prets.filter((p) => p.idMembre === moi?.id), [prets, moi]);
-  const mesSanctions = useMemo(() => sanctions.filter((s) => s.idMembre === moi?.id), [sanctions, moi]);
+  const moi = portailMoi?.membre;
+  const mesParts = moi?.parts || [];
+  const mesPrets = portailMoi?.prets || [];
+  const mesSanctions = portailMoi?.sanctions || [];
+  const mesPresences = moi?.presences || [];
 
-  const mesPresences = useMemo(() => presences.filter((p) => p.idMembre === moi?.id), [presences, moi]);
-  const tauxParticipation = mesPresences.length
+  const tauxParticipation = useMemo(() => mesPresences.length
     ? Math.round((mesPresences.filter((p) => p.statut === 'present').length / mesPresences.length) * 100)
-    : null;
+    : null, [mesPresences]);
 
-  const sanctionsDues = mesSanctions.filter((s) => s.statut === 'impayee').reduce((s, x) => s + x.montant, 0);
-  const pretsEnCours = mesPrets.filter((p) => ['en_cours', 'en_retard'].includes(p.statut)).reduce((s, x) => s + (x.capitalRestant || x.montant), 0);
+  const sanctionsDues = mesSanctions.filter((s) => s.statut === 'impayee').reduce((s, x) => s + Number(x.montant || 0), 0);
+  const pretsEnCours = mesPrets.filter((p) => ['en_cours', 'en_retard', 'retard'].includes(p.statut)).reduce((s, x) => s + Number(x.capital_restant ?? x.montant_principal ?? 0), 0);
+
+  if (loading) {
+    return <div className="py-16 text-center text-ink-600/40">Chargement de votre espace…</div>;
+  }
 
   if (!moi) {
     return (
@@ -79,8 +80,8 @@ export default function PortailMembre() {
             {mesParts.map((mt) => (
               <div key={mt.id} className="rounded-xl bg-white/40 border border-white/50 p-3 flex items-center justify-between">
                 <div className="min-w-0">
-                  <p className="text-sm font-semibold text-ink-900 truncate">{mt.tontine?.nom || 'Tontine'}</p>
-                  <p className="text-xs text-ink-600/50">Part #{mt.numeroPart || mt.id}</p>
+                  <p className="text-sm font-semibold text-ink-900 truncate">{mt.tontine?.libelle || 'Tontine'}</p>
+                  <p className="text-xs text-ink-600/50">Part #{mt.numero_part || mt.id}</p>
                 </div>
                 <Badge variant={mt.statut === 'gagnee' ? 'amber' : 'green'}>{mt.statut === 'gagnee' ? 'Gagnée' : 'Disponible'}</Badge>
               </div>
@@ -93,10 +94,10 @@ export default function PortailMembre() {
         <Table headers={['Montant', 'Taux', 'Statut', 'Restant dû']}>
           {mesPrets.map((p) => (
             <tr key={p.id} className="hover:bg-white/40 transition-colors">
-              <td className="td num">{fmt(p.montant)}</td>
-              <td className="td">{p.tauxInteret}%</td>
-              <td className="td"><Badge variant={p.statut === 'en_retard' ? 'red' : p.statut === 'solde' ? 'green' : 'blue'}>{p.statut}</Badge></td>
-              <td className="td num font-semibold">{fmt(p.capitalRestant ?? p.montant)}</td>
+              <td className="td num">{fmt(p.montant_principal)}</td>
+              <td className="td">{p.taux_interet_mensuel}%</td>
+              <td className="td"><Badge variant={p.statut === 'en_retard' || p.statut === 'retard' ? 'red' : p.statut === 'solde' ? 'green' : 'blue'}>{p.statut}</Badge></td>
+              <td className="td num font-semibold">{fmt(p.capital_restant ?? p.montant_principal)}</td>
             </tr>
           ))}
           {mesPrets.length === 0 && <tr><td colSpan={4} className="td text-center text-ink-600/40 py-6">Aucun prêt</td></tr>}
@@ -104,17 +105,16 @@ export default function PortailMembre() {
       </SectionCard>
 
       <SectionCard title="Mes sanctions" className="p-0 overflow-hidden">
-        <Table headers={['Type', 'Motif', 'Montant', 'Date', 'Statut']}>
+        <Table headers={['Motif', 'Montant', 'Date', 'Statut']}>
           {mesSanctions.map((s) => (
             <tr key={s.id} className="hover:bg-white/40 transition-colors">
-              <td className="td">{s.typeSanction}</td>
               <td className="td text-ink-600/60">{s.motif}</td>
               <td className="td num text-red-600 font-semibold">{fmt(s.montant)}</td>
-              <td className="td text-ink-600/60">{fmtDate(s.dateSanction)}</td>
+              <td className="td text-ink-600/60">{fmtDate(s.date_sanction)}</td>
               <td className="td"><Badge variant={s.statut === 'payee' ? 'green' : 'red'}>{s.statut === 'payee' ? 'Payée' : 'Impayée'}</Badge></td>
             </tr>
           ))}
-          {mesSanctions.length === 0 && <tr><td colSpan={5} className="td text-center text-ink-600/40 py-6">Aucune sanction</td></tr>}
+          {mesSanctions.length === 0 && <tr><td colSpan={4} className="td text-center text-ink-600/40 py-6">Aucune sanction</td></tr>}
         </Table>
       </SectionCard>
 

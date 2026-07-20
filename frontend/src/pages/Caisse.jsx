@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
   Landmark, TrendingUp, TrendingDown, Wallet, ShieldAlert, Gavel,
   HandCoins, RefreshCw, Download, ChevronDown, ChevronUp,
@@ -37,8 +37,13 @@ export default function Caisse() {
   const {
     caisseJournal, banques, comptesBanque, operationsBanque, transfertsCaisse, transfererCaisse,
     prets, sanctions, encheres, rotations, fondAssurance,
-    seanceTransactions,
+    seanceTransactions, chargerJournalCaisse,
   } = useApp();
+
+  useEffect(() => {
+    banques.forEach((b) => chargerJournalCaisse(b.id));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [banques.length]);
 
   const [activeSection, setActiveSection] = useState('apercu');
   const [filterCat,    setFilterCat]    = useState('tous');
