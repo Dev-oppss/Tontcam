@@ -123,6 +123,7 @@ export default function Tontines() {
   const handleAdd = () => {
     if (!form.nom.trim() || !form.idCaisse) return;
     if (!form.cotisation || Number(form.cotisation) <= 0) return;
+    if (form.typeAttribution === 'enchere' && (!form.miseMinEnchere || Number(form.miseMinEnchere) <= 0)) return;
     const dateFin = form.dateFin || calcDateFin(form.dateDebut, form.nbTours, form.periode);
     addTontine({ ...form, cotisation: Number(form.cotisation), nbTours: Number(form.nbTours), dateFin });
     setShowAdd(false); setForm(EMPTY_FORM);
@@ -912,6 +913,11 @@ export default function Tontines() {
             <FormField label="Nb tours"><F k="nbTours" type="number" min="1"/></FormField>
             <FormField label="Type"><S k="typeAttribution"><option value="rotation"> Rotation</option><option value="tirage"> Tirage</option><option value="enchere"> Enchère</option></S></FormField>
           </div>
+          {form.typeAttribution === 'enchere' && (
+            <FormField label="Mise minimum (FCFA)" required hint="Obligatoire pour une tontine à enchère.">
+              <F k="miseMinEnchere" type="number" min="0"/>
+            </FormField>
+          )}
         </div>
       </Modal>
 
