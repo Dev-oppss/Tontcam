@@ -167,7 +167,7 @@ export const tontineToApi = (t) => ({
   description: t.description || null,
   montant_part: Number(t.cotisation),
   mode_attribution: t.typeAttribution === 'tirage' ? 'tirage_sort' : t.typeAttribution,
-  nb_parts_total: Number(t.totalParts || t.nbPartsTotal || 1),
+  nb_parts_total: Number(t.nbTours || t.totalParts || t.nbPartsTotal || 1),
   exige_avaliste: !!t.avalisteRequis,
   pret_autorise: !!t.pretAutorise,
   mise_min_enchere: t.miseMinEnchere ?? undefined,
