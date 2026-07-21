@@ -54,7 +54,7 @@ function calcDateFin(dateDebut, nbTours, periode) {
   return d.toISOString().split('T')[0];
 }
 
-const EMPTY_FORM = { nom:'', cotisation:'', caisseId:'', periode:'mensuel', nbTours:12, typeAttribution:'rotation', dateDebut:'', dateFin:'' };
+const EMPTY_FORM = { nom:'', cotisation:'', idCaisse:'', periode:'mensuel', nbTours:12, typeAttribution:'rotation', dateDebut:'', dateFin:'' };
 const EMPTY_MT   = { idMembre:'', nombreParts:'1', dateAdhesion: new Date().toISOString().split('T')[0], idAvaliste:'' };
 
 export default function Tontines() {
@@ -121,7 +121,7 @@ export default function Tontines() {
   const getProchainTour   = (id, nb) => Math.min(getNbEncaisses(id) + 1, nb);
 
   const handleAdd = () => {
-    if (!form.nom.trim() || !form.caisseId) return;
+    if (!form.nom.trim() || !form.idCaisse) return;
     if (!form.cotisation || Number(form.cotisation) <= 0) return;
     const dateFin = form.dateFin || calcDateFin(form.dateDebut, form.nbTours, form.periode);
     addTontine({ ...form, cotisation: Number(form.cotisation), nbTours: Number(form.nbTours), dateFin });
@@ -129,7 +129,7 @@ export default function Tontines() {
   };
 
   const handleEdit = () => {
-    if (!form.nom.trim() || !form.caisseId) return;
+    if (!form.nom.trim() || !form.idCaisse) return;
     if (!form.cotisation || Number(form.cotisation) <= 0) return;
     updateTontine({ ...showEdit, ...form, cotisation: Number(form.cotisation), nbTours: Number(form.nbTours) });
     setShowEdit(null);
@@ -300,11 +300,11 @@ export default function Tontines() {
                     <div className="flex items-center gap-2 mt-0.5">
                       <Badge variant={cfg.badge}>{cfg.label}</Badge>
                       <span className="text-xs text-gray-400">{periodeLabel[t.periode]}</span>
-                      <span className="text-xs text-gray-400">· {caissesMap[t.caisseId]?.nom || 'Caisse non liée'}</span>
+                      <span className="text-xs text-gray-400">· {caissesMap[t.idCaisse]?.nom || 'Caisse non liée'}</span>
                     </div>
                   </div>
                 </div>
-                <button onClick={() => { setShowEdit(t); setForm({ nom:t.nom, cotisation:t.cotisation, caisseId:t.caisseId||'', periode:t.periode, nbTours:t.nbTours, typeAttribution:t.typeAttribution, dateDebut:t.dateDebut||''  , dateFin:t.dateFin||'' }); }}
+                <button onClick={() => { setShowEdit(t); setForm({ nom:t.nom, cotisation:t.cotisation, idCaisse:t.idCaisse||'', periode:t.periode, nbTours:t.nbTours, typeAttribution:t.typeAttribution, dateDebut:t.dateDebut||''  , dateFin:t.dateFin||'' }); }}
                   className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg">
                   <Pencil size={13}/>
                 </button>
@@ -846,7 +846,7 @@ export default function Tontines() {
             </div>
             <FormField label="Caisse liée" required
               hint={aucuneCaisseDisponible ? "Aucune caisse éligible : vérifiez qu'au moins une caisse existante n'est pas de type Mutuelle/Scolaire/Événement/Annuelle/Banque, ou créez-en une nouvelle dans Caisses." : undefined}>
-              <S k="caisseId">
+              <S k="idCaisse">
                 <option value="">Sélectionner une caisse…</option>
                 {caissesTontine.map((c) => <option key={c.id} value={c.id}>{c.nom}</option>)}
               </S>
@@ -903,7 +903,7 @@ export default function Tontines() {
           </div>
           <FormField label="Caisse liée" required
             hint={aucuneCaisseDisponible ? "Aucune caisse éligible : vérifiez qu'au moins une caisse existante n'est pas de type Mutuelle/Scolaire/Événement/Annuelle/Banque, ou créez-en une nouvelle dans Caisses." : undefined}>
-            <S k="caisseId">
+            <S k="idCaisse">
               <option value="">Sélectionner une caisse…</option>
               {caissesTontine.map((c) => <option key={c.id} value={c.id}>{c.nom}</option>)}
             </S>
