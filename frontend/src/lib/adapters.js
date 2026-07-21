@@ -126,7 +126,7 @@ export const tontineFromApi = (t) => !t ? null : ({
   optionSurplus: t.option_surplus,
   statut: t.statut === 'active' ? 'active' : t.statut,
   totalParts: t.parts_count ?? t.parts?.length ?? 0,
-  nbTours: t.parts_count ?? t.parts?.length ?? 0,
+  nbTours: t.nb_parts_total ?? t.parts_count ?? t.parts?.length ?? 0,
   idCaisse: t.caisse_id,
   dateDebut: t.date_debut,
 });
