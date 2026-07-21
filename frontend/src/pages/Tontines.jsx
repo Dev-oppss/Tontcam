@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import {
-  Plus, RefreshCw, Calendar, Users, UserPlus, Trash2, Pencil,
+  Plus, Calendar, Users, UserPlus, Trash2, Pencil,
   BadgeCheck, TrendingUp, Info, Trophy, Shuffle, ChevronRight,
   CheckCircle, Clock, Banknote, Star, X,
   ListOrdered, Gavel, Dices, FileText,
@@ -64,7 +64,7 @@ export default function Tontines() {
     planningTours, addTourPlanning, marquerTourEncaisse, retirerTourPlanning, chargerPlanningTours,
     encheres, rotations, attribuerTour,
     genererBulletin, ouvrirBulletinPdf, cyclesTontine, chargerCycles,
-    reunions, ouvrirCycle, chargerCycle, saisirCotisationCycle, designerGagnantCycle, cloturerCycle,
+    reunions,
     enregistrerBeneficiaireSeance, showToast,
   } = useApp();
 
@@ -98,10 +98,6 @@ export default function Tontines() {
   const [dragIdx,         setDragIdx]         = useState(null);
   const [showBulletin,    setShowBulletin]    = useState(null);
   const [bulletinForm,    setBulletinForm]    = useState({ idCycle:'' });
-  const [showCycle,       setShowCycle]       = useState(null); // tontine dont on gère le cycle en cours
-  const [cycleIdReunion,  setCycleIdReunion]  = useState('');
-  const [cotisSaisie,     setCotisSaisie]     = useState({}); // { [idCotisation]: { montant, mode, ref } }
-  const [cycleLoading,    setCycleLoading]    = useState(false);
   const [encaisseModal,   setEncaisseModal]   = useState(null); // tour planning à encaisser
   const [encModePaiement, setEncModePaiement] = useState('especes');
   const [encDetails,      setEncDetails]      = useState('');
@@ -368,7 +364,7 @@ export default function Tontines() {
                 </div>
               )}
 
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-4 gap-2">
                 <button onClick={() => { setShowMembres(t); setShowAddMembre(false); }} className="btn-secondary text-xs py-1.5 justify-center">
                   <Users size={12}/> Membres ({nbActifs})
                 </button>
@@ -379,20 +375,8 @@ export default function Tontines() {
                 <NavLink to={t.typeAttribution === 'enchere' ? '/encheres' : '/rotations'} className="btn-secondary text-xs py-1.5 justify-center">
                   <Trophy size={12}/> Historique
                 </NavLink>
-                <button
-                  onClick={async () => {
-                    setShowCycle(t); setCycleIdReunion(''); setCotisSaisie({}); setCycleLoading(true);
-                    const list = await chargerCycles(t.id);
-                    const actif = (list || []).find(c => c.statut !== 'clos');
-                    if (actif) await chargerCycle(actif.id);
-                    setCycleLoading(false);
-                  }}
-                  className="btn-primary text-xs py-1.5 justify-center"
-                >
-                  <RefreshCw size={12}/> Cycle
-                </button>
-                <button onClick={() => { setShowBulletin(t); setBulletinForm({ idCycle:'' }); chargerCycles(t.id); }} className="btn-secondary text-xs py-1.5 justify-center col-span-2">
-                  <FileText size={12}/> Télécharger un bulletin
+                <button onClick={() => { setShowBulletin(t); setBulletinForm({ idCycle:'' }); chargerCycles(t.id); }} className="btn-secondary text-xs py-1.5 justify-center">
+                  <FileText size={12}/> Bulletin
                 </button>
               </div>
             </div>
@@ -430,7 +414,7 @@ export default function Tontines() {
                 <p className="text-xs text-gray-600">{cfg.tip}</p>
               </div>
               <div className="p-2.5 rounded-xl bg-indigo-50 border border-indigo-100 text-xs text-indigo-700">
-                Cet écran planifie l'ordre de passage. La collecte des cotisations et la génération du bulletin de gain se font depuis le bouton <strong>« Cycle »</strong>.
+                Cet écran planifie l'ordre de passage. La collecte des cotisations et la désignation du gagnant se font depuis <strong>Réunions</strong>, dans l'onglet « Feuille Cotisation » d'une séance ouverte.
               </div>
 
                 <div className="grid grid-cols-3 gap-2 text-center">
@@ -831,132 +815,6 @@ export default function Tontines() {
           <FormField label="Nombre de parts"><input className="input" type="number" min="1" max="20" value={formMT.nombreParts} onChange={e=>setFormMT(f=>({...f,nombreParts:e.target.value}))}/></FormField>
         </div>
       </Modal>
-
-      {/* ═══ MODAL CYCLE — Écran 4 du cahier des charges ═══════ */}
-      {showCycle && (() => {
-        const t = tontines.find(x => x.id === showCycle.id) || showCycle;
-        const cycleActif = cyclesTontine.find(c => c.idTontine === t.id && c.statut !== 'clos');
-        const gagnantDesigne = !!cycleActif?.idGagnantPart;
-        const totalCollecte = (cycleActif?.cotisations || []).reduce((s, co) => s + Number(co.montantVerse || 0), 0);
-        const toutesSaisies = cycleActif ? (cycleActif.cotisations || []).every(co => co.statut !== 'due') : false;
-
-        const getSaisie = (co) => cotisSaisie[co.id] ?? { montant: String(co.montantVerse || ''), mode: co.modePaiement || 'especes', ref: co.referencePaiement || '' };
-        const setSaisie = (coId, patch) => setCotisSaisie(prev => ({ ...prev, [coId]: { ...getSaisie({ id: coId }), ...prev[coId], ...patch } }));
-
-        return (
-          <Modal open={true} onClose={() => setShowCycle(null)} title={`Cycle en cours — ${t.nom}`}
-            footer={<button onClick={() => setShowCycle(null)} className="btn-secondary ml-auto">Fermer</button>}>
-            <div className="space-y-4">
-              {cycleLoading && <p className="text-sm text-gray-400">Chargement…</p>}
-
-              {!cycleLoading && !cycleActif && (
-                <div className="space-y-4">
-                  <p className="text-sm text-gray-600">Aucun cycle ouvert pour cette tontine. Un cycle doit être rattaché à une réunion (RG-TON).</p>
-                  <FormField label="Réunion" required>
-                    <select className="select" value={cycleIdReunion} onChange={e => setCycleIdReunion(e.target.value)}>
-                      <option value="">Sélectionner une réunion…</option>
-                      {(reunions || []).slice().sort((a, b) => new Date(b.date) - new Date(a.date)).map(r => (
-                        <option key={r.id} value={r.id}>Réunion n°{r.numReunion || '—'} — {fmtDate(r.date)}</option>
-                      ))}
-                    </select>
-                  </FormField>
-                  <button
-                    disabled={!cycleIdReunion}
-                    onClick={async () => {
-                      setCycleLoading(true);
-                      const cycle = await ouvrirCycle(t.id, cycleIdReunion);
-                      if (cycle) await chargerCycle(cycle.id);
-                      setCycleLoading(false);
-                    }}
-                    className={clsx('btn-primary', !cycleIdReunion && 'opacity-40 cursor-not-allowed')}
-                  ><RefreshCw size={14}/> Ouvrir le cycle</button>
-                </div>
-              )}
-
-              {!cycleLoading && cycleActif && (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-3 gap-2 text-xs">
-                    <div className="p-2.5 bg-gray-50 rounded-xl text-center">
-                      <p className="font-bold text-gray-800">Cycle n°{cycleActif.numeroCycle}</p>
-                      <p className="text-gray-400">Numéro</p>
-                    </div>
-                    <div className="p-2.5 bg-primary-50 rounded-xl text-center">
-                      <p className="font-bold text-primary-700">{fmt(totalCollecte)}</p>
-                      <p className="text-gray-400">Collecté / {fmt(cycleActif.montantCollectePrevu)}</p>
-                    </div>
-                    <div className="p-2.5 bg-blue-50 rounded-xl text-center">
-                      <p className="font-bold text-blue-700">{gagnantDesigne ? cycleActif.gagnantNom : '—'}</p>
-                      <p className="text-gray-400">Gagnant désigné</p>
-                    </div>
-                  </div>
-
-                  <div className="rounded-2xl border border-surface-200 overflow-hidden">
-                    <table className="w-full text-xs">
-                      <thead className="bg-gray-50">
-                        <tr>{['Membre','Dû','Versé','Mode','Statut',''].map(h => <th key={h} className="th">{h}</th>)}</tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-100">
-                        {(cycleActif.cotisations || []).map(co => {
-                          const s = getSaisie(co);
-                          const badgeVariant = co.statut === 'payee' ? 'green' : co.statut === 'partielle' ? 'amber' : co.statut === 'impayee' ? 'red' : 'gray';
-                          const badgeLabel = { payee: 'Payé', partielle: 'Partiel', impayee: 'Impayé', due: 'Dû' }[co.statut] || co.statut;
-                          return (
-                            <tr key={co.id}>
-                              <td className="td font-medium">{co.nomMembre}</td>
-                              <td className="td">{fmt(co.montantDu)}</td>
-                              <td className="td">
-                                <input type="number" className="input py-1 px-2 w-24 text-xs" value={s.montant}
-                                  disabled={cycleActif.statut === 'clos'}
-                                  onChange={e => setSaisie(co.id, { montant: e.target.value })}/>
-                              </td>
-                              <td className="td">
-                                <select className="select py-1 px-2 text-xs" value={s.mode} disabled={cycleActif.statut === 'clos'}
-                                  onChange={e => setSaisie(co.id, { mode: e.target.value })}>
-                                  <option value="especes">Espèces</option>
-                                  <option value="mobile_money">Mobile Money</option>
-                                  <option value="virement">Virement</option>
-                                  <option value="cheque">Chèque</option>
-                                  <option value="carte_bancaire">Carte</option>
-                                </select>
-                              </td>
-                              <td className="td"><Badge variant={badgeVariant}>{badgeLabel}</Badge></td>
-                              <td className="td">
-                                {cycleActif.statut !== 'clos' && (
-                                  <button
-                                    onClick={() => saisirCotisationCycle(cycleActif.id, co.id, Number(s.montant || 0), { modePaiement: s.mode, referencePaiement: s.ref })}
-                                    className="btn-secondary py-1 px-2 text-xs"
-                                  >Enregistrer</button>
-                                )}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  {!toutesSaisies && (
-                    <p className="text-xs text-amber-600">Saisissez le statut de chaque part (Payé / Partiel / Impayé) avant de désigner le gagnant.</p>
-                  )}
-
-                  <div className="flex items-center gap-3">
-                    <button
-                      disabled={gagnantDesigne}
-                      onClick={() => designerGagnantCycle(cycleActif.id)}
-                      className={clsx('btn-secondary text-sm', gagnantDesigne && 'opacity-40 cursor-not-allowed')}
-                    ><Trophy size={14}/> Désigner le gagnant ({typeAttrLabel?.[t.typeAttribution] || t.typeAttribution})</button>
-                    <button
-                      disabled={!gagnantDesigne}
-                      onClick={async () => { await cloturerCycle(cycleActif.id); }}
-                      className={clsx('btn-primary text-sm', !gagnantDesigne && 'opacity-40 cursor-not-allowed')}
-                    ><CheckCircle size={14}/> Clôturer et générer le bulletin</button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </Modal>
-        );
-      })()}
 
       <Modal open={!!showBulletin} onClose={()=>setShowBulletin(null)} title={`Bulletin de gain — ${showBulletin?.nom || ''}`}
         footer={<><button onClick={()=>setShowBulletin(null)} className="btn-secondary">Annuler</button><button disabled={!bulletinForm.idCycle} onClick={async()=>{const b=await genererBulletin(bulletinForm.idCycle);if(b){ouvrirBulletinPdf(b.id);setShowBulletin(null);}}} className="btn-primary"><FileText size={14}/> Télécharger le PDF</button></>}>
