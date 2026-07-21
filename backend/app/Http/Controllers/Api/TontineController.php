@@ -37,7 +37,7 @@ class TontineController extends Controller
             'caisse_id' => ['nullable', 'uuid'],
         ]);
         $data['association_id'] = $this->scope->associationId();
-        $data['statut'] = 'en_preparation';
+        $data['statut'] = 'active';
         $data['created_by'] = $request->user()->id;
 
         $tontine = Tontine::create($data);
