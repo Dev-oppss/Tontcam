@@ -301,19 +301,9 @@ export default function Tontines() {
                       <Badge variant={cfg.badge}>{cfg.label}</Badge>
                       <span className="text-xs text-gray-400">{periodeLabel[t.periode]}</span>
                       <span className="text-xs text-gray-400">· {caissesMap[t.caisseId]?.nom || 'Caisse non liée'}</span>
-                      {t.statut === 'en_preparation' && <Badge variant="amber">En préparation</Badge>}
-                      {t.statut === 'suspendue' && <Badge variant="gray">Suspendue</Badge>}
                     </div>
                   </div>
                 </div>
-                {t.statut === 'en_preparation' && (
-                  <button
-                    onClick={() => updateTontine({ ...t, statut: 'active' })}
-                    title="Activer — nécessaire pour apparaître dans la Feuille de Cotisation d'une réunion"
-                    className="btn-primary text-xs py-1.5 px-2.5 shrink-0">
-                    <CheckCircle size={12}/> Activer
-                  </button>
-                )}
                 <button onClick={() => { setShowEdit(t); setForm({ nom:t.nom, cotisation:t.cotisation, caisseId:t.caisseId||'', periode:t.periode, nbTours:t.nbTours, typeAttribution:t.typeAttribution, dateDebut:t.dateDebut||''  , dateFin:t.dateFin||'' }); }}
                   className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg">
                   <Pencil size={13}/>
