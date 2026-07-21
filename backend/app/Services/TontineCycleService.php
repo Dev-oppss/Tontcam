@@ -16,6 +16,8 @@ class TontineCycleService
 {
     public function ouvrirCycle(Tontine $tontine, Reunion $reunion): CycleTontine
     {
+        $this->assertReunionEligiblePourTirage($tontine, $reunion);
+
         $numero = ($tontine->cycles()->max('numero_cycle') ?? 0) + 1;
 
         $partsActives = $tontine->parts()->where('statut', 'disponible')->count();
@@ -45,6 +47,63 @@ class TontineCycleService
 
             return $cycle;
         });
+    }
+
+    /**
+     * Un tirage (ou toute désignation de bénéficiaire) ne peut se faire QUE pour la
+     * séance réellement programmée qui vient dans l'ordre chronologique, jamais pour
+     * une date choisie librement — sinon le gagnant est désigné pour une réunion
+     * "fantôme" qui n'a jamais lieu, et la vraie séance suivante se retrouve bloquée
+     * (contrainte unique tontine_id+reunion_id, ou tirage déjà "consommé" à tort).
+     *
+     * Règles :
+     *  - la réunion doit appartenir à l'association de la tontine ;
+     *  - elle ne doit pas être annulée ;
+     *  - aucun cycle ne doit déjà exister pour ce couple (tontine, réunion) ;
+     *  - il ne doit rester des parts disponibles à tirer (sinon la tontine est épuisée) ;
+     *  - c'est la PROCHAINE réunion chronologique de l'association pas encore utilisée
+     *    par cette tontine — on ne peut pas "sauter" une séance ni en piocher une au hasard.
+     */
+    private function assertReunionEligiblePourTirage(Tontine $tontine, Reunion $reunion): void
+    {
+        if ($reunion->association_id !== $tontine->association_id) {
+            throw new RuntimeException("Cette réunion n'appartient pas à l'association de la tontine.");
+        }
+
+        if ($reunion->statut === 'annulee') {
+            throw new RuntimeException('Impossible de désigner un bénéficiaire pour une réunion annulée.');
+        }
+
+        $dejaUtilisee = CycleTontine::where('tontine_id', $tontine->id)
+            ->where('reunion_id', $reunion->id)
+            ->exists();
+        if ($dejaUtilisee) {
+            throw new RuntimeException('Un tirage a déjà été effectué pour cette réunion et cette tontine.');
+        }
+
+        $partsRestantes = $tontine->parts()->where('statut', 'disponible')->count();
+        if ($partsRestantes === 0) {
+            throw new RuntimeException('Toutes les parts de cette tontine ont déjà été attribuées : aucun tirage supplémentaire n\'est possible.');
+        }
+
+        $prochaineReunionEligible = Reunion::where('association_id', $tontine->association_id)
+            ->where('statut', '!=', 'annulee')
+            ->whereDoesntHave('cyclesTontine', fn ($q) => $q->where('tontine_id', $tontine->id))
+            ->orderBy('date_reunion')
+            ->orderBy('numero')
+            ->first();
+
+        if (! $prochaineReunionEligible || $prochaineReunionEligible->id !== $reunion->id) {
+            if (! $prochaineReunionEligible) {
+                throw new RuntimeException("Aucune réunion programmée n'est disponible pour effectuer ce tirage. Planifiez d'abord la prochaine séance.");
+            }
+
+            $date = $prochaineReunionEligible->date_reunion instanceof \DateTimeInterface
+                ? $prochaineReunionEligible->date_reunion->format('d/m/Y')
+                : (string) $prochaineReunionEligible->date_reunion;
+
+            throw new RuntimeException("Le tirage doit se faire pour la prochaine séance programmée de la tontine (réunion n°{$prochaineReunionEligible->numero} du {$date}), pas une date choisie librement.");
+        }
     }
 
     /**

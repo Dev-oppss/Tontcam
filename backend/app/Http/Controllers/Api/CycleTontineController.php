@@ -125,17 +125,17 @@ class CycleTontineController extends Controller
             return response()->json(['message' => 'Un bénéficiaire a déjà été enregistré et le cycle clôturé pour cette réunion.'], 422);
         }
 
-        if (! $cycle) {
-            $reunion = \App\Models\Reunion::findOrFail($data['reunion_id']);
-            $cycle = $this->service->ouvrirCycle($tontine, $reunion);
-        }
-
-        $partIdForcee = null;
-        if (!empty($data['membre_id'])) {
-            $partIdForcee = $tontine->parts()->where('membre_id', $data['membre_id'])->where('statut', 'disponible')->value('id');
-        }
-
         try {
+            if (! $cycle) {
+                $reunion = \App\Models\Reunion::findOrFail($data['reunion_id']);
+                $cycle = $this->service->ouvrirCycle($tontine, $reunion);
+            }
+
+            $partIdForcee = null;
+            if (!empty($data['membre_id'])) {
+                $partIdForcee = $tontine->parts()->where('membre_id', $data['membre_id'])->where('statut', 'disponible')->value('id');
+            }
+
             $this->service->designerGagnant($cycle, $partIdForcee);
             $cycle = $this->service->cloturerCycle($cycle, $request->user());
         } catch (\RuntimeException $e) {
