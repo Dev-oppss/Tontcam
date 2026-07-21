@@ -173,6 +173,7 @@ export const tontineToApi = (t) => ({
   mise_min_enchere: t.miseMinEnchere ?? undefined,
   option_surplus: t.optionSurplus,
   date_debut: t.dateDebut || undefined,
+  statut: t.statut || undefined,
   caisse_id: t.idCaisse || undefined,
 });
 
