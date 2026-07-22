@@ -126,18 +126,26 @@ class CycleTontineController extends Controller
         }
 
         try {
-            if (! $cycle) {
-                $reunion = \App\Models\Reunion::findOrFail($data['reunion_id']);
-                $cycle = $this->service->ouvrirCycle($tontine, $reunion);
-            }
+            $cycle = \Illuminate\Support\Facades\DB::transaction(function () use ($tontine, $data, $cycle, $request) {
+                if (! $cycle) {
+                    $reunion = \App\Models\Reunion::findOrFail($data['reunion_id']);
+                    $cycle = $this->service->ouvrirCycle($tontine, $reunion);
+                }
 
-            $partIdForcee = null;
-            if (!empty($data['membre_id'])) {
-                $partIdForcee = $tontine->parts()->where('membre_id', $data['membre_id'])->where('statut', 'disponible')->value('id');
-            }
+                $partIdForcee = null;
+                if (!empty($data['membre_id'])) {
+                    $partIdForcee = $tontine->parts()->where('membre_id', $data['membre_id'])->where('statut', 'disponible')->value('id');
+                }
 
-            $this->service->designerGagnant($cycle, $partIdForcee);
-            $cycle = $this->service->cloturerCycle($cycle, $request->user());
+                // Toute la séquence est transactionnelle : si la désignation du gagnant
+                // échoue (plus aucune part disponible, mode d'attribution mal configuré...),
+                // le cycle qu'on vient d'ouvrir est annulé au lieu de rester en base comme
+                // un cycle "fantôme" ouvert sans gagnant (ligne vide "En attente" dans
+                // l'historique des rotations).
+                $this->service->designerGagnant($cycle, $partIdForcee);
+
+                return $this->service->cloturerCycle($cycle, $request->user());
+            });
         } catch (\RuntimeException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
         }

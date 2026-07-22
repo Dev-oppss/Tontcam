@@ -48,7 +48,13 @@ class TontineController extends Controller
     public function show(string $id): JsonResponse
     {
         $tontine = $this->scope->scopeAssociation(Tontine::query())
-            ->with(['parts.membre', 'parts.avaliste', 'cycles.encherites.membre', 'cycles.gagnant.membre'])
+            ->with([
+                'parts.membre', 'parts.avaliste',
+                // Sans tri explicite, l'ordre des cycles chargés n'est pas garanti (dépend
+                // du plan d'exécution SQL) : on force le même ordre que GET /tontines/{id}/cycles.
+                'cycles' => fn ($q) => $q->orderByDesc('numero_cycle'),
+                'cycles.encherites.membre', 'cycles.gagnant.membre',
+            ])
             ->findOrFail($id);
 
         return response()->json($tontine);

@@ -147,7 +147,10 @@ class TontineCycleService
     public function designerGagnant(CycleTontine $cycle, ?string $partIdForcee = null): TontinePart
     {
         if ($partIdForcee) {
-            $part = $cycle->tontine->parts()->where('statut', 'disponible')->findOrFail($partIdForcee);
+            $part = $cycle->tontine->parts()->where('statut', 'disponible')->find($partIdForcee);
+            if (! $part) {
+                throw new RuntimeException("Ce membre n'a pas de part disponible pour ce tirage (déjà gagnée ou introuvable).");
+            }
             $this->attribuerPart($cycle, $part);
 
             return $part;
@@ -166,7 +169,10 @@ class TontineCycleService
 
     private function designerParRotation(CycleTontine $cycle, Tontine $tontine): TontinePart
     {
-        $part = $tontine->parts()->where('statut', 'disponible')->orderBy('ordre_rotation')->firstOrFail();
+        $part = $tontine->parts()->where('statut', 'disponible')->orderBy('ordre_rotation')->first();
+        if (! $part) {
+            throw new RuntimeException('Aucune part disponible : toutes les parts de cette tontine ont déjà été attribuées.');
+        }
         $this->attribuerPart($cycle, $part);
 
         return $part;
@@ -174,7 +180,10 @@ class TontineCycleService
 
     private function designerParTirage(CycleTontine $cycle, Tontine $tontine): TontinePart
     {
-        $part = $tontine->parts()->where('statut', 'disponible')->inRandomOrder()->firstOrFail();
+        $part = $tontine->parts()->where('statut', 'disponible')->inRandomOrder()->first();
+        if (! $part) {
+            throw new RuntimeException('Aucune part disponible : toutes les parts de cette tontine ont déjà été attribuées.');
+        }
         $this->attribuerPart($cycle, $part);
 
         return $part;
@@ -195,7 +204,10 @@ class TontineCycleService
         }
 
         $meilleure->update(['est_gagnante' => true]);
-        $part = TontinePart::findOrFail($meilleure->tontine_part_id);
+        $part = TontinePart::find($meilleure->tontine_part_id);
+        if (! $part) {
+            throw new RuntimeException("La part correspondant à l'enchère gagnante est introuvable.");
+        }
 
         $nbParts = $tontine->parts()->count();
         $surplus = max(0, (float) $meilleure->montant_offre - ($nbParts * (float) $tontine->montant_part));
@@ -229,7 +241,10 @@ class TontineCycleService
             ->where('statut', 'disponible')
             ->whereDate('date_gain_calendrier', '<=', now())
             ->orderBy('date_gain_calendrier')
-            ->firstOrFail();
+            ->first();
+        if (! $part) {
+            throw new RuntimeException("Aucune part n'atteint sa date de gain calendaire pour l'instant.");
+        }
         $this->attribuerPart($cycle, $part);
 
         return $part;
