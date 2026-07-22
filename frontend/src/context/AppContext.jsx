@@ -468,7 +468,11 @@ export const AppProvider = ({ children }) => {
       const p = await request(`/tontines/${data.idTontine}/parts`, { method: 'POST', body: adapt.partToApi(data) });
       const part = adapt.partFromApi(p);
       setMembresParTontine((prev) => [...prev, part]);
-      setTontines((prev) => prev.map((t) => t.id === data.idTontine ? { ...t, totalParts: Number(t.totalParts || 0) + 1 } : t));
+      setTontines((prev) => prev.map((t) => {
+        if (t.id !== data.idTontine) return t;
+        const totalParts = Number(t.totalParts || 0) + 1;
+        return { ...t, totalParts, nbTours: Math.max(Number(t.nbTours || 0), totalParts) };
+      }));
       showToast('Part ajoutée');
       return part;
     } catch (err) { return handleError(err); }
