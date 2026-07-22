@@ -468,6 +468,7 @@ export const AppProvider = ({ children }) => {
       const p = await request(`/tontines/${data.idTontine}/parts`, { method: 'POST', body: adapt.partToApi(data) });
       const part = adapt.partFromApi(p);
       setMembresParTontine((prev) => [...prev, part]);
+      setTontines((prev) => prev.map((t) => t.id === data.idTontine ? { ...t, totalParts: Number(t.totalParts || 0) + 1 } : t));
       showToast('Part ajoutée');
       return part;
     } catch (err) { return handleError(err); }
@@ -475,8 +476,10 @@ export const AppProvider = ({ children }) => {
   const removeMembreTontine = async (id, idTontine) => {
     try {
       const part = membresParTontine.find((p) => p.id === id);
-      await request(`/tontines/${idTontine || part?.idTontine}/parts/${id}`, { method: 'DELETE' });
+      const idT = idTontine || part?.idTontine;
+      await request(`/tontines/${idT}/parts/${id}`, { method: 'DELETE' });
       setMembresParTontine((prev) => prev.filter((p) => p.id !== id));
+      setTontines((prev) => prev.map((t) => t.id === idT ? { ...t, totalParts: Math.max(0, Number(t.totalParts || 0) - 1) } : t));
       showToast('Part retirée');
     } catch (err) { return handleError(err); }
   };
