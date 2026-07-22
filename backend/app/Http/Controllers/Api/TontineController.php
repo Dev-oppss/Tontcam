@@ -96,6 +96,16 @@ class TontineController extends Controller
 
         $part = TontinePart::create($data);
 
+        // nb_parts_total est la "capacité cible" déclarée à la création de la tontine
+        // (RG-TON), utilisée par le frontend pour calculer les tours restants. Si le
+        // nombre réel de parts dépasse cette cible (ex: des membres ajoutés après coup),
+        // elle doit suivre — sinon "Restants" tombe en dessous de "Planifiés" (valeur
+        // aberrante, ex: 12 restants pour 14 tours déjà planifiés).
+        $nbPartsReelles = $tontine->parts()->count();
+        if ($nbPartsReelles > $tontine->nb_parts_total) {
+            $tontine->update(['nb_parts_total' => $nbPartsReelles]);
+        }
+
         return response()->json($part->load('membre', 'avaliste'), 201);
     }
 
