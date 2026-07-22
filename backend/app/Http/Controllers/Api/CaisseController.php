@@ -33,6 +33,13 @@ class CaisseController extends Controller
         ]);
         $data['association_id'] = $this->scope->associationId();
         $data['solde_actuel'] = $data['solde_initial'] ?? 0;
+        // Sans ceci, 'actif' n'est jamais passé à Caisse::create() : la colonne prend bien
+        // sa valeur DEFAULT TRUE côté SQL, mais l'instance Eloquent en mémoire (renvoyée
+        // immédiatement dans la réponse JSON) ne reflète pas ce défaut — elle reste "actif:
+        // null". Le frontend traduit alors ça en statut "inactive" dès la création, avant
+        // même un rechargement de page, ce qui fait disparaître la caisse des sélecteurs
+        // qui filtrent sur statut actif (ex: assignation d'une caisse à une tontine).
+        $data['actif'] = true;
 
         $caisse = Caisse::create($data);
 
