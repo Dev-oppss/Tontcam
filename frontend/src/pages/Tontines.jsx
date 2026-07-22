@@ -435,7 +435,7 @@ export default function Tontines() {
                         <p className="text-sm font-semibold text-gray-800">{p.nomMembre}{p.numeroPart ? ` · part n°${p.numeroPart}` : ''}</p>
                         <p className="text-xs text-gray-400">{p.datePrevue?fmtDate(p.datePrevue):'Date non définie'}{p.note&&` · ${p.note}`}</p>
                       </div>
-                      <span className="text-xs font-bold text-gray-700 shrink-0">{fmt(p.montantPot)}</span>
+                      <span className="text-xs font-bold text-gray-700 shrink-0">{fmt(p.statut === 'encaisse' ? p.montantPot : potTontine(t))}</span>
                       <div className="flex flex-col gap-0.5 shrink-0">
                         {p.statut==='planifie'&&(
                           <button onClick={()=>{setEncaisseModal(p);setEncModePaiement('especes');setEncDetails('');}} title="Marquer encaissé" className="p-1 hover:bg-primary-100 rounded text-primary-600"><CheckCircle size={13}/></button>
