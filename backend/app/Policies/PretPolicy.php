@@ -23,7 +23,7 @@ class PretPolicy
 
 
         return $this->permissions->peut($utilisateur, 'prets', 'view')
-            && $pret->association_id === $this->associationId($utilisateur);
+            && $pret->caisse?->association_id === $this->associationId($utilisateur);
     }
 
     public function create(Utilisateur $utilisateur): bool
@@ -34,13 +34,13 @@ class PretPolicy
     public function update(Utilisateur $utilisateur, Pret $pret): bool
     {
         return $this->permissions->peut($utilisateur, 'prets', 'update')
-            && $pret->association_id === $this->associationId($utilisateur);
+            && $pret->caisse?->association_id === $this->associationId($utilisateur);
     }
 
     public function delete(Utilisateur $utilisateur, Pret $pret): bool
     {
         return $this->permissions->peut($utilisateur, 'prets', 'delete')
-            && $pret->association_id === $this->associationId($utilisateur);
+            && $pret->caisse?->association_id === $this->associationId($utilisateur);
     }
 
     public function approve(Utilisateur $utilisateur, Pret $pret): bool
