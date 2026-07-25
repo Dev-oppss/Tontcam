@@ -1080,7 +1080,7 @@ BEGIN
         updated_at = NOW()
     WHERE id = NEW.pret_id;
     UPDATE prets SET statut = 'solde', date_solde = CURRENT_DATE
-    WHERE id = NEW.pret_id AND capital_restant <= 0 AND statut NOT IN ('solde','refuse','annule');
+    WHERE id = NEW.pret_id AND capital_restant <= 0 AND statut NOT IN ('solde','refuse');
     RETURN NEW;
 END; $$;
 
