@@ -37,7 +37,7 @@ class AideSocialeController extends Controller
             'membre_id' => ['required', 'uuid'],
             'type_aide_id' => ['required', 'uuid'],
             'description' => ['required', 'string'],
-            'date_evenement' => ['required', 'date'],
+            'date_evenement' => ['required', 'date', 'before_or_equal:today'],
             'montant_demande' => ['nullable', 'numeric', 'min:0'],
             'pieces_jointes' => ['required', 'array', 'min:1'],
         ]);
