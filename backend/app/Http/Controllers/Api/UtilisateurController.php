@@ -61,7 +61,11 @@ class UtilisateurController extends Controller
 
         $data = $request->validate(['role' => ['sometimes', 'in:super_admin,president,vice_president,tresorier,secretaire,controleur,membre']]);
         if (isset($data['role'])) {
-            $this->service->changerRole($utilisateur, $data['role'], $request->user());
+            try {
+                $this->service->changerRole($utilisateur, $data['role'], $request->user());
+            } catch (\RuntimeException $e) {
+                return response()->json(['message' => $e->getMessage()], 422);
+            }
         }
 
         return response()->json($utilisateur->fresh());

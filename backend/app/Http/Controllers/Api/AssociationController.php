@@ -78,6 +78,7 @@ class AssociationController extends Controller
     public function uploadStatuts(Request $request, string $id): JsonResponse
     {
         $association = $this->scope->scopeAssociation(Association::query())->findOrFail($id);
+        $this->authorize('update', $association);
         $request->validate(['fichier' => ['required', 'file', 'mimes:pdf', 'max:10240']]);
 
         $chemin = $request->file('fichier')->store('statuts', 'public');
@@ -88,7 +89,9 @@ class AssociationController extends Controller
 
     public function destroy(string $id): JsonResponse
     {
-        $this->scope->scopeAssociation(Association::query())->findOrFail($id)->delete();
+        $association = $this->scope->scopeAssociation(Association::query())->findOrFail($id);
+        $this->authorize('delete', $association);
+        $association->delete();
 
         return response()->json(['deleted' => true]);
     }

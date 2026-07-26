@@ -16,6 +16,7 @@ class AssuranceMembreController extends Controller
     public function index(string $membreId): JsonResponse
     {
         $membre = Membre::where('association_id', $this->scope->associationId())->findOrFail($membreId);
+        $this->authorize('view', $membre);
 
         return response()->json($membre->assurances()->get());
     }
@@ -23,6 +24,11 @@ class AssuranceMembreController extends Controller
     public function store(Request $request, string $membreId): JsonResponse
     {
         $membre = Membre::where('association_id', $this->scope->associationId())->findOrFail($membreId);
+        // Gérer l'assurance d'un membre est une action administrative sur son dossier :
+        // on réutilise la même autorisation que la modification du membre lui-même.
+        // Sans ce contrôle, N'IMPORTE QUEL rôle (y compris un simple membre) pouvait créer
+        // une assurance pour n'importe quel autre membre de l'association.
+        $this->authorize('update', $membre);
 
         $data = $request->validate([
             'type_assurance' => ['required', 'in:mutuelle,sante,vie,autre'],
@@ -44,6 +50,7 @@ class AssuranceMembreController extends Controller
     public function update(Request $request, string $id): JsonResponse
     {
         $assurance = AssuranceMembre::whereHas('membre', fn ($q) => $q->where('association_id', $this->scope->associationId()))->findOrFail($id);
+        $this->authorize('update', $assurance->membre);
 
         $assurance->update($request->validate([
             'prime_mensuelle' => ['sometimes', 'nullable', 'numeric', 'min:0'],
