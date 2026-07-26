@@ -32,10 +32,34 @@
             <tr class="net"><td>MONTANT NET À VERSER</td><td style="text-align:right">{{ number_format($bulletin->montant_net, 0, ',', ' ') }} FCFA</td></tr>
         </table>
         <div class="signatures">
-            <div class="signature">Signature Trésorier</div>
-            <div class="signature">Signature Président</div>
-            <div class="signature">Signature Bénéficiaire</div>
+            <div class="signature">
+                @if($bulletin->signe_tresorier_at)
+                    ✓ Signé — Trésorier<br><span style="font-size:9px;color:#666">{{ $bulletin->signe_tresorier_at->format('d/m/Y H:i') }}</span>
+                @else
+                    Signature Trésorier
+                @endif
+            </div>
+            <div class="signature">
+                @if($bulletin->signe_president_at)
+                    ✓ Signé — Président<br><span style="font-size:9px;color:#666">{{ $bulletin->signe_president_at->format('d/m/Y H:i') }}</span>
+                @else
+                    Signature Président
+                @endif
+            </div>
+            <div class="signature">
+                @if($bulletin->signe_beneficiaire_at)
+                    ✓ Signé — Bénéficiaire<br><span style="font-size:9px;color:#666">{{ $bulletin->signe_beneficiaire_at->format('d/m/Y H:i') }}</span>
+                @else
+                    Signature Bénéficiaire
+                @endif
+            </div>
         </div>
+        @if($bulletin->hash_integrite)
+            <p style="margin-top:16px;font-size:8px;color:#999;word-break:break-all">
+                Document scellé numériquement — hash d'intégrité SHA-256 : {{ $bulletin->hash_integrite }}<br>
+                Toute modification du bulletin ou de ses signatures après coup invaliderait ce hash.
+            </p>
+        @endif
     </div>
 </body>
 </html>

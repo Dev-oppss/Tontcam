@@ -95,6 +95,7 @@ Route::middleware(['auth:sanctum', 'association.context'])->group(function () {
     Route::post('/cycles/{id}/cloturer', [CycleTontineController::class, 'cloturer']);
     Route::get('/cycles/{id}/bulletin', [CycleTontineController::class, 'bulletin']);
     Route::get('/bulletins/{id}/pdf', [CycleTontineController::class, 'bulletinPdf']);
+    Route::post('/bulletins/{id}/signer', [CycleTontineController::class, 'signer']);
 
     // ── Finance ─────────────────────────────────────────────────
     Route::apiResource('caisses', CaisseController::class)->except(['destroy']);
@@ -180,4 +181,7 @@ Route::middleware(['auth:sanctum', 'association.context'])->group(function () {
     Route::get('/exports/transactions.xlsx', [ExportController::class, 'transactionsXlsx']);
     Route::get('/exports/sanctions.csv', [ExportController::class, 'sanctionsCsv']);
     Route::get('/exports/sanctions.xlsx', [ExportController::class, 'sanctionsXlsx']);
+    Route::get('/exports/membres/{id}/releve.pdf', [ExportController::class, 'releveMembrePdf']);
+    Route::get('/exports/cycles/{id}/rapport.pdf', [ExportController::class, 'rapportCyclePdf']);
+    Route::get('/exports/bilan-annuel/{annee}.pdf', [ExportController::class, 'bilanAnnuelPdf']);
 });

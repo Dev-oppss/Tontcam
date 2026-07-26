@@ -186,6 +186,47 @@ class CycleTontineController extends Controller
     }
 
     /**
+     * RG-RPT-008 : signature numérique du bulletin. Chaque signataire (Trésorier,
+     * Président, Bénéficiaire) horodate sa propre signature avec son compte
+     * authentifié — impossible de signer à la place de quelqu'un d'autre.
+     * Une fois les 3 signatures réunies, un hash SHA-256 d'intégrité (numéro,
+     * montants, identités, 3 horodatages) est calculé et exposé sur le PDF :
+     * toute modification a posteriori du bulletin ou de ses signatures invalide le hash.
+     */
+    public function signer(Request $request, string $bulletinId): JsonResponse
+    {
+        $bulletin = \App\Models\BulletinGain::with('cycle.tontine', 'gagnant')
+            ->whereHas('cycle.tontine', fn ($q) => $this->scope->scopeAssociation($q))
+            ->findOrFail($bulletinId);
+
+        $user = $request->user();
+        $role = $user->role;
+
+        $champ = match (true) {
+            in_array($role, ['tresorier', 'super_admin'], true) => 'signe_tresorier_at',
+            in_array($role, ['president', 'super_admin'], true) => 'signe_president_at',
+            $user->membre_id === $bulletin->gagnant_membre_id => 'signe_beneficiaire_at',
+            default => null,
+        };
+
+        if (! $champ) {
+            return response()->json(['message' => "Vous n'êtes pas habilité à signer ce bulletin (Trésorier, Président ou bénéficiaire uniquement)."], 403);
+        }
+        if ($bulletin->{$champ}) {
+            return response()->json(['message' => 'Déjà signé par vous.'], 422);
+        }
+
+        $bulletin->update([$champ => now()]);
+        $bulletin->refresh();
+
+        if ($bulletin->signe_tresorier_at && $bulletin->signe_president_at && $bulletin->signe_beneficiaire_at) {
+            $bulletin->update(['statut' => 'signe']);
+        }
+
+        return response()->json($bulletin->fresh());
+    }
+
+    /**
      * POST /cycles/{id}/encheres — soumission d'une offre par un membre.
      */
     public function placerEnchere(Request $request, string $id): JsonResponse

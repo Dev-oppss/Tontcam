@@ -59,8 +59,8 @@ class AppServiceProvider extends ServiceProvider
         // Journal d'audit : accès global restreint (RG-SEC-011), pas de policy par enregistrement.
         Gate::define('access-audit-log', fn (Utilisateur $u) => in_array($u->role, ['super_admin', 'controleur'], true));
 
-        // Exports CSV/XLSX : réservé aux rôles ayant accès en lecture aux données financières/membres.
-        Gate::define('export-personal-data', fn (Utilisateur $u) => in_array($u->role, ['super_admin', 'president', 'tresorier', 'secretaire', 'controleur'], true));
+        // Exports CSV/XLSX (RG-RPT-009) : réservé à TRESORIER, PRESIDENT, SUPER_ADMIN.
+        Gate::define('export-personal-data', fn (Utilisateur $u) => in_array($u->role, ['super_admin', 'president', 'tresorier'], true));
 
         Transaction::observe(AuditableObserver::class);
         Pret::observe(AuditableObserver::class);

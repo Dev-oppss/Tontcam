@@ -69,4 +69,27 @@ class BulletinGain extends Model
         return $this->belongsTo(Utilisateur::class, 'genere_par');
     }
 
+    /**
+     * RG-RPT-008 : hash SHA-256 d'intégrité, calculable uniquement une fois les 3
+     * signatures réunies. Toute altération a posteriori du montant, du bénéficiaire
+     * ou des horodatages de signature change ce hash — c'est la preuve de signature
+     * numérique (aucune clé privée n'étant disponible côté serveur, l'intégrité
+     * scellée + l'horodatage tiennent lieu de signature).
+     */
+    public function getHashIntegriteAttribute(): ?string
+    {
+        if (! ($this->signe_tresorier_at && $this->signe_president_at && $this->signe_beneficiaire_at)) {
+            return null;
+        }
+
+        return hash('sha256', implode('|', [
+            $this->numero_bulletin,
+            $this->gagnant_membre_id,
+            $this->montant_net,
+            $this->signe_tresorier_at->toIso8601String(),
+            $this->signe_president_at->toIso8601String(),
+            $this->signe_beneficiaire_at->toIso8601String(),
+        ]));
+    }
+
 }
