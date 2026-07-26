@@ -25,6 +25,7 @@ class Association extends Model
         'logo_url',
         'statuts_url',
         'seuil_approbation_pret',
+        'seuil_approbation_caisse',
         'nb_signataires_pv',
         'delai_rappel_j7',
         'delai_rappel_j3',
@@ -37,6 +38,7 @@ class Association extends Model
     protected $casts = [
             'date_creation' => 'date',
             'seuil_approbation_pret' => 'decimal:2',
+            'seuil_approbation_caisse' => 'decimal:2',
             'nb_signataires_pv' => 'integer',
             'delai_rappel_j7' => 'boolean',
             'delai_rappel_j3' => 'boolean',

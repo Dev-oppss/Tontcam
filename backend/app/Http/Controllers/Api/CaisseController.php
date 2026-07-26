@@ -84,6 +84,10 @@ class CaisseController extends Controller
             'cheque_numero' => ['required_if:mode_paiement,cheque', 'nullable', 'string'],
         ]);
 
+        if (! empty($data['cheque_numero']) && $caisse->transactions()->where('cheque_numero', $data['cheque_numero'])->exists()) {
+            return response()->json(['message' => "Le chèque n°{$data['cheque_numero']} a déjà été saisi sur cette caisse."], 422);
+        }
+
         try {
             $transaction = $data['sens'] === 'entree'
                 ? $this->service->entree($caisse, $data['montant'], $data['libelle'], [...$data, 'created_by' => $request->user()->id, 'valide_par' => $request->user()->id])
@@ -116,6 +120,14 @@ class CaisseController extends Controller
 
         $source = $this->scope->scopeAssociation(Caisse::query())->findOrFail($data['caisse_source_id']);
         $destination = $this->scope->scopeAssociation(Caisse::query())->findOrFail($data['caisse_destination_id']);
+
+        // RG-CAI-016 : au-delà du seuil, seul le Président (ou le Super Admin) peut
+        // exécuter le transfert — avant ce contrôle, n'importe quel rôle autorisé aux
+        // caisses pouvait déplacer n'importe quel montant sans validation.
+        $seuil = (float) ($source->association->seuil_approbation_caisse ?? PHP_INT_MAX);
+        if ((float) $data['montant'] > $seuil && ! in_array($request->user()->role, ['president', 'super_admin'], true)) {
+            return response()->json(['message' => "Ce montant dépasse le seuil ({$seuil}) et requiert l'approbation du Président."], 422);
+        }
 
         try {
             $result = $this->service->transfert($source, $destination, $data['montant'], $data['motif'], $request->user());
