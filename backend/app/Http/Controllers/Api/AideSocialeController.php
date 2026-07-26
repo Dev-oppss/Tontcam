@@ -36,7 +36,7 @@ class AideSocialeController extends Controller
         $data = $request->validate([
             'membre_id' => ['required', 'uuid'],
             'type_aide_id' => ['required', 'uuid'],
-            'description' => ['nullable', 'string'],
+            'description' => ['required', 'string'],
             'date_evenement' => ['required', 'date'],
             'montant_demande' => ['nullable', 'numeric', 'min:0'],
             'pieces_jointes' => ['required', 'array', 'min:1'],
