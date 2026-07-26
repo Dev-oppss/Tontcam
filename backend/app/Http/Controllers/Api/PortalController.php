@@ -25,7 +25,7 @@ class PortalController extends Controller
 
         Gate::authorize('view', $membre);
 
-        $membre->loadMissing(['association', 'parts.tontine', 'prets', 'sanctions', 'presences']);
+        $membre->loadMissing(['association', 'parts.tontine', 'prets', 'sanctions', 'presences', 'assurances']);
 
         return response()->json([
             'membre' => $membre,
@@ -37,6 +37,7 @@ class PortalController extends Controller
             ],
             'prets' => $membre->prets()->latest()->limit(10)->get(),
             'sanctions' => $membre->sanctions()->latest()->limit(10)->get(),
+            'assurances' => $membre->assurances()->latest()->limit(10)->get(),
             'bulletins' => BulletinGain::query()->where('gagnant_membre_id', $membre->id)->latest()->limit(10)->get(),
             'notifications' => Notification::query()->where('membre_id', $membre->id)->latest()->limit(10)->get(),
             'presences' => $membre->presences()->latest()->limit(10)->get(),
