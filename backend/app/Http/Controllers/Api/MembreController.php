@@ -72,13 +72,17 @@ class MembreController extends Controller
                 if (Membre::where('association_id', $associationId)->where('telephone', $ligne['telephone'])->exists()) {
                     throw new \RuntimeException("Numéro de téléphone déjà utilisé par un autre membre (RG-MBR-002).");
                 }
+                $dateAdhesion = $ligne['date_adhesion'] ?? now()->toDateString();
+                if (\Carbon\Carbon::parse($dateAdhesion)->isFuture()) {
+                    throw new \RuntimeException("La date d'adhésion ne peut pas être postérieure à aujourd'hui (RG-MBR-007).");
+                }
                 Membre::create([
                     'association_id' => $associationId,
                     'nom' => $ligne['nom'],
                     'prenom' => $ligne['prenom'],
                     'telephone' => $ligne['telephone'],
                     'email' => $ligne['email'] ?? null,
-                    'date_adhesion' => $ligne['date_adhesion'] ?? now()->toDateString(),
+                    'date_adhesion' => $dateAdhesion,
                     'statut' => 'en_attente',
                 ]);
                 $crees++;
@@ -107,13 +111,25 @@ class MembreController extends Controller
     public function situation(string $id): JsonResponse
     {
         $membre = $this->scope->scopeAssociation(Membre::query())->findOrFail($id);
+        $this->authorize('view', $membre);
+
+        $gains = \App\Models\BulletinGain::where('gagnant_membre_id', $membre->id)->get();
+        $sanctions = $membre->sanctions()->with('type')->get();
+        $prets = $membre->prets()->with('echeances')->get();
+        $aides = \App\Models\EvenementSocial::where('membre_id', $membre->id)->where('statut', 'versee')->get();
 
         return response()->json([
             'membre' => $membre,
+            'parts' => $membre->parts()->with('tontine')->get(),
             'cotisations' => \App\Models\CotisationTontine::where('membre_id', $membre->id)->latest()->limit(50)->get(),
-            'prets' => $membre->prets()->with('echeances')->get(),
-            'sanctions' => $membre->sanctions()->with('type')->get(),
-            'gains' => \App\Models\BulletinGain::where('gagnant_membre_id', $membre->id)->get(),
+            'prets' => $prets,
+            'sanctions' => $sanctions,
+            'gains' => $gains,
+            'aides_sociales' => $aides,
+            // RG-MBR-012 : solde net = gains - dettes (prêts restant dus + sanctions dues).
+            'solde_net' => $gains->sum('montant_net')
+                - $prets->whereIn('statut', ['en_cours', 'en_retard', 'defaut'])->sum('capital_restant')
+                - $sanctions->where('statut', 'due')->sum('montant'),
             'score' => $this->calculerScore($membre),
         ]);
     }

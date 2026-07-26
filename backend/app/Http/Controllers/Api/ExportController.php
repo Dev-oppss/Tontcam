@@ -49,8 +49,15 @@ class ExportController extends Controller
      */
     public function releveMembrePdf(Request $request, string $membreId)
     {
-        Gate::authorize('export-personal-data');
         $membre = \App\Models\Membre::where('association_id', $this->associationId($request))->findOrFail($membreId);
+
+        // RG-MBR-015 : un membre peut télécharger SON PROPRE relevé ; les rôles
+        // habilités (super_admin/président/trésorier) peuvent télécharger celui
+        // de n'importe quel membre de l'association.
+        $estSoiMeme = $request->user()->membre_id === $membre->id;
+        if (! $estSoiMeme) {
+            Gate::authorize('export-personal-data');
+        }
 
         $data = [
             'membre' => $membre,
@@ -58,6 +65,8 @@ class ExportController extends Controller
             'prets' => $membre->prets()->with('echeances')->get(),
             'sanctions' => $membre->sanctions()->with('type')->get(),
             'gains' => \App\Models\BulletinGain::where('gagnant_membre_id', $membre->id)->get(),
+            // RG-MBR-016 : le relevé doit mentionner les aides sociales reçues.
+            'aides_sociales' => \App\Models\EvenementSocial::where('membre_id', $membre->id)->where('statut', 'versee')->with('typeAide')->get(),
             'genere_le' => now(),
         ];
 

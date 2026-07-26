@@ -68,6 +68,17 @@
             @endforelse
         </table>
 
+        <h2>Aides sociales reçues</h2>
+        <table>
+            <tr><th>Date</th><th>Type</th><th style="text-align:right">Montant accordé</th></tr>
+            @forelse($aides_sociales as $a)
+                <tr><td>{{ optional($a->date_versement)->format('d/m/Y') }}</td><td>{{ $a->typeAide->libelle ?? '—' }}</td>
+                    <td style="text-align:right">{{ number_format($a->montant_accorde, 0, ',', ' ') }} FCFA</td></tr>
+            @empty
+                <tr><td colspan="3">Aucune aide reçue.</td></tr>
+            @endforelse
+        </table>
+
         <p class="footer">Document généré le {{ $genere_le->format('d/m/Y H:i') }}.</p>
     </div>
 </body>
