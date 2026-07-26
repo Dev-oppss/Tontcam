@@ -15,6 +15,7 @@ class CaisseController extends Controller
 
     public function index(Request $request): JsonResponse
     {
+        $this->authorize('viewAny', Caisse::class);
         return response()->json($this->scope->scopeAssociation(Caisse::query())->get());
     }
 
@@ -62,6 +63,7 @@ class CaisseController extends Controller
             'taux_penalite_mensuel' => ['sometimes', 'numeric'],
             'seuil_alerte_bas' => ['sometimes', 'nullable', 'numeric'],
             'actif' => ['sometimes', 'boolean'],
+            'compte_bancaire_id' => ['sometimes', 'nullable', 'uuid'],
         ]));
 
         return response()->json($caisse);

@@ -15,6 +15,7 @@ class TontineController extends Controller
 
     public function index(Request $request): JsonResponse
     {
+        $this->authorize('viewAny', Tontine::class);
         return response()->json(
             $this->scope->scopeAssociation(Tontine::query())->withCount('parts')->get()
         );

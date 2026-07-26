@@ -17,6 +17,7 @@ class PretController extends Controller
 
     public function index(Request $request): JsonResponse
     {
+        $this->authorize('viewAny', Pret::class);
         $query = Pret::whereHas('caisse', fn ($q) => $this->scope->scopeAssociation($q))->with('emprunteur', 'caisse');
         if ($request->filled('statut')) {
             $query->where('statut', $request->statut);

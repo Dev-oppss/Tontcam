@@ -17,6 +17,7 @@ class ReunionController extends Controller
 
     public function index(Request $request): JsonResponse
     {
+        $this->authorize('viewAny', Reunion::class);
         return response()->json(
             $this->scope->scopeAssociation(Reunion::query())
                 ->with('hote')

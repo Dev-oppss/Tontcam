@@ -22,6 +22,7 @@ class SanctionController extends Controller
 
     public function index(Request $request): JsonResponse
     {
+        $this->authorize('viewAny', SanctionMembre::class);
         $query = $this->scope->scopeAssociation(SanctionMembre::query())->with('membre', 'type');
         if ($request->filled('statut')) {
             $query->where('statut', $request->statut);

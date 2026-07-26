@@ -18,6 +18,7 @@ class AideSocialeController extends Controller
 
     public function index(Request $request): JsonResponse
     {
+        $this->authorize('viewAny', EvenementSocial::class);
         $query = $this->scope->scopeAssociation(EvenementSocial::query())->with('membre', 'typeAide', 'transaction');
         if ($request->filled('statut')) {
             $query->where('statut', $request->statut);
