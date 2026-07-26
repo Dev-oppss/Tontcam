@@ -26,8 +26,12 @@ class DecisionAgPolicy
 
     public function create(Utilisateur $utilisateur): bool
     {
-        // Seuls Président et Secrétaire peuvent enregistrer une décision d'AG
-        return $this->permissions->peut($utilisateur, 'organisation', 'update')
+        // Seuls Président et Secrétaire peuvent enregistrer une décision d'AG.
+        // Le président est déclaré via le module 'decisions_ag' (PermissionService::DEFAULTS),
+        // le secrétaire via 'organisation'/'reunions' — les deux checks sont nécessaires,
+        // sinon le président (pourtant explicitement autorisé dans DEFAULTS) est bloqué.
+        return $this->permissions->peut($utilisateur, 'decisions_ag', 'create')
+            || $this->permissions->peut($utilisateur, 'organisation', 'update')
             || $this->permissions->peut($utilisateur, 'reunions', 'update');
     }
 
