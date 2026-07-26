@@ -747,7 +747,7 @@ CREATE TABLE assurances_membres (
     assureur        VARCHAR(200),
     numero_police   VARCHAR(100),
     date_debut      DATE          NOT NULL,
-    date_fin        DATE          NOT NULL,
+    date_fin        DATE,
     prime_mensuelle NUMERIC(15,2),
     actif           BOOLEAN       DEFAULT TRUE,
     caisse_id       UUID          REFERENCES caisses(id),
