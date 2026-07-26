@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Models\Tontine;
 use App\Models\TontinePart;
+use App\Models\Membre;
 use App\Services\AccessScopeService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -91,6 +92,13 @@ class TontineController extends Controller
             'date_gain_calendrier' => ['nullable', 'date'],
             'avaliste_id' => [$tontine->exige_avaliste ? 'required' : 'nullable', 'uuid', 'different:membre_id'],
         ]);
+
+        // RG-MBR-003/011 : seuls les membres ACTIF peuvent recevoir une nouvelle part
+        // (un membre suspendu conserve ses parts existantes mais n'en acquiert pas).
+        $membre = $this->scope->scopeAssociation(Membre::query())->find($data['membre_id']);
+        if (! $membre || $membre->statut !== 'actif') {
+            return response()->json(['message' => "Seul un membre au statut ACTIF peut recevoir une nouvelle part (RG-MBR-003/011)."], 422);
+        }
 
         $data['tontine_id'] = $tontine->id;
         $data['statut'] = 'disponible';

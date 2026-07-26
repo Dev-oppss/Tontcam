@@ -6,6 +6,7 @@ use App\Models\Membre;
 use App\Services\AccessScopeService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 use App\Http\Controllers\Controller;
 
 class MembreController extends Controller
@@ -36,7 +37,7 @@ class MembreController extends Controller
             'prenom' => ['required', 'string', 'max:100'],
             'date_naissance' => ['nullable', 'date'],
             'sexe' => ['nullable', 'in:M,F,A'],
-            'telephone' => ['required', 'string', 'max:30'],
+            'telephone' => ['required', 'string', 'max:30', Rule::unique('membres', 'telephone')->where('association_id', $this->scope->associationId())],
             'email' => ['nullable', 'email'],
             'adresse' => ['nullable', 'string'],
             'ville' => ['nullable', 'string', 'max:100'],
@@ -68,6 +69,9 @@ class MembreController extends Controller
         while (($row = fgetcsv($handle)) !== false) {
             $ligne = array_combine($headers, $row);
             try {
+                if (Membre::where('association_id', $associationId)->where('telephone', $ligne['telephone'])->exists()) {
+                    throw new \RuntimeException("Numéro de téléphone déjà utilisé par un autre membre (RG-MBR-002).");
+                }
                 Membre::create([
                     'association_id' => $associationId,
                     'nom' => $ligne['nom'],
@@ -139,17 +143,24 @@ class MembreController extends Controller
         $membre = $this->scope->scopeAssociation(Membre::query())->findOrFail($id);
         $this->authorize('update', $membre);
 
-        $membre->update($request->validate([
+        $validated = $request->validate([
             'nom' => ['sometimes', 'string', 'max:100'],
             'prenom' => ['sometimes', 'string', 'max:100'],
-            'telephone' => ['sometimes', 'string', 'max:30'],
+            'telephone' => ['sometimes', 'string', 'max:30', Rule::unique('membres', 'telephone')->where('association_id', $membre->association_id)->ignore($membre->id)],
             'email' => ['sometimes', 'nullable', 'email'],
             'adresse' => ['sometimes', 'nullable', 'string'],
             'profession' => ['sometimes', 'nullable', 'string', 'max:150'],
             'statut' => ['sometimes', 'in:actif,suspendu,exclu,en_attente'],
             'motif_suspension' => ['sometimes', 'nullable', 'string'],
             'motif_exclusion' => ['sometimes', 'nullable', 'string'],
-        ]));
+        ]);
+
+        // RG-MBR-005 : le statut EXCLU est irréversible.
+        if ($membre->statut === 'exclu' && isset($validated['statut']) && $validated['statut'] !== 'exclu') {
+            return response()->json(['message' => "Un membre exclu ne peut pas être réactivé (RG-MBR-005)."], 422);
+        }
+
+        $membre->update($validated);
 
         return response()->json($membre);
     }
