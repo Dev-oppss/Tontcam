@@ -20,7 +20,7 @@ class AssociationController extends Controller
     public function store(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'nom' => ['required', 'string', 'max:200'],
+            'nom' => ['required', 'string', 'max:200', 'unique:associations,nom'],
             'nom_abrege' => ['nullable', 'string', 'max:50'],
             'siege_social' => ['nullable', 'string'],
             'ville' => ['nullable', 'string', 'max:100'],
@@ -79,12 +79,42 @@ class AssociationController extends Controller
     {
         $association = $this->scope->scopeAssociation(Association::query())->findOrFail($id);
         $this->authorize('update', $association);
-        $request->validate(['fichier' => ['required', 'file', 'mimes:pdf', 'max:10240']]);
+        $data = $request->validate([
+            'fichier' => ['required', 'file', 'mimes:pdf', 'max:10240'],
+            'version' => ['required', 'string', 'max:20'],
+            'date_adoption' => ['required', 'date'],
+            'signataires' => ['sometimes', 'array'],
+        ]);
 
         $chemin = $request->file('fichier')->store('statuts', 'public');
-        $association->update(['statuts_url' => \Illuminate\Support\Facades\Storage::url($chemin)]);
+        $url = \Illuminate\Support\Facades\Storage::url($chemin);
 
-        return response()->json($association);
+        \Illuminate\Support\Facades\DB::transaction(function () use ($association, $data, $url, $request) {
+            \App\Models\StatutAssociation::where('association_id', $association->id)->update(['est_actif' => false]);
+            \App\Models\StatutAssociation::create([
+                'association_id' => $association->id,
+                'version' => $data['version'],
+                'fichier_url' => $url,
+                'date_adoption' => $data['date_adoption'],
+                'signataires' => $data['signataires'] ?? [],
+                'uploaded_by' => $request->user()->id,
+                'est_actif' => true,
+            ]);
+            $association->update(['statuts_url' => $url]);
+        });
+
+        return response()->json($association->fresh());
+    }
+
+    public function historiqueStatuts(string $id): JsonResponse
+    {
+        $association = $this->scope->scopeAssociation(Association::query())->findOrFail($id);
+
+        return response()->json(
+            \App\Models\StatutAssociation::where('association_id', $association->id)
+                ->orderByDesc('date_adoption')
+                ->get()
+        );
     }
 
     public function destroy(string $id): JsonResponse

@@ -49,6 +49,7 @@ Route::middleware(['auth:sanctum', 'association.context'])->group(function () {
     // ── Organisation ────────────────────────────────────────────
     Route::apiResource('associations', AssociationController::class);
     Route::post('/associations/{id}/statuts', [AssociationController::class, 'uploadStatuts']);
+    Route::get('/associations/{id}/statuts', [AssociationController::class, 'historiqueStatuts']);
 
     // ── Membres ─────────────────────────────────────────────────
     Route::apiResource('membres', MembreController::class);
