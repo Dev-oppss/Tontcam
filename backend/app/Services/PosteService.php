@@ -43,7 +43,7 @@ class PosteService
             throw new RuntimeException('Ce mandat est déjà clôturé.');
         }
 
-        $mandat->update(['date_fin' => $dateFin]);
+        $mandat->update(['date_fin' => $dateFin, 'est_actif' => false]);
 
         return $mandat;
     }
