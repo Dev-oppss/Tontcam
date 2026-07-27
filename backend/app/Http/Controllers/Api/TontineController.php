@@ -100,6 +100,13 @@ class TontineController extends Controller
             return response()->json(['message' => "Seul un membre au statut ACTIF peut recevoir une nouvelle part (RG-MBR-003/011)."], 422);
         }
 
+        // RG-TON-008 : une fois le premier cycle ouvert, la liste des parts est figée —
+        // ajouter une part en cours de rotation fausserait l'équité entre bénéficiaires
+        // (un membre arrivé tard profiterait des tours restants sans avoir cotisé aux précédents).
+        if ($tontine->cycles()->exists()) {
+            return response()->json(['message' => "Impossible d'ajouter une part : un cycle a déjà été ouvert sur cette tontine. Une nouvelle part ne peut être créée qu'avant le premier cycle, ou via une décision d'AG dédiée."], 422);
+        }
+
         $data['tontine_id'] = $tontine->id;
         $data['statut'] = 'disponible';
 

@@ -195,7 +195,12 @@ class TontineCycleService
      */
     private function designerParEnchere(CycleTontine $cycle, Tontine $tontine): TontinePart
     {
-        $meilleure = Encherite::where('cycle_id', $cycle->id)->orderByDesc('montant_offre')->first();
+        // RG-TON-020 : en cas d'égalité entre plusieurs offres au montant maximal,
+        // la première soumise (created_at le plus ancien) l'emporte.
+        $meilleure = Encherite::where('cycle_id', $cycle->id)
+            ->orderByDesc('montant_offre')
+            ->orderBy('created_at')
+            ->first();
         if (! $meilleure) {
             throw new RuntimeException('Aucune enchère reçue pour ce cycle.');
         }
@@ -261,6 +266,9 @@ class TontineCycleService
         if (! $cycle->gagnant_part_id) {
             throw new RuntimeException('Impossible de clôturer : aucun gagnant désigné.');
         }
+
+        // RG-TON-030 : toute cotisation du cycle non réglée à la clôture passe IMPAYEE.
+        $cycle->cotisations()->whereIn('statut', ['due', 'en_retard'])->update(['statut' => 'impayee']);
 
         $cycle->update(['statut' => 'clos', 'date_cloture' => now()]);
 
