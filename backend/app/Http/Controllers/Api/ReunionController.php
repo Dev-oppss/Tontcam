@@ -31,15 +31,26 @@ class ReunionController extends Controller
         $this->authorize('create', Reunion::class);
         $data = $request->validate([
             'type' => ['required', 'in:ordinaire,extraordinaire,ag,conseil_bureau'],
-            'date_reunion' => ['required', 'date'],
+            // RG-REU-002 : au moins 24h entre la publication (maintenant) et la tenue de la réunion.
+            'date_reunion' => ['required', 'date', 'after_or_equal:' . now()->addDay()->format('Y-m-d')],
             'heure_debut' => ['required'],
             'heure_fin_prevue' => ['nullable'],
             'lieu' => ['required', 'string'],
             'est_domicile_membre' => ['sometimes', 'boolean'],
-            'hote_membre_id' => ['nullable', 'uuid'],
+            // RG-REU-003 : un hôte est obligatoire si la réunion se tient au domicile d'un membre.
+            'hote_membre_id' => ['nullable', 'uuid', 'required_if:est_domicile_membre,true'],
             'quorum_requis' => ['nullable', 'integer', 'min:0'],
         ]);
         $data['association_id'] = $this->scope->associationId();
+
+        // RG-REU-005 : pas deux réunions (non annulées) le même jour pour l'association.
+        $dejaPlanifiee = Reunion::where('association_id', $data['association_id'])
+            ->where('date_reunion', $data['date_reunion'])
+            ->where('statut', '!=', 'annulee')
+            ->exists();
+        if ($dejaPlanifiee) {
+            return response()->json(['message' => 'Une réunion est déjà planifiée à cette date pour cette association.'], 422);
+        }
 
         $reunion = $this->service->planifier($data, $request->user());
 
@@ -55,17 +66,53 @@ class ReunionController extends Controller
         return response()->json($reunion);
     }
 
+    /**
+     * GET /reunions/{id}/pv-pdf — procès-verbal horodaté en PDF (RG-REU-025).
+     */
+    public function pvPdf(string $id): JsonResponse
+    {
+        $reunion = $this->scope->scopeAssociation(Reunion::query())
+            ->with(['association', 'hote', 'ordreDuJour.rubrique', 'presences.membre', 'signataires.membre'])
+            ->findOrFail($id);
+
+        $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('pdf.proces-verbal', ['reunion' => $reunion]);
+        $chemin = "proces-verbaux/reunion-{$reunion->id}.pdf";
+        \Illuminate\Support\Facades\Storage::disk('public')->put($chemin, $pdf->output());
+
+        return response()->json(['pdf_url' => \Illuminate\Support\Facades\Storage::url($chemin)]);
+    }
+
     public function update(Request $request, string $id): JsonResponse
     {
         $reunion = $this->scope->scopeAssociation(Reunion::query())->findOrFail($id);
 
-        $reunion->update($request->validate([
+        $data = $request->validate([
             'date_reunion' => ['sometimes', 'date'],
             'heure_debut' => ['sometimes'],
             'lieu' => ['sometimes', 'string'],
             'statut' => ['sometimes', 'in:planifiee,ouverte,tenue,cloturee,annulee'],
             'notes' => ['sometimes', 'nullable', 'string'],
-        ]));
+        ]);
+
+        // RG-REU-006 : un report n'est possible que si la réunion actuelle est encore à plus
+        // de 24h — sinon les membres n'ont pas le temps d'être valablement renotifiés.
+        $dateChangee = array_key_exists('date_reunion', $data) && $data['date_reunion'] !== $reunion->date_reunion->format('Y-m-d');
+        if ($dateChangee) {
+            if ($reunion->date_reunion->isFuture() && now()->diffInHours($reunion->date_reunion) < 24) {
+                return response()->json(['message' => 'Report impossible : la réunion a lieu dans moins de 24h.'], 422);
+            }
+            if (\Carbon\Carbon::parse($data['date_reunion'])->startOfDay()->lt(now()->addDay()->startOfDay())) {
+                return response()->json(['message' => 'La nouvelle date doit être à au moins 24h de maintenant.'], 422);
+            }
+        }
+
+        $reunion->update($data);
+
+        if ($dateChangee) {
+            // Renotification automatique des membres suite au report (RG-REU-006).
+            app(\App\Services\NotificationService::class)->preparerEnvoi($reunion->fresh());
+        }
+
         $reunion->load(['ordreDuJour.rubrique', 'ordreDuJour.rapporteur', 'presences.membre', 'signataires.membre']);
 
         return response()->json($reunion);
@@ -172,6 +219,11 @@ class ReunionController extends Controller
     {
         $item = OrdreDuJourItem::whereHas('reunion', fn ($q) => $this->scope->scopeAssociation($q))
             ->where('reunion_id', $id)->findOrFail($pointId);
+
+        if (in_array($item->reunion->statut, ['cloturee', 'annulee'], true)) {
+            return response()->json(['message' => 'Impossible de modifier l\'ordre du jour d\'une réunion clôturée ou annulée.'], 422);
+        }
+
         $item->delete();
 
         return response()->json(['deleted' => true]);
@@ -193,13 +245,35 @@ class ReunionController extends Controller
         return response()->json($signature->load('membre'));
     }
 
-    public function destroy(string $id): JsonResponse
+    public function destroy(Request $request, string $id): JsonResponse
     {
         $reunion = $this->scope->scopeAssociation(Reunion::query())->findOrFail($id);
         $this->authorize('delete', $reunion);
+
         if ($reunion->statut === 'cloturee') {
             return response()->json(['message' => 'Une réunion clôturée ne peut être supprimée.'], 422);
         }
+
+        // RG-REU-026 : on ne supprime pas une réunion qui a déjà un impact financier ou
+        // décisionnel tracé (cycle de tontine, transaction de séance, décision d'AG) — dans
+        // ce cas seule une annulation motivée est possible, pas une suppression.
+        $aDesLiensSensibles = $reunion->cyclesTontine()->exists()
+            || $reunion->seanceTransactions()->exists()
+            || $reunion->decisionsAg()->exists()
+            || \App\Models\SanctionMembre::where('reunion_id', $reunion->id)->exists();
+
+        $data = $request->validate(['motif' => ['nullable', 'string']]);
+
+        if ($aDesLiensSensibles) {
+            $reunion->update([
+                'statut' => 'annulee',
+                'notes' => trim(($reunion->notes ? $reunion->notes."\n" : '')
+                    . 'Annulée le '.now()->format('d/m/Y H:i').' : '.($data['motif'] ?? 'motif non précisé')),
+            ]);
+
+            return response()->json(['deleted' => false, 'annulee' => true, 'reunion' => $reunion]);
+        }
+
         $reunion->delete();
 
         return response()->json(['deleted' => true]);

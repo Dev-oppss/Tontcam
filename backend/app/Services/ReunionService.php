@@ -51,6 +51,19 @@ class ReunionService
             throw new RuntimeException('Réunion clôturée : présences non modifiables.');
         }
 
+        // RG-REU-017 : "en retard" n'est jamais pris tel quel du client — recalculé serveur
+        // à partir de l'heure d'arrivée réelle comparée à heure_debut + 15 minutes. Un client
+        // ne peut ni forcer "en_retard" sans preuve, ni le contourner en omettant l'heure.
+        if ($statut === 'present' || $statut === 'en_retard') {
+            if ($heureArrivee) {
+                $limite = \Carbon\Carbon::parse($reunion->date_reunion->format('Y-m-d').' '.$reunion->heure_debut)->addMinutes(15);
+                $arrivee = \Carbon\Carbon::parse($reunion->date_reunion->format('Y-m-d').' '.$heureArrivee);
+                $statut = $arrivee->gt($limite) ? 'en_retard' : 'present';
+            } else {
+                $statut = 'present';
+            }
+        }
+
         $presence = Presence::updateOrCreate(
             ['reunion_id' => $reunion->id, 'membre_id' => $membre->id],
             [

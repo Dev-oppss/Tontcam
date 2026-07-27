@@ -71,6 +71,7 @@ Route::middleware(['auth:sanctum', 'association.context'])->group(function () {
     Route::post('/reunions/{id}/transactions', [SeanceTransactionController::class, 'store']);
     Route::delete('/reunions/{id}/transactions/{transactionId}', [SeanceTransactionController::class, 'destroy']);
     Route::post('/reunions/{id}/signer', [ReunionController::class, 'signer']);
+    Route::get('/reunions/{id}/pv-pdf', [ReunionController::class, 'pvPdf']);
     Route::get('/ordre-du-jour-rubriques', [OrdreDuJourRubriqueController::class, 'index']);
     Route::post('/ordre-du-jour-rubriques', [OrdreDuJourRubriqueController::class, 'store']);
     Route::put('/ordre-du-jour-rubriques/{id}', [OrdreDuJourRubriqueController::class, 'update']);
