@@ -47,12 +47,12 @@ Route::prefix('auth')->group(function () {
 Route::middleware(['auth:sanctum', 'association.context'])->group(function () {
 
     // ── Organisation ────────────────────────────────────────────
-    Route::apiResource('associations', AssociationController::class);
+    Route::apiResource('associations', AssociationController::class)->whereUuid('association');
     Route::post('/associations/{id}/statuts', [AssociationController::class, 'uploadStatuts']);
     Route::get('/associations/{id}/statuts', [AssociationController::class, 'historiqueStatuts']);
 
     // ── Membres ─────────────────────────────────────────────────
-    Route::apiResource('membres', MembreController::class);
+    Route::apiResource('membres', MembreController::class)->whereUuid('membre');
     Route::post('/membres/import-csv', [MembreController::class, 'importCsv']);
     Route::get('/membres/{id}/situation', [MembreController::class, 'situation']);
     Route::get('/membres/{id}/assurances', [AssuranceMembreController::class, 'index']);
@@ -60,7 +60,7 @@ Route::middleware(['auth:sanctum', 'association.context'])->group(function () {
     Route::put('/assurances/{id}', [AssuranceMembreController::class, 'update']);
 
     // ── Réunions ────────────────────────────────────────────────
-    Route::apiResource('reunions', ReunionController::class);
+    Route::apiResource('reunions', ReunionController::class)->whereUuid('reunion');
     Route::post('/reunions/{id}/ouvrir', [ReunionController::class, 'ouvrir']);
     Route::post('/reunions/{id}/presences', [ReunionController::class, 'presences']);
     Route::post('/reunions/{id}/rapports', [ReunionController::class, 'ajouterRapport']);
@@ -79,7 +79,7 @@ Route::middleware(['auth:sanctum', 'association.context'])->group(function () {
 
     // ── Tontines & cycles ───────────────────────────────────────
     Route::get('/tontines/{id}/cycles', [CycleTontineController::class, 'index']);
-    Route::apiResource('tontines', TontineController::class);
+    Route::apiResource('tontines', TontineController::class)->whereUuid('tontine');
     Route::post('/tontines/{id}/parts', [TontineController::class, 'ajouterPart']);
     Route::put('/tontines/{id}/parts/{partId}', [TontineController::class, 'modifierPart']);
     Route::delete('/tontines/{id}/parts/{partId}', [TontineController::class, 'retirerPart']);
@@ -100,16 +100,20 @@ Route::middleware(['auth:sanctum', 'association.context'])->group(function () {
     Route::post('/bulletins/{id}/signer', [CycleTontineController::class, 'signer']);
 
     // ── Finance ─────────────────────────────────────────────────
-    Route::apiResource('caisses', CaisseController::class)->except(['destroy']);
-    Route::post('/caisses/{id}/transactions', [CaisseController::class, 'transaction']);
+    // Routes littérales AVANT apiResource ET contrainte UUID sur {caisse} : ce
+    // conflit (GET/POST /caisses/transferts intercepté par la route show du
+    // resource) a déjà régressé une fois après un reordering accidentel — la
+    // contrainte whereUuid() le rend impossible structurellement, peu importe l'ordre.
     Route::post('/caisses/transferts', [CaisseController::class, 'transfert']);
     Route::get('/caisses/transferts', [CaisseController::class, 'transferts']);
+    Route::apiResource('caisses', CaisseController::class)->except(['destroy'])->whereUuid('caisse');
+    Route::post('/caisses/{id}/transactions', [CaisseController::class, 'transaction']);
     Route::get('/caisses/{id}/journal', [CaisseController::class, 'journal']);
     Route::get('/comptes-bancaires', [CompteBancaireController::class, 'index']);
     Route::post('/comptes-bancaires', [CompteBancaireController::class, 'store']);
     Route::put('/comptes-bancaires/{id}', [CompteBancaireController::class, 'update']);
 
-    Route::apiResource('prets', PretController::class)->except(['destroy']);
+    Route::apiResource('prets', PretController::class)->except(['destroy'])->whereUuid('pret');
     Route::post('/prets/{id}/valider', [PretController::class, 'valider']);
     Route::post('/prets/{id}/approuver', [PretController::class, 'approuver']);
     Route::post('/prets/{id}/refuser', [PretController::class, 'refuser']);
@@ -118,14 +122,14 @@ Route::middleware(['auth:sanctum', 'association.context'])->group(function () {
     Route::get('/prets/{id}/echeances', [PretController::class, 'echeances']);
 
     // ── Sanctions & Social ──────────────────────────────────────
-    Route::apiResource('sanctions', SanctionController::class)->except(['destroy']);
+    Route::apiResource('sanctions', SanctionController::class)->except(['destroy'])->whereUuid('sanction');
     Route::post('/sanctions/{id}/payer', [SanctionController::class, 'payer']);
     Route::get('/types-sanction', [TypeSanctionController::class, 'index']);
     Route::post('/types-sanction', [TypeSanctionController::class, 'store']);
     Route::put('/types-sanction/{id}', [TypeSanctionController::class, 'update']);
     Route::delete('/types-sanction/{id}', [TypeSanctionController::class, 'destroy']);
 
-    Route::apiResource('aides-sociales', AideSocialeController::class)->except(['destroy']);
+    Route::apiResource('aides-sociales', AideSocialeController::class)->except(['destroy'])->whereUuid('aides_sociale');
     Route::post('/aides-sociales/{id}/valider', [AideSocialeController::class, 'valider']);
     Route::post('/aides-sociales/{id}/refuser', [AideSocialeController::class, 'refuser']);
     Route::post('/aides-sociales/{id}/verser', [AideSocialeController::class, 'verser']);
