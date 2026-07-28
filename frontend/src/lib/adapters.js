@@ -201,6 +201,7 @@ export const partToApi = (p) => ({
 // ── Réunion ─────────────────────────────────────────────────────
 export const reunionFromApi = (r) => !r ? null : ({
   id: r.id,
+  numero: r.numero,
   numReunion: r.numero,
   type: r.type,
   date: r.date_reunion,
