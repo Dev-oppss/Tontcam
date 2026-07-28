@@ -3,14 +3,23 @@ import { request, getApiToken, setApiToken, clearApiToken, API_BASE } from '../l
 import * as adapt from '../lib/adapters';
 import * as mock from '../data/mockData';
 
+// Les 9 valeurs réellement acceptées par le backend (voir SeanceTransactionController::store
+// et TYPES_SORTIE) — ce tableau sert à la fois aux boutons de sélection (TypePicker), au
+// calcul des totaux/sens du rapport PV (RapportSeance), et aux libellés affichés partout.
+// Historique : contenait avant 7 valeurs obsolètes (sanction, pret, remboursement, retrait,
+// autre) qui ne correspondaient à aucun type réellement envoyé — les transactions amende /
+// aide_sociale / pret_accorde / paiement_sanction / remboursement_pret / attribution_tour /
+// divers_entree / divers_sortie étaient donc invisibles dans les totaux et le rapport PV.
 export const TX_TYPES = [
-  { value: 'cotisation', label: 'Cotisation', dir: 'entree', icon: '' },
-  { value: 'depot_banque', label: 'Dépôt caisse', dir: 'entree', icon: '' },
-  { value: 'sanction', label: 'Sanction', dir: 'entree', icon: '' },
-  { value: 'pret', label: 'Prêt accordé', dir: 'sortie', icon: '' },
-  { value: 'remboursement', label: 'Remboursement prêt', dir: 'entree', icon: '' },
-  { value: 'retrait', label: 'Retrait', dir: 'sortie', icon: '' },
-  { value: 'autre', label: 'Autre', dir: 'entree', icon: '' },
+  { value: 'cotisation',         label: 'Cotisation',            dir: 'entree', icon: '💰' },
+  { value: 'amende',             label: 'Paiement de sanction',  dir: 'entree', icon: '⚖️' },
+  { value: 'remboursement_pret', label: 'Remboursement prêt',    dir: 'entree', icon: '🏦' },
+  { value: 'divers_entree',      label: 'Entrée diverse',        dir: 'entree', icon: '📥' },
+  { value: 'depot_banque',       label: 'Dépôt banque',          dir: 'banque', icon: '🏛️' },
+  { value: 'pret_accorde',       label: 'Prêt accordé',          dir: 'sortie', icon: '💵' },
+  { value: 'aide_sociale',       label: 'Aide sociale',          dir: 'sortie', icon: '❤️' },
+  { value: 'attribution_tour',   label: 'Attribution du tour',   dir: 'sortie', icon: '🏆' },
+  { value: 'divers_sortie',      label: 'Sortie diverse',        dir: 'sortie', icon: '📤' },
 ];
 export const TX_LABELS = TX_TYPES.reduce((acc, t) => ({ ...acc, [t.value]: t.label }), {});
 
