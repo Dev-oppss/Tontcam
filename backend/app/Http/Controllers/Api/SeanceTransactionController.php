@@ -21,7 +21,7 @@ use Illuminate\Support\Facades\DB;
  */
 class SeanceTransactionController extends Controller
 {
-    private const TYPES_SORTIE = ['attribution_tour', 'divers_sortie'];
+    private const TYPES_SORTIE = ['attribution_tour', 'divers_sortie', 'pret_accorde', 'aide_sociale'];
 
     public function __construct(private AccessScopeService $scope, private CaisseService $caisseService) {}
 
@@ -37,7 +37,7 @@ class SeanceTransactionController extends Controller
         $reunion = $this->scope->scopeAssociation(Reunion::query())->findOrFail($reunionId);
 
         $data = $request->validate([
-            'type' => ['required', 'in:cotisation,remboursement_pret,paiement_sanction,depot_banque,attribution_tour,divers_entree,divers_sortie'],
+            'type' => ['required', 'in:cotisation,remboursement_pret,paiement_sanction,amende,depot_banque,attribution_tour,divers_entree,divers_sortie,pret_accorde,aide_sociale'],
             'membre_id' => ['nullable', 'uuid'],
             'montant' => ['required', 'numeric', 'min:0.01'],
             'libelle' => ['nullable', 'string', 'max:300'],

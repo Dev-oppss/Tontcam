@@ -141,6 +141,7 @@ export const cycleFromApi = (c) => !c ? null : ({
   montantCollecteReel: Number(c.montant_collecte_reel || 0),
   gagnantNom: c.gagnant?.membre ? `${c.gagnant.membre.nom} ${c.gagnant.membre.prenom}` : null,
   idGagnantPart: c.gagnant_part_id || null,
+  montantEnchere: Number(c.montant_enchere || 0),
   idBulletin: c.bulletin?.id || null,
   dateOuverture: c.date_ouverture,
   dateCloture: c.date_cloture,

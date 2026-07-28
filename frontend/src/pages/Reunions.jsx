@@ -74,11 +74,26 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
     tontines, membres, membresParTontine,
     addSeanceTransaction, addSanction, seanceTransactions,
     planningTours, enregistrerBeneficiaireSeance,
-    encheres,
+    encheres, cyclesTontine,
   } = useApp();
 
   const locked   = !!reunion.verrouillee;
   const notOpen  = reunion.statutReunion === 'planifiee';
+
+  // reunion.beneficiairesSeance n'a jamais existé côté API — dérivé ici de la vraie
+  // source de vérité (cyclesTontine) pour que le bénéficiaire désigné reste visible
+  // même après un changement d'onglet ou de composant.
+  const beneficiairesSeance = useMemo(() => (cyclesTontine || [])
+    .filter(c => c.idReunion === reunion.id && c.statut === 'clos')
+    .map(c => {
+      const t = tontines.find(tt => tt.id === c.idTontine);
+      return {
+        idTontine: c.idTontine, nomTontine: t?.nom || '',
+        typeAttribution: t?.typeAttribution, nomMembre: c.gagnantNom,
+        numeroTour: c.numeroCycle, montantEnchere: c.montantEnchere,
+        montantPot: c.montantCollecteReel, dateAttrib: c.dateCloture,
+      };
+    }), [cyclesTontine, tontines, reunion.id]);
 
   const [idTontineSelectee, setIdTontineSelectee] = useState('');
   const [statutParMembre,   setStatutParMembre]   = useState({});
@@ -120,7 +135,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
   const totalCollecte  = cotises.reduce((s, m) => s + m.montantDu, 0);
 
   // Bénéficiaire déjà enregistré pour cette tontine dans la séance
-  const benefDejaEnregistre = (reunion.beneficiairesSeance||[]).find(b => b.idTontine === idTontineSelectee);
+  const benefDejaEnregistre = beneficiairesSeance.find(b => b.idTontine === idTontineSelectee);
 
   // Tour planifié rotation
   const tourPlanifieProchain = useMemo(() => {
@@ -260,7 +275,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
             {tontines.filter(t => t.statut === 'active').map(t => {
               const nbEncaisses = planningTours.filter(p => p.idTontine === t.id && p.statut === 'encaisse').length;
               const progressPct = t.nbTours > 0 ? Math.round(nbEncaisses / t.nbTours * 100) : 0;
-              const dejaTraite  = (reunion.beneficiairesSeance||[]).some(b => b.idTontine === t.id);
+              const dejaTraite  = beneficiairesSeance.some(b => b.idTontine === t.id);
               const isSelected  = idTontineSelectee === t.id;
               const tColor      = TYPE_COLORS[t.typeAttribution] || '';
               return (
@@ -650,7 +665,22 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
 }
 
 function RapportSeance({ reunion, transactions, membres, onClose }) {
+  const { tontines, cyclesTontine } = useApp();
   const txs = transactions.filter(t => t.idReunion === reunion.id);
+
+  // reunion.beneficiairesSeance n'a jamais existé côté API — dérivé ici de la vraie
+  // source de vérité (cyclesTontine), comme dans FeuillePresenceTontine.
+  const beneficiairesSeance = useMemo(() => (cyclesTontine || [])
+    .filter(c => c.idReunion === reunion.id && c.statut === 'clos')
+    .map(c => {
+      const t = tontines.find(tt => tt.id === c.idTontine);
+      return {
+        idTontine: c.idTontine, nomTontine: t?.nom || '',
+        typeAttribution: t?.typeAttribution, nomMembre: c.gagnantNom,
+        numeroTour: c.numeroCycle, montantEnchere: c.montantEnchere,
+        montantPot: c.montantCollecteReel, dateAttrib: c.dateCloture,
+      };
+    }), [cyclesTontine, tontines, reunion.id]);
 
   const totalEntrees = txs.filter(t => TX_TYPES.find(tt => tt.value === t.type)?.dir === 'entree')
     .reduce((s, t) => s + t.montant, 0);
@@ -830,14 +860,14 @@ function RapportSeance({ reunion, transactions, membres, onClose }) {
           </div>
 
           {/* Section IV — Bénéficiaires tontine */}
-          {(reunion.beneficiairesSeance || []).length > 0 && (
+          {(beneficiairesSeance || []).length > 0 && (
             <div>
               <h4 className="font-bold text-gray-700 uppercase text-xs tracking-wider mb-3 flex items-center gap-2">
                 <span className="w-5 h-5 rounded-full bg-amber-500 text-white text-xs flex items-center justify-center font-bold">IV</span>
                 Bénéficiaires de la tontine — Séance N°{reunion.numero}
               </h4>
               <div className="space-y-2">
-                {reunion.beneficiairesSeance.map((b, i) => {
+                {beneficiairesSeance.map((b, i) => {
                   const typeIcon = { rotation: '', tirage: '', enchere: '' }[b.typeAttribution] || '';
                   const typeLabel = { rotation: 'Rotation fixe', tirage: 'Tirage au sort', enchere: 'Enchère' }[b.typeAttribution] || b.typeAttribution;
                   return (
@@ -873,7 +903,7 @@ function RapportSeance({ reunion, transactions, membres, onClose }) {
           {reunion.cloture?.observation && (
             <div className="p-4 bg-amber-50 rounded-xl border border-amber-100">
               <h4 className="font-bold text-gray-700 uppercase text-xs tracking-wider mb-2 flex items-center gap-2">
-                <span className="w-5 h-5 rounded-full bg-primary-600 text-white text-xs flex items-center justify-center font-bold">{(reunion.beneficiairesSeance||[]).length > 0 ? 'V' : 'IV'}</span>
+                <span className="w-5 h-5 rounded-full bg-primary-600 text-white text-xs flex items-center justify-center font-bold">{(beneficiairesSeance||[]).length > 0 ? 'V' : 'IV'}</span>
                 Décisions & observations
               </h4>
               <p className="text-gray-700 italic text-sm">« {reunion.cloture.observation} »</p>
@@ -1432,7 +1462,7 @@ function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, san
 function BeneficiaireSeancePanel({ reunion }) {
   const {
     tontines, membres, membresParTontine, planningTours,
-    encheres, enregistrerBeneficiaireSeance,
+    encheres, enregistrerBeneficiaireSeance, cyclesTontine,
   } = useApp();
 
   const [idTontine,    setIdTontine]    = useState('');
@@ -1442,7 +1472,21 @@ function BeneficiaireSeancePanel({ reunion }) {
   const [enchereIdGagnant, setEnchereIdGagnant] = useState('');
 
   const locked = !!reunion.verrouillee;
-  const beneficiairesSeance = reunion.beneficiairesSeance || [];
+  // reunion.beneficiairesSeance n'a jamais existé côté API — dérivé ici de la vraie
+  // source de vérité (cyclesTontine). C'est ce qui manquait pour que cet onglet
+  // affiche le gagnant déjà désigné depuis l'onglet Feuille Cotisation, au lieu
+  // de réafficher « Lancer le tirage au sort » comme si de rien n'était.
+  const beneficiairesSeance = useMemo(() => (cyclesTontine || [])
+    .filter(c => c.idReunion === reunion.id && c.statut === 'clos')
+    .map(c => {
+      const t = tontines.find(tt => tt.id === c.idTontine);
+      return {
+        idTontine: c.idTontine, nomTontine: t?.nom || '',
+        typeAttribution: t?.typeAttribution, nomMembre: c.gagnantNom,
+        numeroTour: c.numeroCycle, montantEnchere: c.montantEnchere,
+        montantPot: c.montantCollecteReel, dateAttrib: c.dateCloture,
+      };
+    }), [cyclesTontine, tontines, reunion.id]);
 
   const tontine = tontines.find(t => t.id === idTontine);
   const typeAttr = tontine?.typeAttribution;

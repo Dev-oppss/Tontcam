@@ -793,11 +793,16 @@ export const AppProvider = ({ children }) => {
   // ── Désignation du bénéficiaire directement depuis l'écran de réunion ──
   const enregistrerBeneficiaireSeance = async (idReunion, data) => {
     try {
-      const cycle = await request(`/tontines/${data.idTontine}/enregistrer-beneficiaire`, {
+      const c = await request(`/tontines/${data.idTontine}/enregistrer-beneficiaire`, {
         method: 'POST', body: { reunion_id: idReunion, membre_id: data.idMembre || undefined },
       });
+      // BUG corrigé : cette fonction ne mettait à jour AUCUN état après l'appel — le
+      // bénéficiaire désigné restait invisible dès qu'on changeait d'onglet ou de
+      // composant (il ne vivait que dans le state local du composant appelant).
+      const cycle = adapt.cycleFromApi(c);
+      setCyclesTontine((prev) => [...prev.filter((x) => x.id !== cycle.id), cycle]);
       showToast('Bénéficiaire enregistré, bulletin généré');
-      return cycle;
+      return c;
     } catch (err) { return handleError(err); }
   };
   const ouvrirSeance = (id) => ouvrirReunion(id);
