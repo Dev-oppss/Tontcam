@@ -81,6 +81,18 @@ export default function Tontines() {
     ? searchParams.get('type')
     : 'toutes';
   const [activeTab,       setActiveTab]       = useState(initialTab);
+
+  // useState(initialTab) ne lit l'URL qu'au tout premier montage. Comme /tontines?type=rotation
+  // et /tontines?type=enchere sont la MÊME route (React Router ne démonte pas le composant),
+  // cliquer sur un autre type de tontine dans la sidebar après le premier clic ne changeait
+  // jamais activeTab : le filtre restait bloqué sur sa valeur initiale.
+  useEffect(() => {
+    const type = searchParams.get('type');
+    if (['toutes', 'rotation', 'tirage', 'enchere'].includes(type)) {
+      setActiveTab(type);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams.get('type')]);
   const [showAdd,         setShowAdd]         = useState(false);
   const [showEdit,        setShowEdit]        = useState(null);
   const [showMembres,     setShowMembres]     = useState(null);
