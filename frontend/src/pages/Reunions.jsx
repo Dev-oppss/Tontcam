@@ -73,7 +73,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
   const {
     tontines, membres, membresParTontine,
     addSeanceTransaction, addSanction, seanceTransactions,
-    planningTours, enregistrerBeneficiaireSeance,
+    planningTours, ouvrirCycle, saisirCotisationCycle, designerGagnantCycle, cloturerCycle,
     encheres, cyclesTontine,
   } = useApp();
 
@@ -108,6 +108,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
   const [enchereIdGagnant,  setEnchereIdGagnant]  = useState('');
   const [miseGagnante,      setMiseGagnante]      = useState('');
   const [tirageEffectue,    setTirageEffectue]    = useState(false);
+  const [cycleActuelId,     setCycleActuelId]     = useState(null); // cycle ouvert à l'étape cotisation, réutilisé à l'étape bénéficiaire
 
   const tontineSelectee = tontines.find(t => t.id === idTontineSelectee);
   const typeAttr = tontineSelectee?.typeAttribution;
@@ -173,7 +174,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
     setModeParMembre(prev => ({ ...prev, [idMembre]: { ...(prev[idMembre]||{modePaiement:'especes',detailsPaiement:''}), ...patch } }));
 
   // ── Valider la feuille de cotisation ──
-  const handleValiderFeuille = () => {
+  const handleValiderFeuille = async () => {
     if (!tontineSelectee) return;
     cotises.forEach(m => {
       const mode = modeParMembre[m.id] || { modePaiement:'especes', detailsPaiement:'' };
@@ -193,55 +194,68 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
         date: reunion.date, reunionId: reunion.id,
       });
     });
+
+    // Ouvre un vrai cycle et y rattache les cotisations réellement saisies ci-dessus —
+    // sans ça, designerGagnant/cloturerCycle ne « voient » aucune cotisation et le
+    // bulletin final sort à montant brut nul, quoi que le secrétaire ait coché.
+    const cycle = await ouvrirCycle(tontineSelectee.id, reunion.id);
+    if (!cycle) return; // ouvrirCycle a déjà affiché l'erreur (ex: plus aucune part disponible)
+    setCycleActuelId(cycle.id);
+
+    for (const m of cotises) {
+      const cotisation = cycle.cotisations.find(co => co.idMembre === m.id);
+      if (!cotisation) continue; // membre sans part dans cette tontine — rien à saisir
+      const mode = modeParMembre[m.id] || { modePaiement:'especes', detailsPaiement:'' };
+      await saisirCotisationCycle(cycle.id, cotisation.id, m.montantDu, { modePaiement: mode.modePaiement });
+    }
+
     setValide(true);
     // Aller directement à la désignation du bénéficiaire
     setEtape('beneficiaire');
   };
 
-  // ── Handlers bénéficiaire ──
-  const handleConfirmerRotation = () => {
-    if (!tourPlanifieProchain) return;
-    enregistrerBeneficiaireSeance(reunion.id, {
-      idTontine: tontineSelectee.id, nomTontine: tontineSelectee.nom,
-      typeAttribution: 'rotation', idMembre: tourPlanifieProchain.idMembre,
-      nomMembre: tourPlanifieProchain.nomMembre, montantPot,
-      numeroTour: tourPlanifieProchain.numeroTour, modeDesignation: 'rotation',
-    });
-    setGagnant({ nomMembre: tourPlanifieProchain.nomMembre, montantPot });
+  // Résout l'id de PART (tontine_parts) d'un membre — c'est ce que désignerGagnantCycle
+  // attend, pas un id de membre. membresParTontine EST directement la liste des parts.
+  const resolvePartId = (idMembre) => membresParTontine
+    .find(mt => mt.idTontine === tontineSelectee?.id && mt.idMembre === idMembre)?.id;
+
+  // ── Handlers bénéficiaire — passent tous par le vrai circuit désormais :
+  // désignerGagnantCycle() puis clôturerCycle(), sur le cycle ouvert à l'étape précédente.
+  const handleConfirmerRotation = async () => {
+    if (!tourPlanifieProchain || !cycleActuelId) return;
+    const idPart = resolvePartId(tourPlanifieProchain.idMembre);
+    await designerGagnantCycle(cycleActuelId, idPart);
+    const cycleFinal = await cloturerCycle(cycleActuelId);
+    if (!cycleFinal) return;
+    setGagnant({ nomMembre: cycleFinal.gagnantNom, montantPot: cycleFinal.montantCollecteReel });
     setEtape('recap');
   };
 
   const handleTirage = async () => {
-    const nbEncaisses = planningTours.filter(p => p.idTontine === tontineSelectee.id && p.statut === 'encaisse').length;
-    const cycle = await enregistrerBeneficiaireSeance(reunion.id, {
-      idTontine: tontineSelectee.id, nomTontine: tontineSelectee.nom,
-      typeAttribution: 'tirage', numeroTour: nbEncaisses + 1, modeDesignation: 'tirage_au_sort',
-    });
-    if (cycle?.gagnant?.membre) {
-      const nomMembre = `${cycle.gagnant.membre.nom} ${cycle.gagnant.membre.prenom}`;
-      const montant = Number(cycle.bulletin?.montant_brut || montantPot || 0);
-      setGagnant({ nomMembre, montantPot: montant });
-      setTirageEffectue(true);
-      setEtape('recap');
-    }
+    if (!cycleActuelId) return;
+    const apresDesignation = await designerGagnantCycle(cycleActuelId); // pas de part forcée = tirage aléatoire côté serveur
+    if (!apresDesignation) return;
+    const cycleFinal = await cloturerCycle(cycleActuelId);
+    if (!cycleFinal) return;
+    setGagnant({ nomMembre: cycleFinal.gagnantNom, montantPot: cycleFinal.montantCollecteReel });
+    setTirageEffectue(true);
+    setEtape('recap');
   };
 
-  const handleConfirmerEnchere = (nomMembre, idMembre, mise) => {
-    enregistrerBeneficiaireSeance(reunion.id, {
-      idTontine: tontineSelectee.id, nomTontine: tontineSelectee.nom,
-      typeAttribution: 'enchere', idMembre, nomMembre,
-      montantPot: montantPot - Number(mise), montantEnchere: Number(mise),
-      numeroTour: planningTours.filter(p => p.idTontine === tontineSelectee.id && p.statut === 'encaisse').length + 1,
-      modeDesignation: 'enchere',
-    });
-    setGagnant({ nomMembre, montantPot: montantPot - Number(mise), mise: Number(mise) });
+  const handleConfirmerEnchere = async (nomMembre, idMembre, mise) => {
+    if (!cycleActuelId) return;
+    const idPart = resolvePartId(idMembre);
+    await designerGagnantCycle(cycleActuelId, idPart);
+    const cycleFinal = await cloturerCycle(cycleActuelId);
+    if (!cycleFinal) return;
+    setGagnant({ nomMembre: cycleFinal.gagnantNom, montantPot: cycleFinal.montantCollecteReel - Number(mise), mise: Number(mise) });
     setEtape('recap');
   };
 
   const reset = () => {
     setIdTontineSelectee(''); setEtape('choix'); setStatutParMembre({}); setModeParMembre({});
     setValide(false); setSanctionMontant(''); setGagnant(null);
-    setEnchereIdGagnant(''); setMiseGagnante(''); setTirageEffectue(false);
+    setEnchereIdGagnant(''); setMiseGagnante(''); setTirageEffectue(false); setCycleActuelId(null);
   };
 
   // ── Blocage si séance non ouverte ──
@@ -1462,7 +1476,7 @@ function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, san
 function BeneficiaireSeancePanel({ reunion }) {
   const {
     tontines, membres, membresParTontine, planningTours,
-    encheres, enregistrerBeneficiaireSeance, cyclesTontine,
+    encheres, cyclesTontine, ouvrirCycle, designerGagnantCycle, cloturerCycle, showToast,
   } = useApp();
 
   const [idTontine,    setIdTontine]    = useState('');
@@ -1525,54 +1539,57 @@ function BeneficiaireSeancePanel({ reunion }) {
   // Bénéficiaire déjà enregistré pour cette tontine dans la séance
   const benefDejaEnregistre = beneficiairesSeance.find(b => b.idTontine === idTontine);
 
-  const handleConfirmerRotation = () => {
+  // Réutilise un cycle déjà ouvert (typiquement par l'onglet Feuille Cotisation, avec
+  // de vraies cotisations dedans) plutôt que d'en ouvrir un second en double. Si aucun
+  // n'existe, en ouvre un frais — les cotisations resteront alors à 0 puisque cet
+  // onglet n'a pas de saisie de cotisation ; on prévient l'utilisateur dans ce cas.
+  const getOrOuvrirCycle = async () => {
+    const existant = (cyclesTontine || []).find(c => c.idTontine === tontine.id && c.idReunion === reunion.id && c.statut === 'ouvert');
+    if (existant) return existant;
+    const cycle = await ouvrirCycle(tontine.id, reunion.id);
+    if (cycle) showToast?.('Cycle ouvert sans cotisations saisies — passez par l\'onglet Feuille Cotisation pour un montant réel.', 'info');
+    return cycle;
+  };
+
+  const resolvePartId = (idMembre) => membresParTontine
+    .find(mt => mt.idTontine === tontine?.id && mt.idMembre === idMembre)?.id;
+
+  const handleConfirmerRotation = async () => {
     if (!tourPlanifieProchain || !tontine) return;
-    enregistrerBeneficiaireSeance(reunion.id, {
-      idTontine: tontine.id,
-      nomTontine: tontine.nom,
-      typeAttribution: typeAttr,
-      idMembre: tourPlanifieProchain.idMembre,
-      nomMembre: tourPlanifieProchain.nomMembre,
-      montantPot,
-      numeroTour: tourPlanifieProchain.numeroTour,
-      modeDesignation: 'rotation',
-    });
+    const cycle = await getOrOuvrirCycle();
+    if (!cycle) return;
+    const idPart = resolvePartId(tourPlanifieProchain.idMembre);
+    await designerGagnantCycle(cycle.id, idPart);
+    const cycleFinal = await cloturerCycle(cycle.id);
+    if (!cycleFinal) return;
     setEtape('confirme');
-    setGagnant({ nomMembre: tourPlanifieProchain.nomMembre, montantPot });
+    setGagnant({ nomMembre: cycleFinal.gagnantNom, montantPot: cycleFinal.montantCollecteReel });
   };
 
   const handleTirage = async () => {
     if (!tontine) return;
-    const nbEncaisses = planningTours.filter(p => p.idTontine === tontine.id && p.statut === 'encaisse').length;
-    const cycle = await enregistrerBeneficiaireSeance(reunion.id, {
-      idTontine: tontine.id, nomTontine: tontine.nom,
-      typeAttribution: 'tirage', numeroTour: nbEncaisses + 1, modeDesignation: 'tirage_au_sort',
-    });
-    if (cycle?.gagnant?.membre) {
-      const nomMembre = `${cycle.gagnant.membre.nom} ${cycle.gagnant.membre.prenom}`;
-      const montant = Number(cycle.bulletin?.montant_brut || 0);
-      setGagnant({ nomMembre, montantPot: montant });
-      setEtape('confirme');
-    }
+    const cycle = await getOrOuvrirCycle();
+    if (!cycle) return;
+    const apresDesignation = await designerGagnantCycle(cycle.id); // pas de part forcée = tirage aléatoire côté serveur
+    if (!apresDesignation) return;
+    const cycleFinal = await cloturerCycle(cycle.id);
+    if (!cycleFinal) return;
+    setGagnant({ nomMembre: cycleFinal.gagnantNom, montantPot: cycleFinal.montantCollecteReel });
+    setEtape('confirme');
   };
 
-  const handleConfirmerEnchere = () => {
+  const handleConfirmerEnchere = async () => {
     if (!enchereIdGagnant || !tontine) return;
     const enc = encheres.find(e => e.id === enchereIdGagnant);
     if (!enc) return;
     const mise = Number(miseGagnante) || enc.montantEnchere;
-    enregistrerBeneficiaireSeance(reunion.id, {
-      idTontine: tontine.id,
-      nomTontine: tontine.nom,
-      typeAttribution: 'enchere',
-      idMembre: enc.idMembre,
-      nomMembre: enc.nomMembre,
-      montantPot: montantPot - mise,
-      montantEnchere: mise,
-      numeroTour: planningTours.filter(p => p.idTontine === tontine.id && p.statut === 'encaisse').length + 1,
-      modeDesignation: 'enchere',
-    });
-    setGagnant({ nomMembre: enc.nomMembre, montantPot: montantPot - mise, mise });
+    const cycle = await getOrOuvrirCycle();
+    if (!cycle) return;
+    const idPart = resolvePartId(enc.idMembre);
+    await designerGagnantCycle(cycle.id, idPart);
+    const cycleFinal = await cloturerCycle(cycle.id);
+    if (!cycleFinal) return;
+    setGagnant({ nomMembre: cycleFinal.gagnantNom, montantPot: cycleFinal.montantCollecteReel - mise, mise });
     setEtape('confirme');
   };
 
