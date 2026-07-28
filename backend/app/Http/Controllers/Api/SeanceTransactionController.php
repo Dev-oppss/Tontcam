@@ -42,7 +42,7 @@ class SeanceTransactionController extends Controller
             'montant' => ['required', 'numeric', 'min:0.01'],
             'libelle' => ['nullable', 'string', 'max:300'],
             'reference_sanction_id' => ['nullable', 'uuid'],
-            'reference_pret_id' => ['nullable', 'uuid'],
+            'reference_pret_id' => ['nullable', 'uuid', 'required_if:type,remboursement_pret'],
             'caisse_id' => ['nullable', 'uuid'],
             'note' => ['nullable', 'string'],
         ]);

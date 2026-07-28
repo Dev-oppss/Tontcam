@@ -1050,6 +1050,8 @@ function SmartFormWrapper({ type, reunion, membres, banques, prets, sanctions, t
     if (!form.montant || Number(form.montant) <= 0) return;
     if (!isModePaiementValid(form.modePaiement, form.detailsPaiement)) return;
     if (depasseSoldeCaisse) return; // RG-CAI-006 : solde caisse jamais négatif
+    if (type === 'remboursement_pret' && !form.idPret) return; // on ne peut pas rembourser « dans le vide »
+    if (type === 'pret_accorde' && !form.idMembre) return;
     // Nettoyage des champs internes avant envoi
     const { _idTontine, ...cleanForm } = form;
     onSubmit(cleanForm);
@@ -1063,6 +1065,8 @@ function SmartFormWrapper({ type, reunion, membres, banques, prets, sanctions, t
     if (type === 'depot_banque' && !form.idBanque) return false;
     if (type === 'depot_banque' && !form.idMembre) return false;
     if (type === 'attribution_tour' && !form.idMembre) return false;
+    if (type === 'remboursement_pret' && !form.idPret) return false;
+    if (type === 'pret_accorde' && !form.idMembre) return false;
     return true;
   })();
 
