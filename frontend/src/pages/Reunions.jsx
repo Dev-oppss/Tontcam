@@ -79,6 +79,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
 
   const locked   = !!reunion.verrouillee;
   const notOpen  = reunion.statutReunion === 'planifiee';
+  const [bulletinUrl, setBulletinUrl] = useState(null);
 
   // reunion.beneficiairesSeance n'a jamais existé côté API — dérivé ici de la vraie
   // source de vérité (cyclesTontine) pour que le bénéficiaire désigné reste visible
@@ -659,7 +660,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
                   </p>
                 </div>
                 {gagnant.idBulletin && (
-                  <button onClick={() => ouvrirBulletinPdf(gagnant.idBulletin)}
+                  <button onClick={async () => { const url = await ouvrirBulletinPdf(gagnant.idBulletin); if (url) setBulletinUrl(url); }}
                     className="shrink-0 text-xs px-2.5 py-1.5 bg-amber-600 text-white rounded-lg font-medium hover:bg-amber-700 flex items-center gap-1">
                     <FileText size={12}/> Bulletin
                   </button>
@@ -680,6 +681,12 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
           </button>
         </div>
       )}
+
+      <Modal open={!!bulletinUrl} onClose={() => setBulletinUrl(null)} title="Bulletin de gain" size="xl">
+        {bulletinUrl && (
+          <iframe src={bulletinUrl} title="Bulletin de gain" className="w-full rounded-xl border border-gray-200" style={{ height: '75vh' }} />
+        )}
+      </Modal>
     </div>
   );
 }
@@ -1490,6 +1497,7 @@ function BeneficiaireSeancePanel({ reunion }) {
   const [gagnant,      setGagnant]      = useState(null);
   const [miseGagnante, setMiseGagnante] = useState('');
   const [enchereIdGagnant, setEnchereIdGagnant] = useState('');
+  const [bulletinUrl, setBulletinUrl] = useState(null);
 
   const locked = !!reunion.verrouillee;
   // reunion.beneficiairesSeance n'a jamais existé côté API — dérivé ici de la vraie
@@ -1617,7 +1625,7 @@ function BeneficiaireSeancePanel({ reunion }) {
                 {!b.montantEnchere && <p className="text-xs text-amber-600">Montant : {fmt(b.montantPot)}</p>}
               </div>
               {b.idBulletin && (
-                <button onClick={() => ouvrirBulletinPdf(b.idBulletin)}
+                <button onClick={async () => { const url = await ouvrirBulletinPdf(b.idBulletin); if (url) setBulletinUrl(url); }}
                   className="shrink-0 text-xs px-2.5 py-1.5 bg-amber-600 text-white rounded-lg font-medium hover:bg-amber-700 flex items-center gap-1">
                   <FileText size={12}/> Bulletin
                 </button>
@@ -1831,6 +1839,12 @@ function BeneficiaireSeancePanel({ reunion }) {
           )}
         </>
       )}
+
+      <Modal open={!!bulletinUrl} onClose={() => setBulletinUrl(null)} title="Bulletin de gain" size="xl">
+        {bulletinUrl && (
+          <iframe src={bulletinUrl} title="Bulletin de gain" className="w-full rounded-xl border border-gray-200" style={{ height: '75vh' }} />
+        )}
+      </Modal>
     </div>
   );
 }

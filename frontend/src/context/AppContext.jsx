@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { request, getApiToken, setApiToken, clearApiToken } from '../lib/api';
+import { request, getApiToken, setApiToken, clearApiToken, API_BASE } from '../lib/api';
 import * as adapt from '../lib/adapters';
 import * as mock from '../data/mockData';
 
@@ -1205,10 +1205,23 @@ export const AppProvider = ({ children }) => {
       return data;
     } catch (err) { return handleError(err); }
   };
+  // Résout data.pdf_url en URL absolue même si le backend le renvoie en relatif
+  // (dépend d'APP_URL dans le .env Laravel, pas toujours configuré correctement
+  // en local) — sinon window.open ouvre par rapport à l'origine du frontend
+  // (Vite, port 5173) au lieu du backend, et la SPA React redirige vers le
+  // dashboard faute de route connue pour ce chemin.
+  // Retourne l'URL résolue au lieu de faire window.open : affichée dans une
+  // vraie modale intégrée (iframe), pas une popup navigateur potentiellement bloquée.
+  const resolveBulletinUrl = (pdfUrl) => {
+    if (!pdfUrl) return null;
+    if (/^https?:\/\//i.test(pdfUrl)) return pdfUrl;
+    const origin = API_BASE.replace(/\/api\/?$/, '');
+    return `${origin}${pdfUrl.startsWith('/') ? '' : '/'}${pdfUrl}`;
+  };
   const ouvrirBulletinPdf = async (idBulletin) => {
     try {
       const data = await request(`/bulletins/${idBulletin}/pdf`);
-      window.open(data.pdf_url, '_blank');
+      return resolveBulletinUrl(data.pdf_url);
     } catch (err) { return handleError(err); }
   };
 
