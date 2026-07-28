@@ -30,6 +30,49 @@ class PretController extends Controller
     }
 
     /**
+     * POST /prets/import-historique — réservé super_admin (onboarding d'une association
+     * qui a déjà des prêts en cours avant d'utiliser l'app).
+     */
+    public function importHistorique(Request $request): JsonResponse
+    {
+        if ($request->user()->role !== 'super_admin') {
+            return response()->json(['message' => "Réservé au super_admin."], 403);
+        }
+
+        $data = $request->validate([
+            'caisse_id' => ['required', 'uuid'],
+            'emprunteur_id' => ['required', 'uuid'],
+            'montant_principal' => ['required', 'numeric', 'min:1'],
+            'taux_interet_mensuel' => ['required', 'numeric', 'min:0'],
+            'taux_penalite_mensuel' => ['nullable', 'numeric', 'min:0'],
+            'methode_amortissement' => ['nullable', 'in:lineaire'],
+            'statut' => ['required', 'in:en_cours,en_retard,defaut,solde'],
+            'date_demande' => ['required', 'date'],
+            'date_approbation' => ['nullable', 'date'],
+            'date_debut' => ['nullable', 'date'],
+            'date_fin_prevue' => ['nullable', 'date'],
+            'date_solde' => ['nullable', 'date'],
+            'avaliste_id' => ['nullable', 'uuid'],
+            'notes' => ['nullable', 'string'],
+            'echeances' => ['required', 'array', 'min:1'],
+            'echeances.*.numero_echeance' => ['required', 'integer', 'min:1'],
+            'echeances.*.date_echeance' => ['required', 'date'],
+            'echeances.*.montant_capital' => ['required', 'numeric', 'min:0'],
+            'echeances.*.montant_interet' => ['required', 'numeric', 'min:0'],
+            'echeances.*.statut' => ['required', 'in:a_venir,payee,partielle,en_retard,penalisee'],
+            'echeances.*.montant_verse' => ['nullable', 'numeric', 'min:0'],
+            'echeances.*.date_versement_reel' => ['nullable', 'date'],
+        ]);
+
+        $caisse = Caisse::whereHas('association', fn ($q) => $this->scope->scopeAssociation($q))->findOrFail($data['caisse_id']);
+        $data['caisse_id'] = $caisse->id;
+
+        $pret = $this->service->importerHistorique($data, $request->user());
+
+        return response()->json($pret->load('emprunteur', 'echeances'), 201);
+    }
+
+    /**
      * Dépôt d'une demande de prêt.
      */
     public function store(Request $request): JsonResponse

@@ -53,6 +53,38 @@ class SanctionController extends Controller
         return response()->json($sanction->load('type'), 201);
     }
 
+    /**
+     * POST /sanctions/import-historique — réservé super_admin (onboarding d'une association
+     * qui a déjà appliqué des sanctions avant d'utiliser l'app).
+     */
+    public function importHistorique(Request $request): JsonResponse
+    {
+        if ($request->user()->role !== 'super_admin') {
+            return response()->json(['message' => "Réservé au super_admin."], 403);
+        }
+
+        $data = $request->validate([
+            'membre_id' => ['required', 'uuid'],
+            'type_sanction_id' => ['required', 'uuid'],
+            'motif' => ['required', 'string'],
+            'date_application' => ['required', 'date'],
+            'reunion_id' => ['nullable', 'uuid'],
+            'paiement' => ['nullable', 'array'],
+            'paiement.caisse_id' => ['required_with:paiement', 'uuid'],
+            'paiement.date' => ['nullable', 'date'],
+        ]);
+
+        $membre = Membre::where('association_id', $this->scope->associationId())->findOrFail($data['membre_id']);
+        $type = TypeSanction::where('association_id', $this->scope->associationId())->findOrFail($data['type_sanction_id']);
+        $reunion = !empty($data['reunion_id']) ? \App\Models\Reunion::findOrFail($data['reunion_id']) : null;
+
+        $sanction = $this->service->importerHistorique(
+            $membre, $type, $data['motif'], $data['date_application'], $request->user(), $reunion, $data['paiement'] ?? null
+        );
+
+        return response()->json($sanction->load('type'), 201);
+    }
+
     public function show(string $id): JsonResponse
     {
         return response()->json($this->scope->scopeAssociation(SanctionMembre::query())->with('membre', 'type')->findOrFail($id));

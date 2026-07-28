@@ -114,6 +114,7 @@ Route::middleware(['auth:sanctum', 'association.context'])->group(function () {
     Route::put('/comptes-bancaires/{id}', [CompteBancaireController::class, 'update']);
 
     Route::apiResource('prets', PretController::class)->except(['destroy'])->whereUuid('pret');
+    Route::post('/prets/import-historique', [PretController::class, 'importHistorique']);
     Route::post('/prets/{id}/valider', [PretController::class, 'valider']);
     Route::post('/prets/{id}/approuver', [PretController::class, 'approuver']);
     Route::post('/prets/{id}/refuser', [PretController::class, 'refuser']);
@@ -123,6 +124,7 @@ Route::middleware(['auth:sanctum', 'association.context'])->group(function () {
 
     // ── Sanctions & Social ──────────────────────────────────────
     Route::apiResource('sanctions', SanctionController::class)->except(['destroy'])->whereUuid('sanction');
+    Route::post('/sanctions/import-historique', [SanctionController::class, 'importHistorique']);
     Route::post('/sanctions/{id}/payer', [SanctionController::class, 'payer']);
     Route::get('/types-sanction', [TypeSanctionController::class, 'index']);
     Route::post('/types-sanction', [TypeSanctionController::class, 'store']);

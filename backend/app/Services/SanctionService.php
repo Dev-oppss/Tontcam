@@ -132,6 +132,51 @@ class SanctionService
         ]);
     }
 
+    /**
+     * Import historique (super_admin uniquement) : applique une sanction avec sa vraie date
+     * passée (created_at forcé), au lieu de la date du jour comme le ferait appliquerManuelle().
+     * Si la sanction était déjà payée dans la réalité, rejoue aussi l'entrée en caisse
+     * correspondante à sa date historique.
+     */
+    public function importerHistorique(Membre $membre, TypeSanction $type, string $motif, string $dateApplication, Utilisateur $superAdmin, ?Reunion $reunion = null, ?array $paiement = null): SanctionMembre
+    {
+        if ($superAdmin->role !== 'super_admin') {
+            throw new RuntimeException("L'import historique de sanctions est réservé au super_admin.");
+        }
+
+        $sanction = SanctionMembre::create([
+            'association_id' => $membre->association_id,
+            'membre_id' => $membre->id,
+            'type_sanction_id' => $type->id,
+            'reunion_id' => $reunion?->id,
+            'montant' => $this->calculerMontant($type),
+            'motif' => trim($motif . ' [Importé — historique pré-app]'),
+            'statut' => $paiement ? 'payee' : 'due',
+            'est_automatique' => false,
+            'appliquee_par' => $superAdmin->id,
+            'payee_at' => $paiement ? ($paiement['date'] ?? $dateApplication) : null,
+        ]);
+
+        // created_at n'est pas mass-assignable par défaut : on le force explicitement
+        // pour que la sanction apparaisse à sa vraie date dans l'historique, pas à aujourd'hui.
+        $sanction->timestamps = false;
+        $sanction->created_at = $dateApplication;
+        $sanction->updated_at = $paiement['date'] ?? $dateApplication;
+        $sanction->save();
+
+        if ($paiement && ! empty($paiement['caisse_id'])) {
+            $transaction = app(CaisseService::class)->entree(
+                \App\Models\Caisse::findOrFail($paiement['caisse_id']),
+                (float) $sanction->montant,
+                "Paiement sanction (import historique) — {$membre->nom} {$membre->prenom}",
+                ['reference_type' => 'sanction', 'reference_id' => $sanction->id, 'created_by' => $superAdmin->id, 'valide_par' => $superAdmin->id, 'date' => $paiement['date'] ?? $dateApplication]
+            );
+            $sanction->update(['transaction_id' => $transaction->id]);
+        }
+
+        return $sanction;
+    }
+
     private function calculerMontant(TypeSanction $type): float
     {
         return match ($type->mode_calcul) {

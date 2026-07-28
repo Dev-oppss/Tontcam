@@ -244,6 +244,103 @@ class PretService
         return $count;
     }
 
+    /**
+     * Import historique (super_admin uniquement) : crée un prêt directement dans son état
+     * final connu (en_cours, solde, en_retard, defaut...), avec ses vraies dates passées,
+     * sans repasser par le cycle demande→validation→approbation→décaissement en temps réel.
+     * Rejoue aussi les mouvements de caisse réels (décaissement + remboursements déjà faits)
+     * avec leur date historique, pour que le solde de caisse reflète la réalité.
+     *
+     * $data attend :
+     *   caisse_id, emprunteur_id, montant_principal, taux_interet_mensuel, nb_echeances,
+     *   statut (statut FINAL connu : en_cours|en_retard|defaut|solde),
+     *   date_demande, date_approbation, date_debut, date_fin_prevue (nullable), date_solde (nullable),
+     *   avaliste_id (nullable), notes (nullable),
+     *   echeances: [{numero_echeance, date_echeance, montant_capital, montant_interet,
+     *               statut (a_venir|payee|partielle|en_retard), montant_verse, date_versement_reel (nullable)}]
+     */
+    public function importerHistorique(array $data, Utilisateur $superAdmin): Pret
+    {
+        if ($superAdmin->role !== 'super_admin') {
+            throw new RuntimeException("L'import historique de prêts est réservé au super_admin.");
+        }
+
+        $caisse = Caisse::findOrFail($data['caisse_id']);
+        $echeancesData = $data['echeances'];
+        $montantTotalDu = (float) $data['montant_principal'] + array_sum(array_column($echeancesData, 'montant_interet'));
+        $montantRembourse = array_sum(array_column($echeancesData, 'montant_verse'));
+
+        return DB::transaction(function () use ($data, $caisse, $echeancesData, $montantTotalDu, $montantRembourse, $superAdmin) {
+            $pret = Pret::create([
+                'caisse_id' => $caisse->id,
+                'emprunteur_id' => $data['emprunteur_id'],
+                'montant_principal' => $data['montant_principal'],
+                'taux_interet_mensuel' => $data['taux_interet_mensuel'],
+                'taux_penalite_mensuel' => $data['taux_penalite_mensuel'] ?? $caisse->taux_penalite_mensuel,
+                'methode_amortissement' => $data['methode_amortissement'] ?? 'lineaire',
+                'nb_echeances' => count($echeancesData),
+                'montant_echeance' => $echeancesData[0]['montant_capital'] + $echeancesData[0]['montant_interet'],
+                'interet_total' => array_sum(array_column($echeancesData, 'montant_interet')),
+                'montant_total_du' => $montantTotalDu,
+                'montant_rembourse' => $montantRembourse,
+                'capital_restant' => max(0, (float) $data['montant_principal'] - array_sum(array_map(
+                    fn ($e) => min($e['montant_verse'], $e['montant_capital']), $echeancesData
+                ))),
+                'statut' => $data['statut'],
+                'date_demande' => $data['date_demande'],
+                'date_approbation' => $data['date_approbation'] ?? null,
+                'date_debut' => $data['date_debut'] ?? null,
+                'date_fin_prevue' => $data['date_fin_prevue'] ?? null,
+                'date_solde' => $data['date_solde'] ?? null,
+                'approuve_par' => $superAdmin->id,
+                'avaliste_id' => $data['avaliste_id'] ?? null,
+                'notes' => trim(($data['notes'] ?? '') . ' [Importé — historique pré-app]'),
+                'created_by' => $superAdmin->id,
+            ]);
+
+            // Rejoue le décaissement réel à sa date historique.
+            if (! empty($data['date_debut'])) {
+                $transactionDecaissement = app(CaisseService::class)->sortie(
+                    $caisse,
+                    (float) $data['montant_principal'],
+                    "Décaissement prêt (import historique) — {$pret->emprunteur->nom} {$pret->emprunteur->prenom}",
+                    ['reference_type' => 'pret', 'reference_id' => $pret->id, 'created_by' => $superAdmin->id, 'valide_par' => $superAdmin->id, 'date' => $data['date_debut']]
+                );
+                $pret->update(['transaction_decaissement_id' => $transactionDecaissement->id]);
+            }
+
+            foreach ($echeancesData as $e) {
+                $echeance = EcheancePret::create([
+                    'pret_id' => $pret->id,
+                    'numero_echeance' => $e['numero_echeance'],
+                    'date_echeance' => $e['date_echeance'],
+                    'montant_capital' => $e['montant_capital'],
+                    'montant_interet' => $e['montant_interet'],
+                    'montant_total' => $e['montant_capital'] + $e['montant_interet'],
+                    'montant_verse' => $e['montant_verse'] ?? 0,
+                    'capital_restant_apres' => $e['capital_restant_apres'] ?? 0,
+                    'statut' => $e['statut'],
+                    'date_versement_reel' => $e['date_versement_reel'] ?? null,
+                ]);
+
+                // Rejoue le remboursement réel à sa date historique.
+                if (($e['montant_verse'] ?? 0) > 0 && ! empty($e['date_versement_reel'])) {
+                    $transactionRemb = app(CaisseService::class)->entree(
+                        $caisse,
+                        (float) $e['montant_verse'],
+                        "Remboursement prêt (import historique) — échéance n°{$e['numero_echeance']}",
+                        ['reference_type' => 'echeance_pret', 'reference_id' => $echeance->id, 'created_by' => $superAdmin->id, 'valide_par' => $superAdmin->id, 'date' => $e['date_versement_reel']]
+                    );
+                    $echeance->update(['transaction_id' => $transactionRemb->id]);
+                }
+            }
+
+            $this->loguerStatut($pret, null, $data['statut'], 'Importé — historique pré-app', $superAdmin);
+
+            return $pret;
+        });
+    }
+
     private function loguerStatut(Pret $pret, ?string $avant, string $apres, ?string $commentaire = null, ?Utilisateur $auteur = null): void
     {
         HistoriquePret::create([
