@@ -242,7 +242,7 @@ export default function Tontines() {
       <PageHeader
         title="Tontines"
         subtitle={`${tontines.filter(t=>t.statut==='active').length} tontine(s) active(s)`}
-        action={<button onClick={() => { setForm(EMPTY_FORM); setShowAdd(true); }} className="btn-primary"><Plus size={15}/> Nouvelle tontine</button>}
+        action={<button onClick={() => { setForm({ ...EMPTY_FORM, typeAttribution: activeTab !== 'toutes' ? activeTab : 'rotation' }); setShowAdd(true); }} className="btn-primary"><Plus size={15}/> Nouvelle tontine</button>}
       />
 
       {/* Stats */}

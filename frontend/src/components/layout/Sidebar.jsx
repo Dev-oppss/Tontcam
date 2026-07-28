@@ -21,9 +21,9 @@ const nav = [
     label: 'Tontines',
     children: [
       { label: 'Tontines actives', path: '/tontines' },
-      { label: 'Rotations', path: '/rotations' },
+      { label: 'Rotations', path: '/tontines?type=rotation' },
       { label: 'Tirage au sort', path: '/tontines?type=tirage' },
-      { label: 'Enchères', path: '/encheres' },
+      { label: 'Enchères', path: '/tontines?type=enchere' },
     ],
   },
   {
