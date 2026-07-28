@@ -74,7 +74,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
     tontines, membres, membresParTontine,
     addSeanceTransaction, addSanction, seanceTransactions,
     planningTours, ouvrirCycle, saisirCotisationCycle, designerGagnantCycle, cloturerCycle,
-    encheres, cyclesTontine,
+    encheres, cyclesTontine, ouvrirBulletinPdf,
   } = useApp();
 
   const locked   = !!reunion.verrouillee;
@@ -91,7 +91,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
         idTontine: c.idTontine, nomTontine: t?.nom || '',
         typeAttribution: t?.typeAttribution, nomMembre: c.gagnantNom,
         numeroTour: c.numeroCycle, montantEnchere: c.montantEnchere,
-        montantPot: c.montantCollecteReel, dateAttrib: c.dateCloture,
+        montantPot: c.montantCollecteReel, dateAttrib: c.dateCloture, idBulletin: c.idBulletin,
       };
     }), [cyclesTontine, tontines, reunion.id]);
 
@@ -227,7 +227,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
     await designerGagnantCycle(cycleActuelId, idPart);
     const cycleFinal = await cloturerCycle(cycleActuelId);
     if (!cycleFinal) return;
-    setGagnant({ nomMembre: cycleFinal.gagnantNom, montantPot: cycleFinal.montantCollecteReel });
+    setGagnant({ nomMembre: cycleFinal.gagnantNom, montantPot: cycleFinal.montantCollecteReel, idBulletin: cycleFinal.idBulletin });
     setEtape('recap');
   };
 
@@ -237,7 +237,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
     if (!apresDesignation) return;
     const cycleFinal = await cloturerCycle(cycleActuelId);
     if (!cycleFinal) return;
-    setGagnant({ nomMembre: cycleFinal.gagnantNom, montantPot: cycleFinal.montantCollecteReel });
+    setGagnant({ nomMembre: cycleFinal.gagnantNom, montantPot: cycleFinal.montantCollecteReel, idBulletin: cycleFinal.idBulletin });
     setTirageEffectue(true);
     setEtape('recap');
   };
@@ -248,7 +248,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
     await designerGagnantCycle(cycleActuelId, idPart);
     const cycleFinal = await cloturerCycle(cycleActuelId);
     if (!cycleFinal) return;
-    setGagnant({ nomMembre: cycleFinal.gagnantNom, montantPot: cycleFinal.montantCollecteReel - Number(mise), mise: Number(mise) });
+    setGagnant({ nomMembre: cycleFinal.gagnantNom, montantPot: cycleFinal.montantCollecteReel - Number(mise), mise: Number(mise), idBulletin: cycleFinal.idBulletin });
     setEtape('recap');
   };
 
@@ -651,13 +651,19 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
             {gagnant && (
               <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 flex items-center gap-3">
                 <Trophy size={20} className="text-amber-500 shrink-0"/>
-                <div>
+                <div className="flex-1 min-w-0">
                   <p className="font-bold text-amber-900 text-sm">{gagnant.nomMembre}</p>
                   <p className="text-xs text-amber-600">
                     {TYPE_ICONS[typeAttr]} {TYPE_LABELS[typeAttr]} ·{' '}
                     {gagnant.mise ? `Mise ${fmt(gagnant.mise)} - Net ${fmt(gagnant.montantPot)}` : fmt(gagnant.montantPot)}
                   </p>
                 </div>
+                {gagnant.idBulletin && (
+                  <button onClick={() => ouvrirBulletinPdf(gagnant.idBulletin)}
+                    className="shrink-0 text-xs px-2.5 py-1.5 bg-amber-600 text-white rounded-lg font-medium hover:bg-amber-700 flex items-center gap-1">
+                    <FileText size={12}/> Bulletin
+                  </button>
+                )}
               </div>
             )}
 
@@ -692,7 +698,7 @@ function RapportSeance({ reunion, transactions, membres, onClose }) {
         idTontine: c.idTontine, nomTontine: t?.nom || '',
         typeAttribution: t?.typeAttribution, nomMembre: c.gagnantNom,
         numeroTour: c.numeroCycle, montantEnchere: c.montantEnchere,
-        montantPot: c.montantCollecteReel, dateAttrib: c.dateCloture,
+        montantPot: c.montantCollecteReel, dateAttrib: c.dateCloture, idBulletin: c.idBulletin,
       };
     }), [cyclesTontine, tontines, reunion.id]);
 
@@ -1476,7 +1482,7 @@ function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, san
 function BeneficiaireSeancePanel({ reunion }) {
   const {
     tontines, membres, membresParTontine, planningTours,
-    encheres, cyclesTontine, ouvrirCycle, designerGagnantCycle, cloturerCycle, showToast,
+    encheres, cyclesTontine, ouvrirCycle, designerGagnantCycle, cloturerCycle, showToast, ouvrirBulletinPdf,
   } = useApp();
 
   const [idTontine,    setIdTontine]    = useState('');
@@ -1498,7 +1504,7 @@ function BeneficiaireSeancePanel({ reunion }) {
         idTontine: c.idTontine, nomTontine: t?.nom || '',
         typeAttribution: t?.typeAttribution, nomMembre: c.gagnantNom,
         numeroTour: c.numeroCycle, montantEnchere: c.montantEnchere,
-        montantPot: c.montantCollecteReel, dateAttrib: c.dateCloture,
+        montantPot: c.montantCollecteReel, dateAttrib: c.dateCloture, idBulletin: c.idBulletin,
       };
     }), [cyclesTontine, tontines, reunion.id]);
 
@@ -1563,7 +1569,7 @@ function BeneficiaireSeancePanel({ reunion }) {
     const cycleFinal = await cloturerCycle(cycle.id);
     if (!cycleFinal) return;
     setEtape('confirme');
-    setGagnant({ nomMembre: cycleFinal.gagnantNom, montantPot: cycleFinal.montantCollecteReel });
+    setGagnant({ nomMembre: cycleFinal.gagnantNom, montantPot: cycleFinal.montantCollecteReel, idBulletin: cycleFinal.idBulletin });
   };
 
   const handleTirage = async () => {
@@ -1574,7 +1580,7 @@ function BeneficiaireSeancePanel({ reunion }) {
     if (!apresDesignation) return;
     const cycleFinal = await cloturerCycle(cycle.id);
     if (!cycleFinal) return;
-    setGagnant({ nomMembre: cycleFinal.gagnantNom, montantPot: cycleFinal.montantCollecteReel });
+    setGagnant({ nomMembre: cycleFinal.gagnantNom, montantPot: cycleFinal.montantCollecteReel, idBulletin: cycleFinal.idBulletin });
     setEtape('confirme');
   };
 
@@ -1589,7 +1595,7 @@ function BeneficiaireSeancePanel({ reunion }) {
     await designerGagnantCycle(cycle.id, idPart);
     const cycleFinal = await cloturerCycle(cycle.id);
     if (!cycleFinal) return;
-    setGagnant({ nomMembre: cycleFinal.gagnantNom, montantPot: cycleFinal.montantCollecteReel - mise, mise });
+    setGagnant({ nomMembre: cycleFinal.gagnantNom, montantPot: cycleFinal.montantCollecteReel - mise, mise, idBulletin: cycleFinal.idBulletin });
     setEtape('confirme');
   };
 
@@ -1610,6 +1616,12 @@ function BeneficiaireSeancePanel({ reunion }) {
                 {b.montantEnchere > 0 && <p className="text-xs text-amber-600">Mise : {fmt(b.montantEnchere)} | Net reçu : {fmt(b.montantPot)}</p>}
                 {!b.montantEnchere && <p className="text-xs text-amber-600">Montant : {fmt(b.montantPot)}</p>}
               </div>
+              {b.idBulletin && (
+                <button onClick={() => ouvrirBulletinPdf(b.idBulletin)}
+                  className="shrink-0 text-xs px-2.5 py-1.5 bg-amber-600 text-white rounded-lg font-medium hover:bg-amber-700 flex items-center gap-1">
+                  <FileText size={12}/> Bulletin
+                </button>
+              )}
               <span className="text-xs px-2 py-0.5 bg-amber-200 text-amber-800 rounded-full font-medium">OK Confirmé</span>
             </div>
           ))}
