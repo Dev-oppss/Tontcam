@@ -1780,6 +1780,8 @@ function PanneauPresences({ reunion, membres }) {
 
   const [motifModal, setMotifModal] = useState(null); // {idMembre}
   const [motif, setMotif] = useState('');
+  const [heureModal, setHeureModal] = useState(null); // {idMembre}
+  const [heureSaisie, setHeureSaisie] = useState('');
 
   if (notOpen) {
     return (
@@ -1799,7 +1801,21 @@ function PanneauPresences({ reunion, membres }) {
       setMotif('');
       return;
     }
-    setPresenceMembre(reunion.id, idMembre, { statut, heureArrivee: statut === 'present' || statut === 'en_retard' ? new Date().toTimeString().slice(0,5) : '' });
+    if (statut === 'present') {
+      // Heure d'arrivée éditable (pré-remplie avec l'heure actuelle) : le pointage
+      // se fait souvent a posteriori, on ne peut pas se fier uniquement à l'heure du clic.
+      const existante = getPresence(idMembre);
+      setHeureModal({ idMembre });
+      setHeureSaisie(existante?.heureArrivee || new Date().toTimeString().slice(0, 5));
+      return;
+    }
+    setPresenceMembre(reunion.id, idMembre, { statut, heureArrivee: '' });
+  };
+
+  const confirmHeure = () => {
+    setPresenceMembre(reunion.id, heureModal.idMembre, { statut: 'present', heureArrivee: heureSaisie });
+    setHeureModal(null);
+    setHeureSaisie('');
   };
 
   const confirmMotif = () => {
@@ -1876,6 +1892,14 @@ function PanneauPresences({ reunion, membres }) {
         <FormField label="Motif" required>
           <input className="input" placeholder="Ex : Maladie, voyage, empêchement professionnel…" value={motif} onChange={e => setMotif(e.target.value)} autoFocus/>
         </FormField>
+      </Modal>
+
+      <Modal open={!!heureModal} onClose={() => setHeureModal(null)} title="Heure d'arrivée"
+        footer={<><button onClick={() => setHeureModal(null)} className="btn-secondary">Annuler</button><button onClick={confirmHeure} className="btn-primary">Confirmer</button></>}>
+        <FormField label="Heure d'arrivée" required>
+          <input type="time" className="input" value={heureSaisie} onChange={e => setHeureSaisie(e.target.value)} autoFocus/>
+        </FormField>
+        <p className="text-xs text-gray-400 mt-2">Pré-remplie avec l'heure actuelle — corrige-la si le pointage se fait après coup. Le statut (présent / en retard) est recalculé automatiquement selon l'heure de début de la réunion.</p>
       </Modal>
     </div>
   );
