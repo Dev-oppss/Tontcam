@@ -14,9 +14,9 @@ use RuntimeException;
 
 class TontineCycleService
 {
-    public function ouvrirCycle(Tontine $tontine, Reunion $reunion): CycleTontine
+    public function ouvrirCycle(Tontine $tontine, Reunion $reunion, ?Utilisateur $actingUser = null): CycleTontine
     {
-        $this->assertReunionEligiblePourTirage($tontine, $reunion);
+        $this->assertReunionEligiblePourTirage($tontine, $reunion, $actingUser);
 
         $numero = ($tontine->cycles()->max('numero_cycle') ?? 0) + 1;
 
@@ -168,7 +168,7 @@ class TontineCycleService
      *  - c'est la PROCHAINE réunion chronologique de l'association pas encore utilisée
      *    par cette tontine — on ne peut pas "sauter" une séance ni en piocher une au hasard.
      */
-    private function assertReunionEligiblePourTirage(Tontine $tontine, Reunion $reunion): void
+    private function assertReunionEligiblePourTirage(Tontine $tontine, Reunion $reunion, ?Utilisateur $actingUser = null): void
     {
         if ($reunion->association_id !== $tontine->association_id) {
             throw new RuntimeException("Cette réunion n'appartient pas à l'association de la tontine.");
@@ -188,6 +188,16 @@ class TontineCycleService
         $partsRestantes = $tontine->parts()->where('statut', 'disponible')->count();
         if ($partsRestantes === 0) {
             throw new RuntimeException('Toutes les parts de cette tontine ont déjà été attribuées : aucun tirage supplémentaire n\'est possible.');
+        }
+
+        // Le super_admin peut bypasser la contrainte de sequence chronologique
+        // stricte : cas de donnees seedees/importees ou une reunion passee
+        // (ex. reunion n°1) n'a jamais eu de tirage reellement effectue et ne
+        // sera jamais rattrapee retroactivement -> il ne faut pas bloquer tout
+        // tirage futur indefiniment. A utiliser avec prudence : ca laisse un
+        // trou definitif dans la rotation pour la reunion sautee.
+        if ($actingUser?->role === 'super_admin') {
+            return;
         }
 
         $prochaineReunionEligible = Reunion::where('association_id', $tontine->association_id)

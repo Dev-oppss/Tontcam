@@ -76,7 +76,7 @@ class CycleTontineController extends Controller
         $reunion = Reunion::findOrFail($data['reunion_id']);
 
         try {
-            $cycle = $this->service->ouvrirCycle($tontine, $reunion);
+            $cycle = $this->service->ouvrirCycle($tontine, $reunion, $request->user());
         } catch (\Throwable $e) {
             return response()->json(['message' => $e->getMessage()], 422);
         }
@@ -159,7 +159,7 @@ class CycleTontineController extends Controller
             $cycle = \Illuminate\Support\Facades\DB::transaction(function () use ($tontine, $data, $cycle, $request) {
                 if (! $cycle) {
                     $reunion = \App\Models\Reunion::findOrFail($data['reunion_id']);
-                    $cycle = $this->service->ouvrirCycle($tontine, $reunion);
+                    $cycle = $this->service->ouvrirCycle($tontine, $reunion, $request->user());
                 }
 
                 $partIdForcee = null;
