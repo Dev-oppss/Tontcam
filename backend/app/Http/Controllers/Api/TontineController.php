@@ -55,7 +55,7 @@ class TontineController extends Controller
                 // Sans tri explicite, l'ordre des cycles chargés n'est pas garanti (dépend
                 // du plan d'exécution SQL) : on force le même ordre que GET /tontines/{id}/cycles.
                 'cycles' => fn ($q) => $q->orderByDesc('numero_cycle'),
-                'cycles.encherites.membre', 'cycles.gagnant.membre',
+                'cycles.encherites.membre', 'cycles.gagnant.membre', 'cycles.bulletin',
             ])
             ->findOrFail($id);
 

@@ -2284,15 +2284,19 @@ export function Reunions() {
     reunions, membres, user, presences,
     addReunion, updateReunion, chargerReunion, ouvrirSeance,
     addPointODJ, updatePointODJ, removePointODJ, movePointODJ, cloturerSeance,
-    seanceTransactions, showToast,
+    seanceTransactions, chargerSeanceTransactions, showToast,
   } = useApp();
 
   // La liste (index()) ne charge jamais l'ordre du jour / les présences / les
   // signatures (trop coûteux pour un listing) : sans ce fetch dédié, ouvrir le
   // détail d'une réunion depuis la liste affichait un ordre du jour vide tant
   // qu'aucune action (ouvrir/modifier/clôturer) n'avait déjà rafraîchi l'objet.
+  // Idem pour les transactions de séance (Prêt/Sanctions/Aide sociale/Banque/
+  // Divers + condition d'affichage du bouton "Rapport PV") : sans cet appel,
+  // seanceTransactions restait à [] après un rafraîchissement de page tant
+  // qu'aucune transaction n'avait été ajoutée en direct dans CETTE session.
   useEffect(() => {
-    if (routeId) chargerReunion(routeId);
+    if (routeId) { chargerReunion(routeId); chargerSeanceTransactions(routeId); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [routeId]);
 
