@@ -13,15 +13,15 @@ use RuntimeException;
 
 class ReunionService
 {
-    public function planifier(array $data, Utilisateur $createur): Reunion
+    public function planifier(array $data, Utilisateur $createur, string $statutInitial = 'planifiee'): Reunion
     {
-        return DB::transaction(function () use ($data, $createur) {
+        return DB::transaction(function () use ($data, $createur, $statutInitial) {
             $dernierNumero = Reunion::where('association_id', $data['association_id'])->max('numero') ?? 0;
 
             $reunion = Reunion::create([
                 ...$data,
                 'numero' => $dernierNumero + 1,
-                'statut' => 'planifiee',
+                'statut' => $statutInitial,
                 'created_by' => $createur->id,
             ]);
 
@@ -39,7 +39,11 @@ class ReunionService
                 ]);
             }
 
-            app(NotificationService::class)->preparerEnvoi($reunion);
+            // Une réunion importée pour l'historique a déjà eu lieu : pas de notification
+            // à envoyer aux membres, ils n'ont rien à préparer pour un événement passé.
+            if ($statutInitial === 'planifiee') {
+                app(NotificationService::class)->preparerEnvoi($reunion);
+            }
 
             return $reunion;
         });

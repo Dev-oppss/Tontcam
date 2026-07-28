@@ -29,10 +29,18 @@ class ReunionController extends Controller
     public function store(Request $request): JsonResponse
     {
         $this->authorize('create', Reunion::class);
+
+        // RG-REU-002 (import historique) : seul le super_admin peut créer une réunion
+        // à une date passée ou aujourd'hui, pour permettre l'import de l'historique des
+        // associations qui utilisaient déjà un système (papier, etc.) avant l'app.
+        // Tous les autres rôles restent soumis à la règle normale (24h de préavis).
+        $estImportHistorique = $request->user()->role === 'super_admin';
+
         $data = $request->validate([
             'type' => ['required', 'in:ordinaire,extraordinaire,ag,conseil_bureau'],
-            // RG-REU-002 : au moins 24h entre la publication (maintenant) et la tenue de la réunion.
-            'date_reunion' => ['required', 'date', 'after_or_equal:' . now()->addDay()->format('Y-m-d')],
+            'date_reunion' => $estImportHistorique
+                ? ['required', 'date']
+                : ['required', 'date', 'after_or_equal:' . now()->addDay()->format('Y-m-d')],
             'heure_debut' => ['required'],
             'heure_fin_prevue' => ['nullable'],
             'lieu' => ['required', 'string'],
@@ -52,7 +60,14 @@ class ReunionController extends Controller
             return response()->json(['message' => 'Une réunion est déjà planifiée à cette date pour cette association.'], 422);
         }
 
-        $reunion = $this->service->planifier($data, $request->user());
+        // Une réunion importée pour une date passée n'a plus de sens en statut "planifiee" :
+        // elle a déjà eu lieu. Le super_admin pourra ensuite y saisir présences/décisions
+        // et la clôturer normalement depuis l'UI.
+        $estDatePassee = \Illuminate\Support\Carbon::parse($data['date_reunion'])->isPast()
+            && ! \Illuminate\Support\Carbon::parse($data['date_reunion'])->isToday();
+        $statutInitial = ($estImportHistorique && $estDatePassee) ? 'tenue' : 'planifiee';
+
+        $reunion = $this->service->planifier($data, $request->user(), $statutInitial);
 
         return response()->json($reunion->load('ordreDuJour'), 201);
     }
