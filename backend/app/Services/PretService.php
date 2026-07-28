@@ -181,6 +181,53 @@ class PretService
     }
 
     /**
+     * Remboursement « libre » : le trésorier saisit un montant global (pas une échéance
+     * précise) — typiquement depuis le journal de séance de réunion. On répartit ce
+     * montant sur les échéances impayées dans l'ordre chronologique (la plus ancienne
+     * d'abord), en réutilisant rembourser() échéance par échéance pour ne jamais
+     * dupliquer la logique de mise à jour (montant_verse, capital_restant, clôture
+     * automatique si le prêt est intégralement soldé). Si le montant excède le reste dû,
+     * on refuse plutôt que de laisser un trop-perçu invisible.
+     */
+    public function rembourserLibre(Pret $pret, float $montant, Utilisateur $tresorier): array
+    {
+        if ($montant <= 0) {
+            throw new RuntimeException('Le montant du remboursement doit être positif.');
+        }
+
+        return DB::transaction(function () use ($pret, $montant, $tresorier) {
+            $restant = $montant;
+            $echeancesTouchees = [];
+
+            $echeances = $pret->echeances()
+                ->whereIn('statut', ['a_venir', 'partielle', 'en_retard'])
+                ->orderBy('numero_echeance')
+                ->get();
+
+            foreach ($echeances as $echeance) {
+                if ($restant <= 0) {
+                    break;
+                }
+                $du = (float) $echeance->montant_total - (float) $echeance->montant_verse;
+                if ($du <= 0) {
+                    continue;
+                }
+                $aAppliquer = min($restant, $du);
+                $echeancesTouchees[] = $this->rembourser($pret->fresh(), $echeance, $aAppliquer, $tresorier);
+                $restant -= $aAppliquer;
+            }
+
+            if ($restant > 0.01) {
+                throw new RuntimeException(
+                    'Le montant saisi dépasse le reste à payer du prêt de ' . number_format($restant, 0, ',', ' ') . ' FCFA.'
+                );
+            }
+
+            return $echeancesTouchees;
+        });
+    }
+
+    /**
      * Tableau d'amortissement — méthode linéaire (RG-PRT / cahier des charges 5.3).
      */
     public function genererAmortissement(Pret $pret): array
