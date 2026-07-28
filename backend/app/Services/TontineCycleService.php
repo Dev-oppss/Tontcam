@@ -50,6 +50,110 @@ class TontineCycleService
     }
 
     /**
+     * Import historique (super_admin uniquement) : crée un cycle de tontine déjà joué
+     * (tirage déjà fait, cotisations déjà versées) avec ses vraies dates passées, sans
+     * repasser par le tirage au sort / les enchères en temps réel. Réutilise
+     * BulletinGainService::genererDepuisCycle() pour rester cohérent avec le flux normal
+     * (mêmes retenues prêts/sanctions, même contrat de données).
+     *
+     * $data attend :
+     *   reunion_id (déjà importée en statut 'tenue'/'cloturee'),
+     *   gagnant_part_id (part gagnante, doit être actuellement 'disponible'),
+     *   date_ouverture, date_cloture (réelles),
+     *   cotisations: [{tontine_part_id, montant_verse, date_versement (nullable)}]
+     *     — les parts non listées sont considérées non payées (impayee, montant_verse=0).
+     *   montant_enchere, surplus_enchere (uniquement si tontine.mode_attribution == 'enchere')
+     */
+    public function importerHistorique(Tontine $tontine, array $data, Utilisateur $superAdmin): CycleTontine
+    {
+        if ($superAdmin->role !== 'super_admin') {
+            throw new RuntimeException("L'import historique de cycles de tontine est réservé au super_admin.");
+        }
+
+        $reunion = Reunion::findOrFail($data['reunion_id']);
+        if ($reunion->association_id !== $tontine->association_id) {
+            throw new RuntimeException("Cette réunion n'appartient pas à l'association de la tontine.");
+        }
+
+        $dejaUtilisee = CycleTontine::where('tontine_id', $tontine->id)->where('reunion_id', $reunion->id)->exists();
+        if ($dejaUtilisee) {
+            throw new RuntimeException('Un cycle existe déjà pour cette réunion et cette tontine.');
+        }
+
+        $part = $tontine->parts()->where('statut', 'disponible')->find($data['gagnant_part_id']);
+        if (! $part) {
+            throw new RuntimeException("Cette part n'est pas disponible pour être désignée gagnante (déjà attribuée ou introuvable).");
+        }
+
+        $numero = ($tontine->cycles()->max('numero_cycle') ?? 0) + 1;
+        $montantPrevu = (float) $tontine->montant_part * max(1, $tontine->parts()->count());
+        $cotisationsData = $data['cotisations'] ?? [];
+
+        return DB::transaction(function () use ($tontine, $reunion, $numero, $montantPrevu, $part, $data, $cotisationsData, $superAdmin) {
+            $cycle = CycleTontine::create([
+                'tontine_id' => $tontine->id,
+                'reunion_id' => $reunion->id,
+                'numero_cycle' => $numero,
+                'statut' => 'clos',
+                'montant_collecte_prevu' => $montantPrevu,
+                'montant_enchere' => $data['montant_enchere'] ?? null,
+                'surplus_enchere' => $data['surplus_enchere'] ?? null,
+                'date_ouverture' => $data['date_ouverture'],
+                'date_cloture' => $data['date_cloture'],
+                'gagnant_part_id' => $part->id,
+            ]);
+
+            $montantCollecteReel = 0;
+            foreach ($tontine->parts as $p) {
+                $ligne = collect($cotisationsData)->firstWhere('tontine_part_id', $p->id);
+                $montantVerse = (float) ($ligne['montant_verse'] ?? 0);
+                $deficit = (float) $tontine->montant_part - $montantVerse;
+                $statut = match (true) {
+                    $montantVerse <= 0 => 'impayee',
+                    $deficit > 0 => 'partielle',
+                    default => 'payee',
+                };
+
+                CotisationTontine::create([
+                    'cycle_id' => $cycle->id,
+                    'tontine_part_id' => $p->id,
+                    'membre_id' => $p->membre_id,
+                    'montant_du' => $tontine->montant_part,
+                    'montant_verse' => $montantVerse,
+                    'statut' => $statut,
+                    'date_versement' => $ligne['date_versement'] ?? null,
+                ]);
+                $montantCollecteReel += $montantVerse;
+            }
+            $cycle->update(['montant_collecte_reel' => $montantCollecteReel]);
+
+            $part->update(['statut' => 'gagnee', 'date_attribution' => $data['date_cloture']]);
+
+            // Surplus d'enchère (le cas échéant) rejoué en caisse à sa date historique.
+            if (($data['surplus_enchere'] ?? 0) > 0) {
+                $optionSurplus = $tontine->option_surplus;
+                if ($optionSurplus !== 'redistribution') {
+                    app(CaisseService::class)->entree(
+                        $tontine->caisse,
+                        (float) $data['surplus_enchere'],
+                        "Surplus enchère cycle n°{$cycle->numero_cycle} (import historique)",
+                        ['created_by' => $superAdmin->id, 'valide_par' => $superAdmin->id, 'date' => $data['date_cloture']]
+                    );
+                    $cycle->update(['surplus_mis_en_caisse' => $data['surplus_enchere']]);
+                } else {
+                    $cycle->update(['surplus_redistribue' => $data['surplus_enchere']]);
+                }
+            }
+
+            // Même bulletin de gain que pour un cycle clôturé en direct (retenues prêts/
+            // sanctions calculées sur l'état courant du membre, comme le fait cloturerCycle()).
+            app(BulletinGainService::class)->genererDepuisCycle($cycle, $superAdmin);
+
+            return $cycle;
+        });
+    }
+
+    /**
      * Un tirage (ou toute désignation de bénéficiaire) ne peut se faire QUE pour la
      * séance réellement programmée qui vient dans l'ordre chronologique, jamais pour
      * une date choisie librement — sinon le gagnant est désigné pour une réunion

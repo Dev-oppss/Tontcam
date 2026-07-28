@@ -88,6 +88,7 @@ Route::middleware(['auth:sanctum', 'association.context'])->group(function () {
     Route::post('/tontines/{id}/planning/{tourId}/encaisser', [PlanningTourController::class, 'marquerEncaisse']);
     Route::delete('/tontines/{id}/planning/{tourId}', [PlanningTourController::class, 'destroy']);
     Route::post('/tontines/{id}/cycles/ouvrir', [CycleTontineController::class, 'ouvrir']);
+    Route::post('/tontines/{id}/cycles/import-historique', [CycleTontineController::class, 'importHistorique']);
     Route::post('/tontines/{id}/enregistrer-beneficiaire', [CycleTontineController::class, 'enregistrerBeneficiaire']);
     Route::get('/cycles/{id}', [CycleTontineController::class, 'show']);
     Route::post('/cycles/{id}/cotisations', [CycleTontineController::class, 'saisirCotisations']);

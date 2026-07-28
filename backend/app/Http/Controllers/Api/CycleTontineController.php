@@ -37,6 +37,36 @@ class CycleTontineController extends Controller
     }
 
     /**
+     * POST /tontines/{id}/cycles/import-historique — réservé super_admin (onboarding
+     * d'une tontine dont plusieurs tours ont déjà été joués avant l'app).
+     */
+    public function importHistorique(Request $request, string $tontineId): JsonResponse
+    {
+        if ($request->user()->role !== 'super_admin') {
+            return response()->json(['message' => "Réservé au super_admin."], 403);
+        }
+
+        $tontine = $this->scope->scopeAssociation(Tontine::query())->findOrFail($tontineId);
+
+        $data = $request->validate([
+            'reunion_id' => ['required', 'uuid'],
+            'gagnant_part_id' => ['required', 'uuid'],
+            'date_ouverture' => ['required', 'date'],
+            'date_cloture' => ['required', 'date'],
+            'montant_enchere' => ['nullable', 'numeric', 'min:0'],
+            'surplus_enchere' => ['nullable', 'numeric', 'min:0'],
+            'cotisations' => ['nullable', 'array'],
+            'cotisations.*.tontine_part_id' => ['required', 'uuid'],
+            'cotisations.*.montant_verse' => ['required', 'numeric', 'min:0'],
+            'cotisations.*.date_versement' => ['nullable', 'date'],
+        ]);
+
+        $cycle = $this->service->importerHistorique($tontine, $data, $request->user());
+
+        return response()->json($cycle->load('gagnant.membre', 'cotisations', 'bulletin'), 201);
+    }
+
+    /**
      * POST /tontines/{id}/cycles/ouvrir
      */
     public function ouvrir(Request $request, string $tontineId): JsonResponse
