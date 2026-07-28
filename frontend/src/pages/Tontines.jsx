@@ -86,11 +86,13 @@ export default function Tontines() {
   // et /tontines?type=enchere sont la MÊME route (React Router ne démonte pas le composant),
   // cliquer sur un autre type de tontine dans la sidebar après le premier clic ne changeait
   // jamais activeTab : le filtre restait bloqué sur sa valeur initiale.
+  // Le lien "Tontines actives" pointe vers /tontines SANS paramètre ?type= du tout : il faut
+  // traiter cette absence de paramètre comme 'toutes', sinon revenir dessus après avoir cliqué
+  // un type ne fait plus rien non plus (le filtre reste bloqué sur le dernier type choisi).
   useEffect(() => {
     const type = searchParams.get('type');
-    if (['toutes', 'rotation', 'tirage', 'enchere'].includes(type)) {
-      setActiveTab(type);
-    }
+    const cible = ['rotation', 'tirage', 'enchere'].includes(type) ? type : 'toutes';
+    setActiveTab(cible);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams.get('type')]);
   const [showAdd,         setShowAdd]         = useState(false);

@@ -56,8 +56,12 @@ function Section({ item, collapsed }) {
 
   const active = useMemo(() => {
     if (!item.children) return location.pathname === item.path;
-    return item.children.some((c) => location.pathname === c.path);
-  }, [item, location.pathname]);
+    return item.children.some((c) => {
+      const [childPath, childQuery] = c.path.split('?');
+      return location.pathname === childPath
+        && (childQuery === undefined || (location.search || '').replace(/^\?/, '') === childQuery);
+    });
+  }, [item, location.pathname, location.search]);
 
   if (!item.children) {
     return (
@@ -90,18 +94,28 @@ function Section({ item, collapsed }) {
 
       {open && !collapsed && (
         <div className="ml-4 mt-1 pl-3 border-l border-white/10 space-y-0.5 pb-1">
-          {item.children.map((child) => (
-            <NavLink
-              key={child.path}
-              to={child.path}
-              className={({ isActive }) => clsx(
-                'block px-3 py-2 text-xs font-medium transition-all duration-150 rounded-2xl',
-                isActive ? 'text-white bg-white/15' : 'text-white/65 hover:text-white hover:bg-white/10'
-              )}
-            >
-              {child.label}
-            </NavLink>
-          ))}
+          {item.children.map((child) => {
+            // NavLink ne compare que location.pathname par défaut, jamais location.search.
+            // Ici plusieurs liens partagent le même pathname (/tontines) avec un ?type=
+            // différent : sans cette comparaison manuelle, ils s'affichent TOUS actifs
+            // simultanément dès qu'on est sur /tontines, quel que soit le lien cliqué.
+            const [childPath, childQuery] = child.path.split('?');
+            const isChildActive = location.pathname === childPath
+              && (childQuery ?? '') === (location.search || '').replace(/^\?/, '');
+
+            return (
+              <NavLink
+                key={child.path}
+                to={child.path}
+                className={clsx(
+                  'block px-3 py-2 text-xs font-medium transition-all duration-150 rounded-2xl',
+                  isChildActive ? 'text-white bg-white/15' : 'text-white/65 hover:text-white hover:bg-white/10'
+                )}
+              >
+                {child.label}
+              </NavLink>
+            );
+          })}
         </div>
       )}
     </div>
