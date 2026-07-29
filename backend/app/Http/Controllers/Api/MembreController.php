@@ -43,6 +43,7 @@ class MembreController extends Controller
             'ville' => ['nullable', 'string', 'max:100'],
             'profession' => ['nullable', 'string', 'max:150'],
             'date_adhesion' => ['nullable', 'date', 'before_or_equal:today'],
+            'matricule' => ['nullable', 'string', 'max:50', Rule::unique('membres', 'matricule')->where('association_id', $this->scope->associationId())],
         ]);
 
         $data['association_id'] = $this->scope->associationId();
@@ -169,6 +170,7 @@ class MembreController extends Controller
             'statut' => ['sometimes', 'in:actif,suspendu,exclu,en_attente'],
             'motif_suspension' => ['sometimes', 'nullable', 'string'],
             'motif_exclusion' => ['sometimes', 'nullable', 'string'],
+            'matricule' => ['sometimes', 'nullable', 'string', 'max:50', Rule::unique('membres', 'matricule')->where('association_id', $membre->association_id)->ignore($membre->id)],
         ]);
 
         // RG-MBR-005 : le statut EXCLU est irréversible.

@@ -74,6 +74,12 @@ class BulletinGainService
 
     public function calculerBrut(CycleTontine $cycle): float
     {
+        // Cahier des charges — cas enchère : le gain brut n'est pas la somme des
+        // cotisations standard, mais le montant de l'enchère gagnante.
+        if ($cycle->tontine->mode_attribution === 'enchere' && $cycle->montant_enchere !== null) {
+            return (float) $cycle->montant_enchere;
+        }
+
         return (float) $cycle->cotisations()->sum('montant_verse');
     }
 

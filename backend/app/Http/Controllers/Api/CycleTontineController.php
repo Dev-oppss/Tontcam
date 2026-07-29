@@ -246,7 +246,19 @@ class CycleTontineController extends Controller
             return response()->json(['message' => 'Déjà signé par vous.'], 422);
         }
 
-        $bulletin->update([$champ => now()]);
+        $updates = [$champ => now()];
+
+        // Le trésorier (celui qui remet l'argent) précise le mode de versement.
+        if ($champ === 'signe_tresorier_at') {
+            $data = $request->validate([
+                'mode_versement' => ['sometimes', 'nullable', 'in:especes,cheque,virement,mobile_money'],
+                'reference_versement' => ['sometimes', 'nullable', 'string', 'max:100'],
+                'date_versement' => ['sometimes', 'nullable', 'date'],
+            ]);
+            $updates += array_filter($data, fn ($v) => $v !== null);
+        }
+
+        $bulletin->update($updates);
         $bulletin->refresh();
 
         if ($bulletin->signe_tresorier_at && $bulletin->signe_president_at && $bulletin->signe_beneficiaire_at) {
