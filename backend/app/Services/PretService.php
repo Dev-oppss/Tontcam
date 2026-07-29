@@ -313,7 +313,7 @@ class PretService
         }
 
         $caisse = Caisse::findOrFail($data['caisse_id']);
-        $echeancesData = $data['echeances'];
+        $echeancesData = array_map(fn ($e) => $e + ['montant_verse' => 0, 'date_versement_reel' => null], $data['echeances']);
         $montantTotalDu = (float) $data['montant_principal'] + array_sum(array_column($echeancesData, 'montant_interet'));
         $montantRembourse = array_sum(array_column($echeancesData, 'montant_verse'));
 
@@ -344,6 +344,13 @@ class PretService
                 'notes' => trim(($data['notes'] ?? '') . ' [Importé — historique pré-app]'),
                 'created_by' => $superAdmin->id,
             ]);
+
+            // Le trigger SQL trg_prets_amortissement génère automatiquement un échéancier
+            // standard dès que le statut inséré est 'en_cours' (fn_generer_amortissement) —
+            // il ne sait pas qu'il s'agit d'un import historique avec de vraies échéances déjà
+            // connues. On supprime ce qu'il a généré avant d'insérer les vraies échéances,
+            // sinon la contrainte d'unicité (pret_id, numero_echeance) entre en collision.
+            EcheancePret::where('pret_id', $pret->id)->delete();
 
             // Rejoue le décaissement réel à sa date historique.
             if (! empty($data['date_debut'])) {
