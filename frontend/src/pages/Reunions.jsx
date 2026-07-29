@@ -1052,6 +1052,9 @@ function SmartFormWrapper({ type, reunion, membres, banques, prets, sanctions, t
     if (depasseSoldeCaisse) return; // RG-CAI-006 : solde caisse jamais négatif
     if (type === 'remboursement_pret' && !form.idPret) return; // on ne peut pas rembourser « dans le vide »
     if (type === 'pret_accorde' && !form.idMembre) return;
+    // Sans caisse choisie, l'argent n'existe nulle part : ni crédité ni débité
+    // réellement, juste une ligne de journal — on ne laisse plus passer ça.
+    if (type !== 'depot_banque' && type !== 'remboursement_pret' && !form.idBanque) return;
     // Nettoyage des champs internes avant envoi
     const { _idTontine, ...cleanForm } = form;
     onSubmit(cleanForm);
@@ -1067,6 +1070,7 @@ function SmartFormWrapper({ type, reunion, membres, banques, prets, sanctions, t
     if (type === 'attribution_tour' && !form.idMembre) return false;
     if (type === 'remboursement_pret' && !form.idPret) return false;
     if (type === 'pret_accorde' && !form.idMembre) return false;
+    if (type !== 'depot_banque' && type !== 'remboursement_pret' && !form.idBanque) return false;
     return true;
   })();
 
@@ -1077,6 +1081,19 @@ function SmartFormWrapper({ type, reunion, membres, banques, prets, sanctions, t
         membres={membres} banques={banques} prets={prets} sanctions={sanctions}
         tontines={tontines} membresParTontine={membresParTontine}
       />
+      {/* Caisse concernée — obligatoire partout sauf dépôt banque (a son propre
+          sélecteur dédié plus riche ci-dessus) et remboursement de prêt (la caisse
+          du prêt lui-même fait foi, imposée côté serveur). Sans ce champ, l'argent
+          affiché dans le PV de séance n'a jamais réellement existé dans aucune
+          caisse — juste une ligne de journal sans contrepartie. */}
+      {type !== 'depot_banque' && type !== 'remboursement_pret' && (
+        <FormField label="Caisse concernée" required>
+          <select className="select" value={form.idBanque} onChange={e => sf('idBanque', e.target.value)}>
+            <option value="">— Sélectionner la caisse —</option>
+            {banques.map(b => <option key={b.id} value={b.id}>{b.nom} — Solde : {fmt(b.totalSolde)}</option>)}
+          </select>
+        </FormField>
+      )}
       <div className="pt-1 border-t border-gray-100">
         <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2 mt-3">Règlement — toute entrée/sortie de caisse (RG-CAI-011)</p>
         <ModePaiementFields
