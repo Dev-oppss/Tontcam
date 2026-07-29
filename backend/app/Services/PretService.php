@@ -331,7 +331,7 @@ class PretService
                 'montant_total_du' => $montantTotalDu,
                 'montant_rembourse' => $montantRembourse,
                 'capital_restant' => max(0, (float) $data['montant_principal'] - array_sum(array_map(
-                    fn ($e) => min($e['montant_verse'], $e['montant_capital']), $echeancesData
+                    fn ($e) => min($e['montant_verse'] ?? 0, $e['montant_capital']), $echeancesData
                 ))),
                 'statut' => $data['statut'],
                 'date_demande' => $data['date_demande'],
@@ -355,6 +355,11 @@ class PretService
                 );
                 $pret->update(['transaction_decaissement_id' => $transactionDecaissement->id]);
             }
+
+            // Le trigger DB trg_prets_amortissement génère automatiquement un échéancier
+            // (calculé, pas historique) dès l'insertion du prêt en statut 'en_cours'.
+            // On le purge avant d'insérer le véritable échéancier historique fourni.
+            $pret->echeances()->delete();
 
             foreach ($echeancesData as $e) {
                 $echeance = EcheancePret::create([
