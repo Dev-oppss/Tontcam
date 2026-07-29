@@ -99,6 +99,7 @@ Route::middleware(['auth:sanctum', 'association.context'])->group(function () {
     Route::get('/cycles/{id}/bulletin', [CycleTontineController::class, 'bulletin']);
     Route::get('/bulletins/{id}/pdf', [CycleTontineController::class, 'bulletinPdf']);
     Route::post('/bulletins/{id}/signer', [CycleTontineController::class, 'signer']);
+    Route::post('/bulletins/{id}/retenues', [CycleTontineController::class, 'ajouterRetenue']);
 
     // ── Finance ─────────────────────────────────────────────────
     // Routes littérales AVANT apiResource ET contrainte UUID sur {caisse} : ce

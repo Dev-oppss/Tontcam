@@ -269,6 +269,37 @@ class CycleTontineController extends Controller
     }
 
     /**
+     * POST /bulletins/{id}/retenues — ajout d'une retenue manuelle (priorité 5 :
+     * frais d'organisation, décision d'AG...). Réservé trésorier/président/super_admin,
+     * et seulement tant qu'aucune signature n'existe sur le bulletin.
+     */
+    public function ajouterRetenue(Request $request, string $bulletinId): JsonResponse
+    {
+        $bulletin = \App\Models\BulletinGain::with('cycle.tontine')
+            ->whereHas('cycle.tontine', fn ($q) => $this->scope->scopeAssociation($q))
+            ->findOrFail($bulletinId);
+
+        if (! in_array($request->user()->role, ['tresorier', 'president', 'super_admin'], true)) {
+            return response()->json(['message' => "Réservé au trésorier, au président ou au super_admin."], 403);
+        }
+
+        $data = $request->validate([
+            'libelle' => ['required', 'string', 'max:200'],
+            'montant' => ['required', 'numeric', 'min:0.01'],
+        ]);
+
+        try {
+            $bulletin = $this->bulletinService->ajouterRetenueManuelle(
+                $bulletin, $data['libelle'], (float) $data['montant'], $request->user()
+            );
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json($bulletin);
+    }
+
+    /**
      * POST /cycles/{id}/encheres — soumission d'une offre par un membre.
      */
     public function placerEnchere(Request $request, string $id): JsonResponse

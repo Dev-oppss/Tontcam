@@ -72,6 +72,48 @@ class BulletinGainService
         });
     }
 
+    /**
+     * Priorité 5 du cahier des charges — « autres obligations » (frais d'organisation
+     * de réunion, décision d'AG, etc.). Rien dans l'app ne génère ça automatiquement
+     * (contrairement au prêt/sanction/mutuelle/assurance) : c'est au trésorier ou au
+     * président de la saisir à la main avant signature, quand elle s'applique.
+     * Interdit dès qu'une signature existe — modifier un bulletin déjà engagé
+     * romprait la valeur probante du document (voir hash_integrite).
+     */
+    public function ajouterRetenueManuelle(BulletinGain $bulletin, string $libelle, float $montant, Utilisateur $auteur): BulletinGain
+    {
+        if ($montant <= 0) {
+            throw new \RuntimeException('Le montant de la retenue doit être positif.');
+        }
+        if ($bulletin->signe_tresorier_at || $bulletin->signe_president_at || $bulletin->signe_beneficiaire_at) {
+            throw new \RuntimeException('Impossible de modifier un bulletin déjà signé — au moins une signature existe.');
+        }
+
+        return DB::transaction(function () use ($bulletin, $libelle, $montant, $auteur) {
+            $prochainePriorite = (int) $bulletin->retenues()->max('priorite') + 1;
+
+            RetenueBulletin::create([
+                'bulletin_id' => $bulletin->id,
+                'type_retenue' => 'autre',
+                'libelle' => $libelle,
+                'montant' => round($montant, 2),
+                'priorite' => max($prochainePriorite, 5),
+                'reference_id' => $auteur->id,
+                'reference_type' => 'saisie_manuelle',
+            ]);
+
+            $totalRetenues = (float) $bulletin->retenues()->sum('montant');
+            $net = $this->calculerNet((float) $bulletin->montant_brut, $totalRetenues);
+
+            $bulletin->update([
+                'total_retenues' => $totalRetenues,
+                'montant_net' => $net,
+            ]);
+
+            return $bulletin->fresh('retenues');
+        });
+    }
+
     public function calculerBrut(CycleTontine $cycle): float
     {
         // Cahier des charges — cas enchère : le gain brut n'est pas la somme des

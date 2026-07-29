@@ -74,7 +74,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
     tontines, membres, membresParTontine,
     addSeanceTransaction, addSanction, seanceTransactions,
     planningTours, ouvrirCycle, saisirCotisationCycle, designerGagnantCycle, cloturerCycle,
-    encheres, cyclesTontine, ouvrirBulletinPdf, addEnchere,
+    encheres, cyclesTontine, ouvrirBulletinPdf, addEnchere, ajouterRetenueBulletin,
   } = useApp();
 
   const locked   = !!reunion.verrouillee;
@@ -112,6 +112,9 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
   const [cycleActuelId,     setCycleActuelId]     = useState(null); // cycle ouvert à l'étape cotisation, réutilisé à l'étape bénéficiaire
   const [nouvelleEnchereMembre, setNouvelleEnchereMembre] = useState('');
   const [nouvelleEnchereMontant, setNouvelleEnchereMontant] = useState('');
+  const [retenueModal, setRetenueModal] = useState(false);
+  const [retenueLibelle, setRetenueLibelle] = useState('');
+  const [retenueMontant, setRetenueMontant] = useState('');
 
   const tontineSelectee = tontines.find(t => t.id === idTontineSelectee);
   const typeAttr = tontineSelectee?.typeAttribution;
@@ -694,10 +697,16 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
                   </p>
                 </div>
                 {gagnant.idBulletin && (
-                  <button onClick={async () => { const url = await ouvrirBulletinPdf(gagnant.idBulletin); if (url) setBulletinUrl(url); }}
-                    className="shrink-0 text-xs px-2.5 py-1.5 bg-amber-600 text-white rounded-lg font-medium hover:bg-amber-700 flex items-center gap-1">
-                    <FileText size={12}/> Bulletin
-                  </button>
+                  <div className="shrink-0 flex items-center gap-1.5">
+                    <button onClick={() => { setRetenueLibelle(''); setRetenueMontant(''); setRetenueModal(true); }}
+                      className="text-xs px-2.5 py-1.5 bg-white border border-amber-300 text-amber-700 rounded-lg font-medium hover:bg-amber-50">
+                      + Retenue
+                    </button>
+                    <button onClick={async () => { const url = await ouvrirBulletinPdf(gagnant.idBulletin); if (url) setBulletinUrl(url); }}
+                      className="text-xs px-2.5 py-1.5 bg-amber-600 text-white rounded-lg font-medium hover:bg-amber-700 flex items-center gap-1">
+                      <FileText size={12}/> Bulletin
+                    </button>
+                  </div>
                 )}
               </div>
             )}
@@ -720,6 +729,33 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
         {bulletinUrl && (
           <iframe src={bulletinUrl} title="Bulletin de gain" className="w-full rounded-xl border border-gray-200" style={{ height: '75vh' }} />
         )}
+      </Modal>
+
+      <Modal open={retenueModal} onClose={() => setRetenueModal(false)} title="Ajouter une retenue manuelle"
+        footer={<>
+          <button onClick={() => setRetenueModal(false)} className="btn-secondary">Annuler</button>
+          <button
+            onClick={async () => {
+              if (!retenueLibelle.trim() || !retenueMontant || Number(retenueMontant) <= 0) return;
+              const b = await ajouterRetenueBulletin(gagnant.idBulletin, retenueLibelle.trim(), retenueMontant);
+              if (b) setRetenueModal(false);
+            }}
+            disabled={!retenueLibelle.trim() || !retenueMontant || Number(retenueMontant) <= 0}
+            className={clsx('btn-primary', (!retenueLibelle.trim() || !retenueMontant || Number(retenueMontant) <= 0) && 'opacity-40 cursor-not-allowed')}>
+            Ajouter
+          </button>
+        </>}>
+        <p className="text-xs text-gray-500 mb-3">
+          Priorité 5 du cahier des charges — frais d'organisation, décision d'AG, ou toute autre
+          obligation non couverte automatiquement (prêt, sanction, mutuelle, assurance). Possible
+          uniquement avant toute signature du bulletin.
+        </p>
+        <FormField label="Libellé" required>
+          <input className="input" placeholder="Ex : Frais d'organisation réunion (hôte)" value={retenueLibelle} onChange={e => setRetenueLibelle(e.target.value)} autoFocus/>
+        </FormField>
+        <FormField label="Montant (FCFA)" required>
+          <input type="number" className="input" placeholder="10000" value={retenueMontant} onChange={e => setRetenueMontant(e.target.value)}/>
+        </FormField>
       </Modal>
     </div>
   );
@@ -1542,8 +1578,11 @@ function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, san
 
 // ── Panneau Bénéficiaire de séance ────────────────────────────
 function BeneficiaireSeancePanel({ reunion }) {
-  const { tontines, cyclesTontine, ouvrirBulletinPdf } = useApp();
+  const { tontines, cyclesTontine, ouvrirBulletinPdf, ajouterRetenueBulletin } = useApp();
   const [bulletinUrl, setBulletinUrl] = useState(null);
+  const [retenueModal, setRetenueModal] = useState(null); // idBulletin ciblé
+  const [retenueLibelle, setRetenueLibelle] = useState('');
+  const [retenueMontant, setRetenueMontant] = useState('');
 
   // Onglet purement informatif : affiche le(s) bénéficiaire(s) déjà désigné(s)
   // cette séance, quel que soit le mode d'attribution (rotation/tirage/enchère).
@@ -1579,10 +1618,16 @@ function BeneficiaireSeancePanel({ reunion }) {
                 {!b.montantEnchere && <p className="text-xs text-amber-600">Montant : {fmt(b.montantPot)}</p>}
               </div>
               {b.idBulletin && (
-                <button onClick={async () => { const url = await ouvrirBulletinPdf(b.idBulletin); if (url) setBulletinUrl(url); }}
-                  className="shrink-0 text-xs px-2.5 py-1.5 bg-amber-600 text-white rounded-lg font-medium hover:bg-amber-700 flex items-center gap-1">
-                  <FileText size={12}/> Bulletin
-                </button>
+                <div className="shrink-0 flex items-center gap-1.5">
+                  <button onClick={() => { setRetenueLibelle(''); setRetenueMontant(''); setRetenueModal(b.idBulletin); }}
+                    className="text-xs px-2.5 py-1.5 bg-white border border-amber-300 text-amber-700 rounded-lg font-medium hover:bg-amber-50">
+                    + Retenue
+                  </button>
+                  <button onClick={async () => { const url = await ouvrirBulletinPdf(b.idBulletin); if (url) setBulletinUrl(url); }}
+                    className="text-xs px-2.5 py-1.5 bg-amber-600 text-white rounded-lg font-medium hover:bg-amber-700 flex items-center gap-1">
+                    <FileText size={12}/> Bulletin
+                  </button>
+                </div>
               )}
               <span className="text-xs px-2 py-0.5 bg-amber-200 text-amber-800 rounded-full font-medium">OK Confirmé</span>
             </div>
@@ -1600,6 +1645,33 @@ function BeneficiaireSeancePanel({ reunion }) {
         {bulletinUrl && (
           <iframe src={bulletinUrl} title="Bulletin de gain" className="w-full rounded-xl border border-gray-200" style={{ height: '75vh' }} />
         )}
+      </Modal>
+
+      <Modal open={!!retenueModal} onClose={() => setRetenueModal(null)} title="Ajouter une retenue manuelle"
+        footer={<>
+          <button onClick={() => setRetenueModal(null)} className="btn-secondary">Annuler</button>
+          <button
+            onClick={async () => {
+              if (!retenueLibelle.trim() || !retenueMontant || Number(retenueMontant) <= 0) return;
+              const b = await ajouterRetenueBulletin(retenueModal, retenueLibelle.trim(), retenueMontant);
+              if (b) setRetenueModal(null);
+            }}
+            disabled={!retenueLibelle.trim() || !retenueMontant || Number(retenueMontant) <= 0}
+            className={clsx('btn-primary', (!retenueLibelle.trim() || !retenueMontant || Number(retenueMontant) <= 0) && 'opacity-40 cursor-not-allowed')}>
+            Ajouter
+          </button>
+        </>}>
+        <p className="text-xs text-gray-500 mb-3">
+          Priorité 5 du cahier des charges — frais d'organisation, décision d'AG, ou toute autre
+          obligation non couverte automatiquement (prêt, sanction, mutuelle, assurance). Possible
+          uniquement avant toute signature du bulletin.
+        </p>
+        <FormField label="Libellé" required>
+          <input className="input" placeholder="Ex : Frais d'organisation réunion (hôte)" value={retenueLibelle} onChange={e => setRetenueLibelle(e.target.value)} autoFocus/>
+        </FormField>
+        <FormField label="Montant (FCFA)" required>
+          <input type="number" className="input" placeholder="10000" value={retenueMontant} onChange={e => setRetenueMontant(e.target.value)}/>
+        </FormField>
       </Modal>
     </div>
   );

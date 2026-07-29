@@ -1234,6 +1234,19 @@ export const AppProvider = ({ children }) => {
     } catch (err) { return handleError(err); }
   };
 
+  // Retenue manuelle « priorité 5 » (frais d'organisation, décision d'AG...) — rien
+  // ne la calcule automatiquement, le trésorier/président la saisit à la main avant
+  // de signer. Refusé côté serveur si le bulletin a déjà au moins une signature.
+  const ajouterRetenueBulletin = async (idBulletin, libelle, montant) => {
+    try {
+      const b = await request(`/bulletins/${idBulletin}/retenues`, {
+        method: 'POST', body: { libelle, montant: Number(montant) },
+      });
+      showToast('Retenue ajoutée au bulletin');
+      return b;
+    } catch (err) { return handleError(err); }
+  };
+
   const resetWorkspace = async () => { await logout(); };
 
   const value = {
@@ -1270,7 +1283,7 @@ export const AppProvider = ({ children }) => {
     addTourPlanning, marquerTourEncaisse, retirerTourPlanning, chargerPlanningTours,
     addSeanceTransaction, deleteSeanceTransaction, enregistrerBeneficiaireSeance, chargerSeanceTransactions,
     addUtilisateur, updateUtilisateur, desactiverUtilisateur, activerUtilisateur,
-    genererBulletin, ouvrirBulletinPdf,
+    genererBulletin, ouvrirBulletinPdf, ajouterRetenueBulletin,
     ouvrirCycle, chargerCycle, saisirCotisationCycle, designerGagnantCycle, cloturerCycle,
     resetWorkspace,
   };
