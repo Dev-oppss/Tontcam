@@ -2005,15 +2005,21 @@ function PanneauRubrique({ reunion, types, titre, readOnly = false }) {
   const {
     membres, banques, prets, sanctions,
     seanceTransactions, addSeanceTransaction, deleteSeanceTransaction,
-    tontines, membresParTontine, caisseJournal,
+    tontines, membresParTontine,
   } = useApp();
 
-  const soldeDisponibleCaisse = (caisseJournal || []).reduce((s, t) => {
-    const dir = TX_TYPES.find(tt => tt.value === t.type)?.dir;
-    if (dir === 'entree') return s + Number(t.montant || 0);
-    if (dir === 'sortie' || dir === 'banque') return s - Number(t.montant || 0);
-    return s;
-  }, 0);
+  // BUG corrigé : soldeDisponibleCaisse se basait sur caisseJournal, un état qui
+  // n'est JAMAIS peuplé depuis cet écran (chargerJournalCaisse n'est appelé que
+  // depuis la page Banques, pour UNE caisse précise choisie là-bas). Résultat :
+  // caisseJournal restait toujours vide ici, soldeDisponibleCaisse valait donc
+  // toujours 0, et TOUTE transaction sortante (prêt accordé, aide sociale,
+  // attribution du tour, sortie diverse) était bloquée par un faux "solde
+  // insuffisant — disponible : 0 FCFA", peu importe le vrai solde de la caisse.
+  // Le backend vérifie déjà correctement le vrai solde (RG-CAI-006,
+  // CaisseService::sortie(), contrainte DB caisses_solde_positif_ck) avec un
+  // message d'erreur précis — on laisse SmartFormWrapper à son défaut (Infinity,
+  // pas de blocage prématuré côté écran) plutôt que de deviner avec de mauvaises
+  // données.
 
   const txs     = seanceTransactions.filter(t => t.idReunion === reunion.id && types.includes(t.type));
   const locked  = !!reunion.verrouillee || readOnly;
@@ -2104,7 +2110,6 @@ function PanneauRubrique({ reunion, types, titre, readOnly = false }) {
                 sanctions={sanctions}
                 tontines={tontines}
                 membresParTontine={membresParTontine}
-                soldeDisponible={soldeDisponibleCaisse}
                 onSubmit={handleSubmitTx}
                 onCancel={() => setSelectedType(types.length > 1 ? null : types[0])}
               />
