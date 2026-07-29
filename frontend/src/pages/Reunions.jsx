@@ -74,7 +74,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
     tontines, membres, membresParTontine,
     addSeanceTransaction, addSanction, seanceTransactions,
     planningTours, ouvrirCycle, saisirCotisationCycle, designerGagnantCycle, cloturerCycle,
-    encheres, cyclesTontine, ouvrirBulletinPdf,
+    encheres, cyclesTontine, ouvrirBulletinPdf, addEnchere,
   } = useApp();
 
   const locked   = !!reunion.verrouillee;
@@ -110,6 +110,8 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
   const [miseGagnante,      setMiseGagnante]      = useState('');
   const [tirageEffectue,    setTirageEffectue]    = useState(false);
   const [cycleActuelId,     setCycleActuelId]     = useState(null); // cycle ouvert à l'étape cotisation, réutilisé à l'étape bénéficiaire
+  const [nouvelleEnchereMembre, setNouvelleEnchereMembre] = useState('');
+  const [nouvelleEnchereMontant, setNouvelleEnchereMontant] = useState('');
 
   const tontineSelectee = tontines.find(t => t.id === idTontineSelectee);
   const typeAttr = tontineSelectee?.typeAttribution;
@@ -146,11 +148,13 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
     return planningTours.find(p => p.idTontine === tontineSelectee.id && p.numeroTour === nbEncaisses + 1 && p.statut !== 'encaisse');
   }, [tontineSelectee, typeAttr, planningTours]);
 
-  // Enchères en attente
+  // Enchères en attente — scopées au cycle courant uniquement, sinon des enchères
+  // saisies pour une autre réunion/cycle de la même tontine (enchère mode) apparaissaient
+  // ici par erreur.
   const encheresEnAttente = useMemo(() => {
-    if (!tontineSelectee || typeAttr !== 'enchere') return [];
-    return encheres.filter(e => e.statut === 'en_attente');
-  }, [tontineSelectee, typeAttr, encheres]);
+    if (!tontineSelectee || typeAttr !== 'enchere' || !cycleActuelId) return [];
+    return encheres.filter(e => e.statut === 'en_attente' && e.idRotation === cycleActuelId);
+  }, [tontineSelectee, typeAttr, encheres, cycleActuelId]);
 
   // Par défaut, chaque membre est considéré cotisé (RG-TON-030 : toute
   // cotisation non renseignée est marquée impayée) — l'utilisateur décoche
@@ -241,6 +245,16 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
     setGagnant({ nomMembre: cycleFinal.gagnantNom, montantPot: cycleFinal.montantCollecteReel, idBulletin: cycleFinal.idBulletin });
     setTirageEffectue(true);
     setEtape('recap');
+  };
+
+  const handleAjouterEnchere = async () => {
+    if (!cycleActuelId || !nouvelleEnchereMembre || !nouvelleEnchereMontant) return;
+    const ok = await addEnchere({
+      idRotation: cycleActuelId,
+      idMembre: nouvelleEnchereMembre,
+      montantEnchere: nouvelleEnchereMontant,
+    });
+    if (ok) { setNouvelleEnchereMembre(''); setNouvelleEnchereMontant(''); }
   };
 
   const handleConfirmerEnchere = async (nomMembre, idMembre, mise) => {
@@ -554,6 +568,26 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
           {/* ENCHÈRE */}
           {typeAttr === 'enchere' && (
             <div className="space-y-3">
+              {/* Saisie en direct — les membres annoncent leur mise en séance,
+                  le secrétaire/trésorier la saisit ici au fur et à mesure. */}
+              <div className="p-3 bg-blue-50 rounded-xl border border-blue-100 space-y-2">
+                <p className="text-xs font-semibold text-blue-700">Enregistrer une enchère en direct</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <select className="select text-sm" value={nouvelleEnchereMembre} onChange={e => setNouvelleEnchereMembre(e.target.value)}>
+                    <option value="">— Membre —</option>
+                    {membresDeLatontine
+                      .filter(m => !encheresEnAttente.some(e => e.idMembre === m.id))
+                      .map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
+                  </select>
+                  <input type="number" className="input text-sm" placeholder="Montant (FCFA)"
+                    value={nouvelleEnchereMontant} onChange={e => setNouvelleEnchereMontant(e.target.value)}/>
+                </div>
+                <button onClick={handleAjouterEnchere} disabled={!nouvelleEnchereMembre || !nouvelleEnchereMontant}
+                  className="btn-secondary w-full justify-center text-sm">
+                  <Gavel size={14}/> Ajouter cette enchère
+                </button>
+              </div>
+
               {encheresEnAttente.length > 0 ? (
                 <>
                   <p className="text-xs font-semibold text-gray-600">Enchères enregistrées — sélectionnez le gagnant :</p>
@@ -589,7 +623,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
               ) : (
                 // Saisie manuelle
                 <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 space-y-3">
-                  <p className="text-xs font-semibold text-amber-700">Aucune enchère préenregistrée — saisie manuelle</p>
+                  <p className="text-xs font-semibold text-amber-700">Aucune enchère saisie — désigner directement sans enchère (dérogation)</p>
                   <select className="select" value={enchereIdGagnant} onChange={e => setEnchereIdGagnant(e.target.value)}>
                     <option value="">— Sélectionner le gagnant —</option>
                     {membresDeLatontine.map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
