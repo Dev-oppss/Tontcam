@@ -1542,23 +1542,14 @@ function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, san
 
 // ── Panneau Bénéficiaire de séance ────────────────────────────
 function BeneficiaireSeancePanel({ reunion }) {
-  const {
-    tontines, membres, membresParTontine, planningTours,
-    encheres, cyclesTontine, ouvrirCycle, designerGagnantCycle, cloturerCycle, showToast, ouvrirBulletinPdf,
-  } = useApp();
-
-  const [idTontine,    setIdTontine]    = useState('');
-  const [etape,        setEtape]        = useState('choix'); // 'choix' | 'designation' | 'confirme'
-  const [gagnant,      setGagnant]      = useState(null);
-  const [miseGagnante, setMiseGagnante] = useState('');
-  const [enchereIdGagnant, setEnchereIdGagnant] = useState('');
+  const { tontines, cyclesTontine, ouvrirBulletinPdf } = useApp();
   const [bulletinUrl, setBulletinUrl] = useState(null);
 
-  const locked = !!reunion.verrouillee;
-  // reunion.beneficiairesSeance n'a jamais existé côté API — dérivé ici de la vraie
-  // source de vérité (cyclesTontine). C'est ce qui manquait pour que cet onglet
-  // affiche le gagnant déjà désigné depuis l'onglet Feuille Cotisation, au lieu
-  // de réafficher « Lancer le tirage au sort » comme si de rien n'était.
+  // Onglet purement informatif : affiche le(s) bénéficiaire(s) déjà désigné(s)
+  // cette séance, quel que soit le mode d'attribution (rotation/tirage/enchère).
+  // La désignation elle-même se fait exclusivement dans l'onglet Feuille
+  // Cotisation — ce panneau ne doit JAMAIS ouvrir ou clôturer de cycle lui-même,
+  // pour éviter tout risque de double-désignation en parallèle du flux principal.
   const beneficiairesSeance = useMemo(() => (cyclesTontine || [])
     .filter(c => c.idReunion === reunion.id && c.statut === 'clos')
     .map(c => {
@@ -1571,103 +1562,11 @@ function BeneficiaireSeancePanel({ reunion }) {
       };
     }), [cyclesTontine, tontines, reunion.id]);
 
-  const tontine = tontines.find(t => t.id === idTontine);
-  const typeAttr = tontine?.typeAttribution;
-  const montantPot = tontine ? tontine.cotisation * tontine.totalParts : 0;
-
-  // Membres actifs de la tontine sélectionnée
-  const membresActifs = useMemo(() => {
-    if (!tontine) return [];
-    return membresParTontine
-      .filter(mt => mt.idTontine === tontine.id && mt.statut === 'actif')
-      .map(mt => {
-        const m = membres.find(x => x.id === mt.idMembre);
-        return m ? { ...m, nombreParts: mt.nombreParts } : null;
-      })
-      .filter(Boolean);
-  }, [tontine, membresParTontine, membres]);
-
-  // Bénéficiaire planifié pour cette tontine (rotation)
-  const tourPlanifieProchain = useMemo(() => {
-    if (!tontine || typeAttr !== 'rotation') return null;
-    const nbEncaisses = planningTours.filter(p => p.idTontine === tontine.id && p.statut === 'encaisse').length;
-    const nextNumero = nbEncaisses + 1;
-    return planningTours.find(p => p.idTontine === tontine.id && p.numeroTour === nextNumero && p.statut !== 'encaisse');
-  }, [tontine, typeAttr, planningTours]);
-
-  // Enchères en attente pour cette tontine
-  const encheresEnAttente = useMemo(() => {
-    if (!tontine || typeAttr !== 'enchere') return [];
-    const nbEncaisses = planningTours.filter(p => p.idTontine === tontine.id && p.statut === 'encaisse').length;
-    return encheres.filter(e => {
-      const rotation = e.idRotation;
-      return rotation !== undefined && e.statut === 'en_attente';
-    });
-  }, [tontine, typeAttr, encheres, planningTours]);
-
-  // Bénéficiaire déjà enregistré pour cette tontine dans la séance
-  const benefDejaEnregistre = beneficiairesSeance.find(b => b.idTontine === idTontine);
-
-  // Réutilise un cycle déjà ouvert (typiquement par l'onglet Feuille Cotisation, avec
-  // de vraies cotisations dedans) plutôt que d'en ouvrir un second en double. Si aucun
-  // n'existe, en ouvre un frais — les cotisations resteront alors à 0 puisque cet
-  // onglet n'a pas de saisie de cotisation ; on prévient l'utilisateur dans ce cas.
-  const getOrOuvrirCycle = async () => {
-    const existant = (cyclesTontine || []).find(c => c.idTontine === tontine.id && c.idReunion === reunion.id && c.statut === 'ouvert');
-    if (existant) return existant;
-    const cycle = await ouvrirCycle(tontine.id, reunion.id);
-    if (cycle) showToast?.('Cycle ouvert sans cotisations saisies — passez par l\'onglet Feuille Cotisation pour un montant réel.', 'info');
-    return cycle;
-  };
-
-  const resolvePartId = (idMembre) => membresParTontine
-    .find(mt => mt.idTontine === tontine?.id && mt.idMembre === idMembre)?.id;
-
-  const handleConfirmerRotation = async () => {
-    if (!tourPlanifieProchain || !tontine) return;
-    const cycle = await getOrOuvrirCycle();
-    if (!cycle) return;
-    const idPart = resolvePartId(tourPlanifieProchain.idMembre);
-    await designerGagnantCycle(cycle.id, idPart);
-    const cycleFinal = await cloturerCycle(cycle.id);
-    if (!cycleFinal) return;
-    setEtape('confirme');
-    setGagnant({ nomMembre: cycleFinal.gagnantNom, montantPot: cycleFinal.montantCollecteReel, idBulletin: cycleFinal.idBulletin });
-  };
-
-  const handleTirage = async () => {
-    if (!tontine) return;
-    const cycle = await getOrOuvrirCycle();
-    if (!cycle) return;
-    const apresDesignation = await designerGagnantCycle(cycle.id); // pas de part forcée = tirage aléatoire côté serveur
-    if (!apresDesignation) return;
-    const cycleFinal = await cloturerCycle(cycle.id);
-    if (!cycleFinal) return;
-    setGagnant({ nomMembre: cycleFinal.gagnantNom, montantPot: cycleFinal.montantCollecteReel, idBulletin: cycleFinal.idBulletin });
-    setEtape('confirme');
-  };
-
-  const handleConfirmerEnchere = async () => {
-    if (!enchereIdGagnant || !tontine) return;
-    const enc = encheres.find(e => e.id === enchereIdGagnant);
-    if (!enc) return;
-    const mise = Number(miseGagnante) || enc.montantEnchere;
-    const cycle = await getOrOuvrirCycle();
-    if (!cycle) return;
-    const idPart = resolvePartId(enc.idMembre);
-    await designerGagnantCycle(cycle.id, idPart);
-    const cycleFinal = await cloturerCycle(cycle.id);
-    if (!cycleFinal) return;
-    setGagnant({ nomMembre: cycleFinal.gagnantNom, montantPot: cycleFinal.montantCollecteReel - mise, mise, idBulletin: cycleFinal.idBulletin });
-    setEtape('confirme');
-  };
-
-  const resetForm = () => { setIdTontine(''); setEtape('choix'); setGagnant(null); setEnchereIdGagnant(''); setMiseGagnante(''); };
+  const typeLabel = { rotation: 'Rotation', tirage: 'Tirage au sort', enchere: 'Enchère' };
 
   return (
     <div className="space-y-4">
-      {/* Bénéficiaires déjà enregistrés */}
-      {beneficiairesSeance.length > 0 && (
+      {beneficiairesSeance.length > 0 ? (
         <div className="space-y-2">
           <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">Bénéficiaires désignés cette séance</p>
           {beneficiairesSeance.map((b, i) => (
@@ -1675,7 +1574,7 @@ function BeneficiaireSeancePanel({ reunion }) {
               <Trophy size={18} className="text-amber-500 shrink-0"/>
               <div className="flex-1 min-w-0">
                 <p className="font-bold text-amber-900">{b.nomMembre}</p>
-                <p className="text-xs text-amber-700">{b.nomTontine} — {b.typeAttribution === 'rotation' ? ' Rotation' : b.typeAttribution === 'tirage' ? ' Tirage' : ' Enchère'}</p>
+                <p className="text-xs text-amber-700">{b.nomTontine} — {typeLabel[b.typeAttribution] || b.typeAttribution}</p>
                 {b.montantEnchere > 0 && <p className="text-xs text-amber-600">Mise : {fmt(b.montantEnchere)} | Net reçu : {fmt(b.montantPot)}</p>}
                 {!b.montantEnchere && <p className="text-xs text-amber-600">Montant : {fmt(b.montantPot)}</p>}
               </div>
@@ -1689,210 +1588,12 @@ function BeneficiaireSeancePanel({ reunion }) {
             </div>
           ))}
         </div>
-      )}
-
-      {locked ? (
-        <div className="p-3 bg-gray-50 rounded-xl text-center text-xs text-gray-400">
-          <Lock size={14} className="mx-auto mb-1 text-gray-300"/> Séance clôturée
-        </div>
       ) : (
-        <>
-          {/* Étape 1: choix tontine */}
-          {etape === 'choix' && (
-            <div className="space-y-3">
-              <p className="text-sm text-gray-600">Sélectionnez la tontine à attribuer cette séance :</p>
-              <div className="space-y-2">
-                {tontines.filter(t => t.statut === 'active').map(t => {
-                  const dejaFait = beneficiairesSeance.some(b => b.idTontine === t.id);
-                  const typeIcon = { rotation: '', tirage: '', enchere: '' }[t.typeAttribution] || '';
-                  const nbEncaisses = planningTours.filter(p => p.idTontine === t.id && p.statut === 'encaisse').length;
-                  const progressPct = t.nbTours > 0 ? Math.round(nbEncaisses / t.nbTours * 100) : 0;
-                  return (
-                    <button key={t.id} type="button"
-                      onClick={() => { if (!dejaFait) { setIdTontine(String(t.id)); setEtape('designation'); } }}
-                      disabled={dejaFait}
-                      className={clsx('w-full p-3 rounded-xl border-2 text-left transition-all',
-                        dejaFait ? 'border-green-300 bg-green-50 opacity-70 cursor-default' :
-                        idTontine === t.id ? 'border-primary-500 bg-primary-50' :
-                        'border-gray-200 hover:border-primary-300'
-                      )}>
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="font-semibold text-gray-800">{typeIcon} {t.nom}</p>
-                          <p className="text-xs text-gray-500 mt-0.5">{fmt(t.cotisation)} x {t.totalParts} parts = <strong>{fmt(t.cotisation * t.totalParts)}</strong></p>
-                        </div>
-                        {dejaFait ? <span className="text-xs text-green-600 font-medium">OK Attribué</span> : <span className="text-xs text-primary-600">Tour {nbEncaisses + 1}/{t.nbTours}</span>}
-                      </div>
-                      <div className="mt-2 w-full bg-gray-200 rounded-full h-1">
-                        <div className="h-1 rounded-full bg-primary-500 transition-all" style={{ width: `${progressPct}%` }}/>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* Étape 2: Désignation selon le type */}
-          {etape === 'designation' && tontine && (
-            <div className="space-y-4">
-              <div className="flex items-center gap-2">
-                <button onClick={() => { setEtape('choix'); setIdTontine(''); }} className="text-xs text-primary-600 hover:underline">- Changer</button>
-                <p className="text-sm font-bold text-gray-800">{tontine.nom}</p>
-                <span className="text-xs px-2 py-0.5 bg-primary-100 text-primary-700 rounded-full">{fmt(montantPot)}</span>
-              </div>
-
-              {/* ROTATION */}
-              {typeAttr === 'rotation' && (
-                <div className="space-y-3">
-                  <div className="p-3 bg-primary-50 rounded-xl border border-primary-200 flex items-center gap-2">
-                    <RefreshCw size={14} className="text-primary-600"/>
-                    <p className="text-xs text-primary-700 font-medium">Mode Rotation — bénéficiaire défini par l'ordre prédéfini</p>
-                  </div>
-                  {tourPlanifieProchain ? (
-                    <div className="p-4 bg-white rounded-xl border-2 border-primary-300 text-center">
-                      <Trophy size={28} className="mx-auto text-primary-500 mb-2"/>
-                      <p className="text-lg font-bold text-gray-800">{tourPlanifieProchain.nomMembre}</p>
-                      <p className="text-xs text-gray-500 mt-0.5">Tour N°{tourPlanifieProchain.numeroTour} — {fmt(montantPot)}</p>
-                      <button onClick={handleConfirmerRotation}
-                        className="mt-3 btn-primary w-full text-sm">
-                        <CheckCircle size={14}/> Confirmer ce bénéficiaire
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 text-center">
-                      <AlertCircle size={20} className="mx-auto text-amber-500 mb-2"/>
-                      <p className="text-sm font-medium text-amber-800">Aucun tour planifié trouvé</p>
-                      <p className="text-xs text-amber-600 mt-1">Allez dans l'onglet Tontines pour définir l'ordre de rotation.</p>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* TIRAGE AU SORT */}
-              {typeAttr === 'tirage' && (
-                <div className="space-y-3">
-                  <div className="p-3 bg-blue-50 rounded-xl border border-blue-200 flex items-center gap-2">
-                    <Dices size={14} className="text-blue-600"/>
-                    <p className="text-xs text-blue-700 font-medium">Mode Tirage au sort — désignation aléatoire en séance</p>
-                  </div>
-                  <div className="p-4 bg-white rounded-xl border-2 border-blue-200 text-center">
-                    <Dices size={32} className="mx-auto text-blue-400 mb-3"/>
-                    <p className="text-sm text-gray-600 mb-4">Cliquez pour désigner aléatoirement le bénéficiaire parmi les membres non encore bénéficiaires.</p>
-                    <button onClick={handleTirage} className="btn-primary w-full text-sm">
-                      <Dices size={14}/>  Lancer le tirage au sort
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* ENCHÈRE */}
-              {typeAttr === 'enchere' && (
-                <div className="space-y-3">
-                  <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 flex items-center gap-2">
-                    <Gavel size={14} className="text-amber-600"/>
-                    <p className="text-xs text-amber-700 font-medium">Mode Enchère — le plus offrant remporte le pot</p>
-                  </div>
-                  {encheresEnAttente.length === 0 ? (
-                    <div className="p-4 bg-gray-50 rounded-xl border border-dashed text-center text-xs text-gray-400">
-                      <Gavel size={16} className="mx-auto mb-2 text-gray-300"/>
-                      Aucune enchère en attente. Enregistrez les enchères via le module Enchères.
-                    </div>
-                  ) : (
-                    <>
-                      <div className="space-y-2">
-                        <p className="text-xs font-medium text-gray-600">Enchères reçues — sélectionnez le gagnant :</p>
-                        {encheresEnAttente.map(e => (
-                          <label key={e.id}
-                            className={clsx('flex items-center gap-3 p-3 rounded-xl border-2 cursor-pointer transition-all',
-                              enchereIdGagnant === e.id ? 'border-amber-400 bg-amber-50' : 'border-gray-200 hover:border-amber-300')}>
-                            <input type="radio" name="enchere_gagnante" value={e.id}
-                              checked={enchereIdGagnant === e.id}
-                              onChange={() => { setEnchereIdGagnant(String(e.id)); setMiseGagnante(String(e.montantEnchere)); }}/>
-                            <div className="flex-1">
-                              <p className="font-semibold text-gray-800">{e.nomMembre}</p>
-                              <p className="text-xs text-gray-500">Mise proposée : <strong className="text-amber-600">{fmt(e.montantEnchere)}</strong></p>
-                            </div>
-                          </label>
-                        ))}
-                      </div>
-                      {enchereIdGagnant && (
-                        <>
-                          <div className="grid grid-cols-2 gap-2 text-xs">
-                            <div className="p-2 bg-gray-50 rounded-lg">
-                              <span className="text-gray-500">Pot total :</span><br/>
-                              <span className="font-bold">{fmt(montantPot)}</span>
-                            </div>
-                            <div className="p-2 bg-amber-50 rounded-lg">
-                              <span className="text-gray-500">Mise retenue :</span><br/>
-                              <span className="font-bold text-amber-600">{fmt(Number(miseGagnante))}</span>
-                            </div>
-                            <div className="p-2 bg-green-50 rounded-lg col-span-2">
-                              <span className="text-gray-500">Net versé au gagnant :</span><br/>
-                              <span className="font-bold text-green-600">{fmt(montantPot - Number(miseGagnante))}</span>
-                            </div>
-                          </div>
-                          <button onClick={handleConfirmerEnchere} className="btn-primary w-full text-sm">
-                            <Trophy size={14}/> Confirmer le gagnant de l'enchère
-                          </button>
-                        </>
-                      )}
-                    </>
-                  )}
-                  {/* Enchère manuelle si pas d'enchères préenregistrées */}
-                  {encheresEnAttente.length === 0 && (
-                    <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 space-y-2">
-                      <p className="text-xs font-medium text-amber-700">Saisie manuelle du gagnant</p>
-                      <select className="select text-sm"
-                        value={enchereIdGagnant}
-                        onChange={e => setEnchereIdGagnant(e.target.value)}>
-                        <option value="">— Sélectionner le gagnant —</option>
-                        {membresActifs.map(m => <option key={m.id} value={`m${m.id}`}>{m.nom} {m.prenom}</option>)}
-                      </select>
-                      <input type="number" className="input text-sm" placeholder="Montant mise gagnante (FCFA)"
-                        value={miseGagnante} onChange={e => setMiseGagnante(e.target.value)}/>
-                      {enchereIdGagnant && miseGagnante && (
-                        <button
-                          onClick={() => {
-                            const mid = enchereIdGagnant.slice(1);
-                            const m = membres.find(x => x.id === mid);
-                            if (!m) return;
-                            enregistrerBeneficiaireSeance(reunion.id, {
-                              idTontine: tontine.id, nomTontine: tontine.nom, typeAttribution: 'enchere',
-                              idMembre: mid, nomMembre: `${m.nom} ${m.prenom}`,
-                              montantPot: montantPot - Number(miseGagnante), montantEnchere: Number(miseGagnante),
-                              numeroTour: planningTours.filter(p => p.idTontine === tontine.id && p.statut === 'encaisse').length + 1,
-                              modeDesignation: 'enchere',
-                            });
-                            setGagnant({ nomMembre: `${m.nom} ${m.prenom}`, montantPot: montantPot - Number(miseGagnante), mise: Number(miseGagnante) });
-                            setEtape('confirme');
-                          }}
-                          className="btn-primary w-full text-sm">
-                          <Trophy size={14}/> Confirmer le gagnant
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Étape 3: Confirmation */}
-          {etape === 'confirme' && gagnant && (
-            <div className="space-y-4">
-              <div className="p-5 bg-gradient-to-br from-amber-50 to-yellow-50 rounded-2xl border-2 border-amber-300 text-center">
-                <Trophy size={36} className="mx-auto text-amber-500 mb-2"/>
-                <p className="text-xl font-black text-amber-900"> {gagnant.nomMembre}</p>
-                <p className="text-sm text-amber-700 mt-1">{gagnant.mise ? `Mise : ${fmt(gagnant.mise)} — Net reçu :` : 'Montant pot :'} <strong>{fmt(gagnant.montantPot)}</strong></p>
-                <p className="text-xs text-amber-600 mt-2">Bénéficiaire enregistré et planning mis à jour OK</p>
-              </div>
-              <button onClick={resetForm} className="btn-secondary w-full text-sm">
-                <Plus size={13}/> Attribuer une autre tontine
-              </button>
-            </div>
-          )}
-        </>
+        <div className="p-4 bg-gray-50 rounded-xl border border-gray-200 text-center text-sm text-gray-500 space-y-1">
+          <Trophy size={22} className="mx-auto text-gray-300 mb-1"/>
+          <p>Aucun bénéficiaire désigné pour l'instant cette séance.</p>
+          <p className="text-xs text-gray-400">La désignation (rotation, tirage au sort ou enchère) se fait dans l'onglet « Feuille Cotisation ».</p>
+        </div>
       )}
 
       <Modal open={!!bulletinUrl} onClose={() => setBulletinUrl(null)} title="Bulletin de gain" size="xl">
