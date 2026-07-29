@@ -71,7 +71,15 @@ class TontineController extends Controller
             'libelle' => ['sometimes', 'string', 'max:200'],
             'description' => ['sometimes', 'nullable', 'string'],
             'statut' => ['sometimes', 'in:en_preparation,active,suspendue,cloturee'],
+            'montant_part' => ['sometimes', 'numeric', 'min:1'],
+            'mode_attribution' => ['sometimes', 'in:rotation,tirage_sort,enchere,calendrier'],
+            'nb_parts_total' => ['sometimes', 'integer', 'min:1'],
+            'exige_avaliste' => ['sometimes', 'boolean'],
             'pret_autorise' => ['sometimes', 'boolean'],
+            'mise_min_enchere' => ['sometimes', 'nullable', 'numeric'],
+            'option_surplus' => ['sometimes', 'in:redistribution,mise_en_caisse'],
+            'date_debut' => ['sometimes', 'nullable', 'date'],
+            'caisse_id' => ['sometimes', 'nullable', 'uuid'],
         ]));
 
         return response()->json($tontine);
