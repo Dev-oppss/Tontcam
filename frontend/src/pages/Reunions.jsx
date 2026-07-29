@@ -2059,7 +2059,7 @@ export function Reunions() {
     reunions, membres, user, presences,
     addReunion, updateReunion, chargerReunion, ouvrirSeance,
     addPointODJ, updatePointODJ, removePointODJ, movePointODJ, cloturerSeance,
-    seanceTransactions, chargerSeanceTransactions, showToast,
+    seanceTransactions, chargerSeanceTransactions, showToast, cyclesTontine,
   } = useApp();
 
   // La liste (index()) ne charge jamais l'ordre du jour / les présences / les
@@ -2358,9 +2358,9 @@ export function Reunions() {
                         {rubriqueCount}
                       </span>
                     )}
-                    {tab.id==='beneficiaire' && (r.beneficiairesSeance||[]).length > 0 && (
+                    {tab.id==='beneficiaire' && cyclesTontine.filter(c => c.idReunion === r.id && c.statut === 'clos').length > 0 && (
                       <span className="ml-1 px-1.5 py-0.5 bg-amber-500 text-white rounded-full text-xs leading-none">
-                        {(r.beneficiairesSeance||[]).length}
+                        {cyclesTontine.filter(c => c.idReunion === r.id && c.statut === 'clos').length}
                       </span>
                     )}
                     {tab.id==='presences' && r.statutReunion !== 'planifiee' && (
