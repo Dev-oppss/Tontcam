@@ -87,7 +87,7 @@ class ReunionController extends Controller
     public function pvPdf(string $id): JsonResponse
     {
         $reunion = $this->scope->scopeAssociation(Reunion::query())
-            ->with(['association', 'hote', 'ordreDuJour.rubrique', 'presences.membre', 'signataires.membre'])
+            ->with(['association', 'hote', 'ordreDuJour.rubrique', 'presences.membre', 'signataires.membre', 'seanceTransactions.membre', 'seanceTransactions.caisse'])
             ->findOrFail($id);
 
         $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('pdf.proces-verbal', ['reunion' => $reunion]);

@@ -62,13 +62,11 @@ class PlanningTourController extends Controller
 
     public function marquerEncaisse(string $tontineId, string $id): JsonResponse
     {
-        $tour = PlanningTour::whereHas('tontine', fn ($q) => $this->scope->scopeAssociation($q))
-            ->where('tontine_id', $tontineId)->findOrFail($id);
-        $tour->update(['statut' => 'encaisse']);
-        // La part gagne définitivement ce tour (RG-TON : chaque part a son propre cycle de gain).
-        $tour->part()?->update(['statut' => 'gagnee']);
+        $this->scope->scopeAssociation(Tontine::query())->findOrFail($tontineId);
 
-        return response()->json($tour->load('beneficiaire', 'part'));
+        return response()->json([
+            'message' => 'Un tour planifié doit être attribué depuis la feuille de cotisation de la réunion. Le planning est mis à jour automatiquement après la clôture du cycle.',
+        ], 422);
     }
 
     public function destroy(string $tontineId, string $id): JsonResponse

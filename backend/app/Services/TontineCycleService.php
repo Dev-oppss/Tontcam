@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\CotisationTontine;
 use App\Models\CycleTontine;
 use App\Models\Encherite;
+use App\Models\PlanningTour;
 use App\Models\Reunion;
 use App\Models\Tontine;
 use App\Models\TontinePart;
@@ -75,9 +76,9 @@ class TontineCycleService
             throw new RuntimeException("Cette réunion n'appartient pas à l'association de la tontine.");
         }
 
-        $dejaUtilisee = CycleTontine::where('tontine_id', $tontine->id)->where('reunion_id', $reunion->id)->exists();
-        if ($dejaUtilisee) {
-            throw new RuntimeException('Un cycle existe déjà pour cette réunion et cette tontine.');
+        $cyclesDansReunion = CycleTontine::where('tontine_id', $tontine->id)->where('reunion_id', $reunion->id)->count();
+        if ($cyclesDansReunion >= (int) $tontine->max_cycles_par_reunion) {
+            throw new RuntimeException('La limite de tours autorisés pour cette réunion est atteinte.');
         }
 
         $part = $tontine->parts()->where('statut', 'disponible')->find($data['gagnant_part_id']);
@@ -178,14 +179,17 @@ class TontineCycleService
             throw new RuntimeException('Impossible de désigner un bénéficiaire pour une réunion annulée.');
         }
 
-        $dejaUtilisee = CycleTontine::where('tontine_id', $tontine->id)
+        $cyclesDansReunion = CycleTontine::where('tontine_id', $tontine->id)
             ->where('reunion_id', $reunion->id)
-            ->exists();
-        if ($dejaUtilisee) {
-            throw new RuntimeException('Un tirage a déjà été effectué pour cette réunion et cette tontine.');
+            ->count();
+        if ($cyclesDansReunion >= (int) $tontine->max_cycles_par_reunion) {
+            throw new RuntimeException('La limite de tours autorisés pour cette réunion et cette tontine est atteinte.');
         }
 
-        $partsRestantes = $tontine->parts()->where('statut', 'disponible')->count();
+        $statutsEligibles = $tontine->mode_attribution === 'rotation'
+            ? ['disponible', 'reservee']
+            : ['disponible'];
+        $partsRestantes = $tontine->parts()->whereIn('statut', $statutsEligibles)->count();
         if ($partsRestantes === 0) {
             throw new RuntimeException('Toutes les parts de cette tontine ont déjà été attribuées : aucun tirage supplémentaire n\'est possible.');
         }
@@ -202,7 +206,10 @@ class TontineCycleService
 
         $prochaineReunionEligible = Reunion::where('association_id', $tontine->association_id)
             ->where('statut', '!=', 'annulee')
-            ->whereDoesntHave('cyclesTontine', fn ($q) => $q->where('tontine_id', $tontine->id))
+            ->whereRaw(
+                '(SELECT COUNT(*) FROM cycles_tontine WHERE cycles_tontine.reunion_id = reunions.id AND cycles_tontine.tontine_id = ?) < ?',
+                [$tontine->id, (int) $tontine->max_cycles_par_reunion]
+            )
             ->orderBy('date_reunion')
             ->orderBy('numero')
             ->first();
@@ -269,6 +276,10 @@ class TontineCycleService
             return $this->designerParEnchere($cycle, $tontine, $partIdForcee);
         }
 
+        if ($tontine->mode_attribution === 'rotation') {
+            return $this->designerParRotation($cycle, $tontine, $partIdForcee);
+        }
+
         if ($partIdForcee) {
             $part = $tontine->parts()->where('statut', 'disponible')->find($partIdForcee);
             if (! $part) {
@@ -288,11 +299,27 @@ class TontineCycleService
         };
     }
 
-    private function designerParRotation(CycleTontine $cycle, Tontine $tontine): TontinePart
+    private function designerParRotation(CycleTontine $cycle, Tontine $tontine, ?string $partIdForcee = null): TontinePart
     {
-        $part = $tontine->parts()->where('statut', 'disponible')->orderBy('ordre_rotation')->first();
+        // Lorsqu'un ordre est planifié, la réunion applique strictement le tour
+        // correspondant au numéro du cycle. Une part réservée reste donc éligible
+        // uniquement pour son propre tour, jamais pour un autre.
+        $tour = PlanningTour::where('tontine_id', $tontine->id)
+            ->where('numero_tour', $cycle->numero_cycle)
+            ->where('statut', 'planifie')
+            ->first();
+        if ($tour) {
+            if ($partIdForcee && $partIdForcee !== $tour->tontine_part_id) {
+                throw new RuntimeException('Le bénéficiaire sélectionné ne correspond pas à l’ordre de rotation planifié.');
+            }
+            $part = $tontine->parts()->whereKey($tour->tontine_part_id)->where('statut', 'reservee')->first();
+        } elseif ($partIdForcee) {
+            $part = $tontine->parts()->whereKey($partIdForcee)->where('statut', 'disponible')->first();
+        } else {
+            $part = $tontine->parts()->where('statut', 'disponible')->orderBy('ordre_rotation')->first();
+        }
         if (! $part) {
-            throw new RuntimeException('Aucune part disponible : toutes les parts de cette tontine ont déjà été attribuées.');
+            throw new RuntimeException('Aucune part disponible pour ce tour de rotation.');
         }
         $this->attribuerPart($cycle, $part);
 
@@ -397,6 +424,13 @@ class TontineCycleService
         $cycle->cotisations()->whereIn('statut', ['due', 'en_retard'])->update(['statut' => 'impayee']);
 
         $cycle->update(['statut' => 'clos', 'date_cloture' => now()]);
+
+        // Le planning est une préparation. Il devient encaissé uniquement après
+        // l'attribution réelle du cycle, avec son bulletin et ses cotisations.
+        PlanningTour::where('tontine_id', $cycle->tontine_id)
+            ->where('tontine_part_id', $cycle->gagnant_part_id)
+            ->where('statut', 'planifie')
+            ->update(['statut' => 'encaisse']);
 
         app(BulletinGainService::class)->genererDepuisCycle($cycle, $auteur);
 

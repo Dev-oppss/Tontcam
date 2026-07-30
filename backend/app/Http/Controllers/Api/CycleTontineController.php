@@ -147,14 +147,13 @@ class CycleTontineController extends Controller
 
         // On cherche d'abord un cycle déjà lié à CETTE réunion précise (peu importe son statut),
         // car la contrainte unique (tontine_id, reunion_id) interdit d'en recréer un second.
-        $cycle = \App\Models\CycleTontine::where('tontine_id', $tontine->id)
+        $cyclesReunion = \App\Models\CycleTontine::where('tontine_id', $tontine->id)
             ->where('reunion_id', $data['reunion_id'])
-            ->latest('numero_cycle')
-            ->first();
-
-        if ($cycle && $cycle->statut === 'clos') {
-            return response()->json(['message' => 'Un bénéficiaire a déjà été enregistré et le cycle clôturé pour cette réunion.'], 422);
+            ->latest('numero_cycle');
+        if ($cyclesReunion->count() >= (int) $tontine->max_cycles_par_reunion) {
+            return response()->json(['message' => 'La limite de tours autorisés pour cette réunion est atteinte.'], 422);
         }
+        $cycle = (clone $cyclesReunion)->where('statut', '!=', 'clos')->first();
 
         try {
             $cycle = \Illuminate\Support\Facades\DB::transaction(function () use ($tontine, $data, $cycle, $request) {
@@ -302,6 +301,22 @@ class CycleTontineController extends Controller
             return response()->json(['message' => $e->getMessage()], 422);
         }
 
+        return response()->json($bulletin);
+    }
+
+    public function payerBulletin(Request $request, string $bulletinId): JsonResponse
+    {
+        if (! in_array($request->user()->role, ['tresorier', 'president', 'super_admin'], true)) {
+            return response()->json(['message' => 'Réservé au trésorier, au président ou au super_admin.'], 403);
+        }
+        $bulletin = \App\Models\BulletinGain::with('cycle.tontine.caisse')
+            ->whereHas('cycle.tontine', fn ($q) => $this->scope->scopeAssociation($q))->findOrFail($bulletinId);
+        $data = $request->validate([
+            'mode_paiement' => ['required', 'in:especes,cheque,virement,mobile_money,carte_bancaire'],
+            'reference_versement' => ['nullable', 'string', 'max:100'],
+        ]);
+        try { $bulletin = $this->bulletinService->verser($bulletin, $data['mode_paiement'], $data['reference_versement'] ?? null, $request->user()); }
+        catch (\RuntimeException $e) { return response()->json(['message' => $e->getMessage()], 422); }
         return response()->json($bulletin);
     }
 

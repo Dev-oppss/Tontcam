@@ -9,6 +9,7 @@
     .header p { margin: 2px 0 0; font-size: 10px; color: #cfd3db; }
     .section { padding: 16px 18px; }
     .section h2 { font-size: 12px; text-transform: uppercase; border-bottom: 1px solid #eee; padding-bottom: 4px; }
+    .section h3 { font-size: 11px; margin: 14px 0 4px; color: #374151; }
     table { width: 100%; border-collapse: collapse; margin-top: 6px; }
     th { background: #f2f0eb; text-align: left; padding: 6px 8px; font-size: 10px; text-transform: uppercase; }
     td { padding: 6px 8px; border-bottom: 1px solid #eee; font-size: 11px; }
@@ -46,6 +47,39 @@
                 </tr>
             @endforeach
         </table>
+
+        <h2>Transactions financières par caisse</h2>
+        @php
+            $transactionsParCaisse = $reunion->seanceTransactions->groupBy(fn ($transaction) => $transaction->caisse_id ?: '__sans_caisse__');
+            $typesSortie = ['attribution_tour', 'divers_sortie', 'pret_accorde', 'aide_sociale'];
+            $libellesTypes = [
+                'cotisation' => 'Cotisation', 'remboursement_pret' => 'Remboursement prêt',
+                'paiement_sanction' => 'Paiement sanction', 'amende' => 'Amende',
+                'attribution_tour' => 'Versement gain', 'divers_entree' => 'Entrée diverse',
+                'divers_sortie' => 'Sortie diverse', 'pret_accorde' => 'Prêt accordé',
+                'aide_sociale' => 'Aide sociale', 'depot_banque' => 'Dépôt banque',
+            ];
+        @endphp
+        @forelse($transactionsParCaisse as $transactions)
+            @php($premiere = $transactions->first())
+            <h3>Caisse : {{ $premiere->caisse->libelle ?? 'Sans caisse affectée' }}</h3>
+            <table>
+                <tr><th>Type</th><th>Membre</th><th>Libellé</th><th>Entrée</th><th>Sortie</th></tr>
+                @foreach($transactions as $transaction)
+                    @php($imputation = str_contains((string) $transaction->note, 'Imputation sur gain'))
+                    @php($sortie = in_array($transaction->type, $typesSortie, true))
+                    <tr>
+                        <td>{{ $libellesTypes[$transaction->type] ?? ucfirst(str_replace('_', ' ', $transaction->type)) }}{{ $imputation ? ' (imputation)' : '' }}</td>
+                        <td>{{ $transaction->membre->nom ?? '' }} {{ $transaction->membre->prenom ?? '' }}</td>
+                        <td>{{ $transaction->libelle ?? '—' }}</td>
+                        <td style="text-align:right">{{ ! $sortie && ! $imputation ? number_format($transaction->montant, 0, ',', ' ').' FCFA' : '—' }}</td>
+                        <td style="text-align:right">{{ $sortie ? number_format($transaction->montant, 0, ',', ' ').' FCFA' : '—' }}</td>
+                    </tr>
+                @endforeach
+            </table>
+        @empty
+            <p>Aucune transaction financière enregistrée pour cette séance.</p>
+        @endforelse
 
         <h2>Signatures</h2>
         <div class="signatures">

@@ -142,15 +142,15 @@ class PretService
     /**
      * Remboursement (RG-PRT — recalcul après remboursement partiel).
      */
-    public function rembourser(Pret $pret, EcheancePret $echeance, float $montantVerse, Utilisateur $tresorier): EcheancePret
+    public function rembourser(Pret $pret, EcheancePret $echeance, float $montantVerse, Utilisateur $tresorier, bool $encaisserEnCaisse = true): EcheancePret
     {
-        return DB::transaction(function () use ($pret, $echeance, $montantVerse, $tresorier) {
-            $transaction = app(CaisseService::class)->entree(
+        return DB::transaction(function () use ($pret, $echeance, $montantVerse, $tresorier, $encaisserEnCaisse) {
+            $transaction = $encaisserEnCaisse ? app(CaisseService::class)->entree(
                 $pret->caisse,
                 $montantVerse,
                 "Remboursement prêt — échéance n°{$echeance->numero_echeance}",
                 ['reference_type' => 'echeance_pret', 'reference_id' => $echeance->id, 'created_by' => $tresorier->id, 'valide_par' => $tresorier->id]
-            );
+            ) : null;
 
             $totalVerseAvant = (float) $echeance->montant_verse;
             $nouveauVerse = $totalVerseAvant + $montantVerse;
@@ -160,7 +160,7 @@ class PretService
                 'montant_verse' => $nouveauVerse,
                 'statut' => $deficit <= 0 ? 'payee' : 'partielle',
                 'date_versement_reel' => now()->toDateString(),
-                'transaction_id' => $transaction->id,
+                'transaction_id' => $transaction?->id,
             ]);
 
             $capitalRembourseReel = min($montantVerse, (float) $echeance->montant_capital);
@@ -189,7 +189,7 @@ class PretService
      * automatique si le prêt est intégralement soldé). Si le montant excède le reste dû,
      * on refuse plutôt que de laisser un trop-perçu invisible.
      */
-    public function rembourserLibre(Pret $pret, float $montant, Utilisateur $tresorier): array
+    public function rembourserLibre(Pret $pret, float $montant, Utilisateur $tresorier, bool $encaisserEnCaisse = true): array
     {
         if ($montant <= 0) {
             throw new RuntimeException('Le montant du remboursement doit être positif.');
@@ -200,7 +200,7 @@ class PretService
             $echeancesTouchees = [];
 
             $echeances = $pret->echeances()
-                ->whereIn('statut', ['a_venir', 'partielle', 'en_retard'])
+                ->whereIn('statut', ['a_venir', 'due', 'partielle', 'en_retard', 'penalisee'])
                 ->orderBy('numero_echeance')
                 ->get();
 
@@ -213,7 +213,7 @@ class PretService
                     continue;
                 }
                 $aAppliquer = min($restant, $du);
-                $echeancesTouchees[] = $this->rembourser($pret->fresh(), $echeance, $aAppliquer, $tresorier);
+                $echeancesTouchees[] = $this->rembourser($pret->fresh(), $echeance, $aAppliquer, $tresorier, $encaisserEnCaisse);
                 $restant -= $aAppliquer;
             }
 

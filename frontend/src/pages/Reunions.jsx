@@ -10,6 +10,7 @@ import {
   Trophy, Dices, Gavel, RefreshCw, Star, HeartHandshake, ArrowLeft,
 } from 'lucide-react';
 import { fmtDate, typePointLabel, statutPointLabel, fmt, periodeLabel, ACTEUR_ROLES, acteurRoleLabel, roleLabel, STATUTS_PRESENCE, statutPresenceLabel, MODES_PAIEMENT, modePaiementConfig } from '../data/mockData';
+import { API_BASE, request } from '../lib/api';
 import { useApp, TX_TYPES, TX_LABELS } from '../context/AppContext';
 import { PageHeader, Badge, Modal, FormField } from '../components/ui/index';
 import { ModePaiementFields, isModePaiementValid, ModePaiementBadge } from '../components/ui/ModePaiement';
@@ -74,7 +75,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
     tontines, membres, membresParTontine,
     addSeanceTransaction, addSanction, seanceTransactions,
     planningTours, ouvrirCycle, saisirCotisationCycle, designerGagnantCycle, cloturerCycle,
-    encheres, cyclesTontine, ouvrirBulletinPdf, addEnchere, ajouterRetenueBulletin, banques,
+    encheres, cyclesTontine, ouvrirBulletinPdf, addEnchere, ajouterRetenueBulletin, payerBulletin, banques,
   } = useApp();
 
   const locked   = !!reunion.verrouillee;
@@ -116,6 +117,9 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
   const [retenueLibelle, setRetenueLibelle] = useState('');
   const [retenueMontant, setRetenueMontant] = useState('');
   const [retenueCaisseId, setRetenueCaisseId] = useState('');
+  const [versementModal, setVersementModal] = useState(false);
+  const [modeVersement, setModeVersement] = useState('especes');
+  const [referenceVersement, setReferenceVersement] = useState('');
 
   const tontineSelectee = tontines.find(t => t.id === idTontineSelectee);
   const typeAttr = tontineSelectee?.typeAttribution;
@@ -129,11 +133,22 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
 
   const membresDeLatontine = useMemo(() => {
     if (!tontineSelectee) return [];
-    return membresParTontine
-      .filter(mt => mt.idTontine === tontineSelectee.id && mt.statut === 'actif')
-      .map(mt => { const m = membres.find(x => x.id === mt.idMembre); return m ? { ...m, nombreParts: mt.nombreParts, montantDu: tontineSelectee.cotisation * mt.nombreParts } : null; })
-      .filter(Boolean);
+    // Une part gagnée est exclue du prochain tirage, jamais des cotisations.
+    // On regroupe les parts d'un même membre pour ne présenter qu'une ligne par membre.
+    const partsParMembre = new Map();
+    membresParTontine
+      .filter(mt => mt.idTontine === tontineSelectee.id && ['actif', 'gagnee'].includes(mt.statut))
+      .forEach(mt => partsParMembre.set(mt.idMembre, (partsParMembre.get(mt.idMembre) || 0) + mt.nombreParts));
+    return [...partsParMembre.entries()].map(([idMembre, nombreParts]) => {
+      const membre = membres.find(m => m.id === idMembre);
+      return membre ? { ...membre, nombreParts, montantDu: tontineSelectee.cotisation * nombreParts } : null;
+    }).filter(Boolean);
   }, [tontineSelectee, membresParTontine, membres]);
+
+  const membresEligiblesGain = useMemo(() => membresParTontine
+    .filter(mt => mt.idTontine === tontineSelectee?.id && mt.statut === 'actif')
+    .map(mt => membres.find(m => m.id === mt.idMembre)).filter(Boolean),
+  [tontineSelectee, membresParTontine, membres]);
 
   const montantPot     = tontineSelectee ? tontineSelectee.cotisation * tontineSelectee.totalParts : 0;
   const totalAttendu   = membresDeLatontine.reduce((s, m) => s + m.montantDu, 0);
@@ -143,7 +158,9 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
   const totalCollecte  = cotises.reduce((s, m) => s + m.montantDu, 0);
 
   // Bénéficiaire déjà enregistré pour cette tontine dans la séance
-  const benefDejaEnregistre = beneficiairesSeance.find(b => b.idTontine === idTontineSelectee);
+  const toursDejaTraites = beneficiairesSeance.filter(b => b.idTontine === idTontineSelectee).length;
+  const limiteToursSeance = tontineSelectee?.maxCyclesParReunion || 1;
+  const benefDejaEnregistre = toursDejaTraites >= limiteToursSeance;
 
   // Tour planifié rotation
   const tourPlanifieProchain = useMemo(() => {
@@ -219,10 +236,12 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
     setCycleActuelId(cycle.id);
 
     for (const m of cotises) {
-      const cotisation = cycle.cotisations.find(co => co.idMembre === m.id);
-      if (!cotisation) continue; // membre sans part dans cette tontine — rien à saisir
+      const cotisationsMembre = cycle.cotisations.filter(co => co.idMembre === m.id);
+      if (cotisationsMembre.length === 0) continue;
       const mode = modeParMembre[m.id] || { modePaiement:'especes', detailsPaiement:'' };
-      await saisirCotisationCycle(cycle.id, cotisation.id, m.montantDu, { modePaiement: mode.modePaiement });
+      for (const cotisation of cotisationsMembre) {
+        await saisirCotisationCycle(cycle.id, cotisation.id, cotisation.montantDu, { modePaiement: mode.modePaiement });
+      }
     }
 
     setValide(true);
@@ -233,13 +252,15 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
   // Résout l'id de PART (tontine_parts) d'un membre — c'est ce que désignerGagnantCycle
   // attend, pas un id de membre. membresParTontine EST directement la liste des parts.
   const resolvePartId = (idMembre) => membresParTontine
-    .find(mt => mt.idTontine === tontineSelectee?.id && mt.idMembre === idMembre)?.id;
+    .find(mt => mt.idTontine === tontineSelectee?.id && mt.idMembre === idMembre && mt.statut === 'actif')?.id;
 
   // ── Handlers bénéficiaire — passent tous par le vrai circuit désormais :
   // désignerGagnantCycle() puis clôturerCycle(), sur le cycle ouvert à l'étape précédente.
   const handleConfirmerRotation = async () => {
     if (!tourPlanifieProchain || !cycleActuelId) return;
-    const idPart = resolvePartId(tourPlanifieProchain.idMembre);
+    // Le planning est rattaché à une part précise : si un membre possède deux
+    // parts, chaque part conserve donc son tour distinct.
+    const idPart = tourPlanifieProchain.idPart || resolvePartId(tourPlanifieProchain.idMembre);
     await designerGagnantCycle(cycleActuelId, idPart);
     const cycleFinal = await cloturerCycle(cycleActuelId);
     if (!cycleFinal) return;
@@ -348,7 +369,8 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
             {tontines.filter(t => t.statut === 'active').map(t => {
               const nbEncaisses = planningTours.filter(p => p.idTontine === t.id && p.statut === 'encaisse').length;
               const progressPct = t.nbTours > 0 ? Math.round(nbEncaisses / t.nbTours * 100) : 0;
-              const dejaTraite  = beneficiairesSeance.some(b => b.idTontine === t.id);
+              const toursTraites = beneficiairesSeance.filter(b => b.idTontine === t.id).length;
+              const dejaTraite  = toursTraites >= (t.maxCyclesParReunion || 1);
               const isSelected  = idTontineSelectee === t.id;
               const tColor      = TYPE_COLORS[t.typeAttribution] || '';
               return (
@@ -371,7 +393,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
                       <span className={clsx('text-xs px-2 py-0.5 rounded-full border font-medium', tColor)}>
                         {TYPE_LABELS[t.typeAttribution]}
                       </span>
-                      {dejaTraite && <span className="text-xs text-green-600 font-bold">OK</span>}
+                      <span className="text-xs text-gray-500 font-medium">{toursTraites}/{t.maxCyclesParReunion || 1}</span>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -393,7 +415,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
           )}
           {idTontineSelectee && benefDejaEnregistre && (
             <div className="p-3 bg-green-50 rounded-xl border border-green-200 flex items-center gap-2 text-sm text-green-700">
-              <Trophy size={15}/> Bénéficiaire déjà désigné pour cette tontine dans cette séance.
+              <Trophy size={15}/> Limite de {limiteToursSeance} tour(s) atteinte pour cette tontine dans cette séance.
             </div>
           )}
         </div>
@@ -619,7 +641,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
                 <div className="grid grid-cols-2 gap-2">
                   <select className="select text-sm" value={nouvelleEnchereMembre} onChange={e => setNouvelleEnchereMembre(e.target.value)}>
                     <option value="">— Membre —</option>
-                    {membresDeLatontine
+                    {membresEligiblesGain
                       .filter(m => !encheresEnAttente.some(e => e.idMembre === m.id))
                       .map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
                   </select>
@@ -675,7 +697,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
                   <p className="text-xs font-semibold text-amber-700">Aucune offre saisie — enregistrer puis désigner manuellement une offre (dérogation)</p>
                   <select className="select" value={enchereIdGagnant} onChange={e => setEnchereIdGagnant(e.target.value)}>
                     <option value="">— Sélectionner le gagnant —</option>
-                    {membresDeLatontine.map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
+                    {membresEligiblesGain.map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
                   </select>
                   <input type="number" className="input" placeholder="Montant de la mise gagnante (FCFA)"
                     value={miseGagnante} onChange={e => setMiseGagnante(e.target.value)}/>
@@ -744,6 +766,10 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
                 </div>
                 {gagnant.idBulletin && (
                   <div className="shrink-0 flex items-center gap-1.5">
+                    <button onClick={() => { setModeVersement('especes'); setReferenceVersement(''); setVersementModal(true); }}
+                      className="text-xs px-2.5 py-1.5 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700">
+                      Verser le gain
+                    </button>
                     <button onClick={() => { setRetenueLibelle(''); setRetenueMontant(''); setRetenueCaisseId(''); setRetenueModal(true); }}
                       className="text-xs px-2.5 py-1.5 bg-white border border-amber-300 text-amber-700 rounded-lg font-medium hover:bg-amber-50">
                       + Retenue
@@ -777,6 +803,23 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
         )}
       </Modal>
 
+      <Modal open={versementModal} onClose={() => setVersementModal(false)} title="Verser le gain au bénéficiaire"
+        footer={<>
+          <button onClick={() => setVersementModal(false)} className="btn-secondary">Annuler</button>
+          <button onClick={async () => {
+            const bulletin = await payerBulletin(gagnant.idBulletin, modeVersement, referenceVersement);
+            if (bulletin) setVersementModal(false);
+          }} disabled={modeVersement !== 'especes' && !referenceVersement.trim()} className="btn-primary">Confirmer le versement</button>
+        </>}>
+        <p className="text-xs text-gray-500 mb-4">Le net sort de la caisse de la tontine et les retenues sont imputées dans le PV.</p>
+        <FormField label="Mode de versement" required>
+          <select className="select" value={modeVersement} onChange={e => setModeVersement(e.target.value)}>
+            <option value="especes">Espèces</option><option value="cheque">Chèque</option><option value="virement">Virement</option><option value="mobile_money">Mobile Money</option><option value="carte_bancaire">Carte bancaire</option>
+          </select>
+        </FormField>
+        {modeVersement !== 'especes' && <FormField label="Référence du paiement" required><input className="input" value={referenceVersement} onChange={e => setReferenceVersement(e.target.value)} /></FormField>}
+      </Modal>
+
       <Modal open={retenueModal} onClose={() => setRetenueModal(false)} title="Ajouter une retenue manuelle"
         footer={<>
           <button onClick={() => setRetenueModal(false)} className="btn-secondary">Annuler</button>
@@ -802,7 +845,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
         <FormField label="Montant (FCFA)" required>
           <input type="number" className="input" placeholder="10000" value={retenueMontant} onChange={e => setRetenueMontant(e.target.value)}/>
         </FormField>
-        <FormField label="Caisse à créditer" required hint="La retenue sera enregistrée comme une entrée dans cette caisse.">
+        <FormField label="Caisse de destination" required hint="La retenue sera affectée à cette caisse au moment du versement.">
           <select className="select" value={retenueCaisseId} onChange={e => setRetenueCaisseId(e.target.value)}>
             <option value="">— Sélectionner une caisse —</option>
             {banques.filter(caisse => caisse.statut === 'active').map(caisse => (
@@ -854,7 +897,7 @@ function RapportSeance({ reunion, transactions, membres, onClose }) {
 
     return [...groupes.values()].map((groupe) => {
       const totalEntrees = groupe.items
-        .filter((tx) => TX_TYPES.find((type) => type.value === tx.type)?.dir === 'entree')
+        .filter((tx) => TX_TYPES.find((type) => type.value === tx.type)?.dir === 'entree' && !tx.note?.includes('Imputation sur gain'))
         .reduce((somme, tx) => somme + tx.montant, 0);
       const totalSorties = groupe.items
         .filter((tx) => TX_TYPES.find((type) => type.value === tx.type)?.dir === 'sortie')
@@ -875,7 +918,13 @@ function RapportSeance({ reunion, transactions, membres, onClose }) {
     <Modal open={true} onClose={onClose} size="full"
       title={<span className="flex items-center gap-2"><FileText size={18} className="text-primary-600"/>Procès-verbal — Réunion N°{reunion.numero}</span>}
       footer={<>
-        <button onClick={() => window.print()} className="btn-secondary"><Printer size={14}/> Imprimer</button>
+        <button onClick={() => {
+          const popup = window.open('', '_blank');
+          request(`/reunions/${reunion.id}/pv-pdf`).then(({ pdf_url: url }) => {
+            const origin = API_BASE.replace(/\/api\/?$/, '');
+            if (popup) popup.location.href = /^https?:\/\//i.test(url) ? url : `${origin}${url.startsWith('/') ? '' : '/'}${url}`;
+          }).catch(() => popup?.close());
+        }} className="btn-secondary"><Printer size={14}/> Générer le PDF</button>
         <button onClick={onClose} className="btn-primary ml-auto">Fermer</button>
       </>}>
         <div id="rapport-print" className="space-y-5 text-sm">
@@ -984,13 +1033,14 @@ function RapportSeance({ reunion, transactions, membres, onClose }) {
                               const isEntree = meta?.dir === 'entree';
                               const isSortie = meta?.dir === 'sortie';
                               const isBanque = tx.type === 'depot_banque';
+                              const isImputation = tx.note?.includes('Imputation sur gain');
                               return (
                                 <tr key={tx.id} className="hover:bg-gray-50">
                                   <td className="p-2.5 text-gray-400 font-mono">{tx.heure}</td>
-                                  <td className="p-2.5"><span>{meta?.icon} {meta?.label || tx.type}</span></td>
+                                  <td className="p-2.5"><span>{meta?.icon} {meta?.label || tx.type}{isImputation ? ' (imputation)' : ''}</span></td>
                                   <td className="p-2.5 font-medium text-gray-700">{tx.nomMembre || '—'}</td>
                                   <td className="p-2.5 text-gray-500 italic truncate max-w-[140px]">{tx.libelle || '—'}</td>
-                                  <td className="p-2.5 text-right font-bold text-green-600">{isEntree ? fmt(tx.montant) : '—'}</td>
+                                  <td className="p-2.5 text-right font-bold text-green-600">{isEntree && !isImputation ? fmt(tx.montant) : '—'}</td>
                                   <td className="p-2.5 text-right font-bold text-red-500">{isSortie ? fmt(tx.montant) : '—'}</td>
                                   <td className="p-2.5 text-right font-bold text-blue-600">{isBanque ? fmt(tx.montant) : '—'}</td>
                                 </tr>
@@ -1642,12 +1692,15 @@ function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, san
 
 // ── Panneau Bénéficiaire de séance ────────────────────────────
 function BeneficiaireSeancePanel({ reunion }) {
-  const { tontines, cyclesTontine, ouvrirBulletinPdf, ajouterRetenueBulletin, banques } = useApp();
+  const { tontines, cyclesTontine, ouvrirBulletinPdf, ajouterRetenueBulletin, payerBulletin, banques } = useApp();
   const [bulletinUrl, setBulletinUrl] = useState(null);
   const [retenueModal, setRetenueModal] = useState(null); // idBulletin ciblé
   const [retenueLibelle, setRetenueLibelle] = useState('');
   const [retenueMontant, setRetenueMontant] = useState('');
   const [retenueCaisseId, setRetenueCaisseId] = useState('');
+  const [versementModal, setVersementModal] = useState(null);
+  const [modeVersement, setModeVersement] = useState('especes');
+  const [referenceVersement, setReferenceVersement] = useState('');
 
   // Onglet purement informatif : affiche le(s) bénéficiaire(s) déjà désigné(s)
   // cette séance, quel que soit le mode d'attribution (rotation/tirage/enchère).
@@ -1684,6 +1737,10 @@ function BeneficiaireSeancePanel({ reunion }) {
               </div>
               {b.idBulletin && (
                 <div className="shrink-0 flex items-center gap-1.5">
+                  <button onClick={() => { setModeVersement('especes'); setReferenceVersement(''); setVersementModal(b.idBulletin); }}
+                    className="text-xs px-2.5 py-1.5 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700">
+                    Verser le gain
+                  </button>
                   <button onClick={() => { setRetenueLibelle(''); setRetenueMontant(''); setRetenueCaisseId(''); setRetenueModal(b.idBulletin); }}
                     className="text-xs px-2.5 py-1.5 bg-white border border-amber-300 text-amber-700 rounded-lg font-medium hover:bg-amber-50">
                     + Retenue
@@ -1712,6 +1769,33 @@ function BeneficiaireSeancePanel({ reunion }) {
         )}
       </Modal>
 
+      <Modal open={!!versementModal} onClose={() => setVersementModal(null)} title="Verser le gain au bénéficiaire"
+        footer={<>
+          <button onClick={() => setVersementModal(null)} className="btn-secondary">Annuler</button>
+          <button onClick={async () => {
+            const bulletin = await payerBulletin(versementModal, modeVersement, referenceVersement);
+            if (bulletin) setVersementModal(null);
+          }} disabled={modeVersement !== 'especes' && !referenceVersement.trim()} className="btn-primary">Confirmer le versement</button>
+        </>}>
+        <p className="text-xs text-gray-500 mb-4">
+          Le net est décaissé de la caisse de la tontine. Les retenues sont imputées et apparaissent dans le PV.
+        </p>
+        <FormField label="Mode de versement" required>
+          <select className="select" value={modeVersement} onChange={e => setModeVersement(e.target.value)}>
+            <option value="especes">Espèces</option>
+            <option value="cheque">Chèque</option>
+            <option value="virement">Virement</option>
+            <option value="mobile_money">Mobile Money</option>
+            <option value="carte_bancaire">Carte bancaire</option>
+          </select>
+        </FormField>
+        {modeVersement !== 'especes' && (
+          <FormField label="Référence du paiement" required>
+            <input className="input" value={referenceVersement} onChange={e => setReferenceVersement(e.target.value)} placeholder="N° de transaction, chèque ou bordereau" />
+          </FormField>
+        )}
+      </Modal>
+
       <Modal open={!!retenueModal} onClose={() => setRetenueModal(null)} title="Ajouter une retenue manuelle"
         footer={<>
           <button onClick={() => setRetenueModal(null)} className="btn-secondary">Annuler</button>
@@ -1737,7 +1821,7 @@ function BeneficiaireSeancePanel({ reunion }) {
         <FormField label="Montant (FCFA)" required>
           <input type="number" className="input" placeholder="10000" value={retenueMontant} onChange={e => setRetenueMontant(e.target.value)}/>
         </FormField>
-        <FormField label="Caisse à créditer" required hint="La retenue sera enregistrée comme une entrée dans cette caisse.">
+        <FormField label="Caisse de destination" required hint="La retenue sera affectée à cette caisse au moment du versement.">
           <select className="select" value={retenueCaisseId} onChange={e => setRetenueCaisseId(e.target.value)}>
             <option value="">— Sélectionner une caisse —</option>
             {banques.filter(caisse => caisse.statut === 'active').map(caisse => (

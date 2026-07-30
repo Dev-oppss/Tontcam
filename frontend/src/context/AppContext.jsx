@@ -1251,6 +1251,7 @@ export const AppProvider = ({ children }) => {
       showToast('Cycle clôturé — bulletin de gain généré');
       const cycle = await chargerCycle(idCycle);
       await chargerCycles(cycle.idTontine);
+      await chargerPlanningTours(cycle.idTontine);
       return cycle;
     } catch (err) { return handleError(err); }
   };
@@ -1288,8 +1289,16 @@ export const AppProvider = ({ children }) => {
       const b = await request(`/bulletins/${idBulletin}/retenues`, {
         method: 'POST', body: { libelle, montant: Number(montant), caisse_id: idCaisse },
       });
-      showToast('Retenue ajoutée au bulletin et créditée dans la caisse choisie');
+      showToast('Retenue ajoutée : elle sera imputée dans la caisse choisie lors du versement du gain');
       return b;
+    } catch (err) { return handleError(err); }
+  };
+  const payerBulletin = async (idBulletin, modePaiement = 'especes', referenceVersement = '') => {
+    try {
+      const bulletin = await request(`/bulletins/${idBulletin}/payer`, { method: 'POST', body: { mode_paiement: modePaiement, reference_versement: referenceVersement || null } });
+      if (bulletin.cycle?.reunion_id) await chargerSeanceTransactions(bulletin.cycle.reunion_id);
+      showToast('Gain versé et mouvement de caisse enregistré');
+      return bulletin;
     } catch (err) { return handleError(err); }
   };
 
@@ -1329,7 +1338,7 @@ export const AppProvider = ({ children }) => {
     addTourPlanning, marquerTourEncaisse, retirerTourPlanning, chargerPlanningTours,
     addSeanceTransaction, deleteSeanceTransaction, enregistrerBeneficiaireSeance, chargerSeanceTransactions,
     addUtilisateur, updateUtilisateur, desactiverUtilisateur, activerUtilisateur,
-    genererBulletin, ouvrirBulletinPdf, ajouterRetenueBulletin,
+    genererBulletin, ouvrirBulletinPdf, ajouterRetenueBulletin, payerBulletin,
     ouvrirCycle, chargerCycle, saisirCotisationCycle, designerGagnantCycle, cloturerCycle,
     resetWorkspace,
   };

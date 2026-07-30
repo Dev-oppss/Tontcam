@@ -127,6 +127,7 @@ export const tontineFromApi = (t) => !t ? null : ({
   statut: t.statut === 'active' ? 'active' : t.statut,
   totalParts: t.parts_count ?? t.parts?.length ?? 0,
   nbTours: t.nb_parts_total ?? t.parts_count ?? t.parts?.length ?? 0,
+  maxCyclesParReunion: Number(t.max_cycles_par_reunion || 1),
   idCaisse: t.caisse_id,
   dateDebut: t.date_debut,
 });
@@ -169,6 +170,7 @@ export const tontineToApi = (t) => ({
   montant_part: Number(t.cotisation),
   mode_attribution: t.typeAttribution === 'tirage' ? 'tirage_sort' : t.typeAttribution,
   nb_parts_total: Number(t.nbTours || t.totalParts || t.nbPartsTotal || 1),
+  max_cycles_par_reunion: Number(t.maxCyclesParReunion || 1),
   exige_avaliste: !!t.avalisteRequis,
   pret_autorise: !!t.pretAutorise,
   mise_min_enchere: t.miseMinEnchere ?? undefined,

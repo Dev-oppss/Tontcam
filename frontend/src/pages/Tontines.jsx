@@ -54,7 +54,7 @@ function calcDateFin(dateDebut, nbTours, periode) {
   return d.toISOString().split('T')[0];
 }
 
-const EMPTY_FORM = { nom:'', cotisation:'', idCaisse:'', periode:'mensuel', nbTours:12, typeAttribution:'rotation', dateDebut:'', dateFin:'' };
+const EMPTY_FORM = { nom:'', cotisation:'', idCaisse:'', periode:'mensuel', nbTours:12, maxCyclesParReunion:1, typeAttribution:'rotation', dateDebut:'', dateFin:'' };
 const EMPTY_MT   = { idMembre:'', nombreParts:'1', dateAdhesion: new Date().toISOString().split('T')[0], idAvaliste:'' };
 
 export default function Tontines() {
@@ -319,7 +319,7 @@ export default function Tontines() {
                     </div>
                   </div>
                 </div>
-                <button onClick={() => { setShowEdit(t); setForm({ nom:t.nom, cotisation:t.cotisation, idCaisse:t.idCaisse||'', periode:t.periode, nbTours:t.nbTours, typeAttribution:t.typeAttribution, dateDebut:t.dateDebut||''  , dateFin:t.dateFin||'' }); }}
+                <button onClick={() => { setShowEdit(t); setForm({ nom:t.nom, cotisation:t.cotisation, idCaisse:t.idCaisse||'', periode:t.periode, nbTours:t.nbTours, maxCyclesParReunion:t.maxCyclesParReunion||1, typeAttribution:t.typeAttribution, dateDebut:t.dateDebut||''  , dateFin:t.dateFin||'' }); }}
                   className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg">
                   <Pencil size={13}/>
                 </button>
@@ -451,9 +451,6 @@ export default function Tontines() {
                       </div>
                       <span className="text-xs font-bold text-gray-700 shrink-0">{fmt(p.statut === 'encaisse' ? p.montantPot : potTontine(t))}</span>
                       <div className="flex flex-col gap-0.5 shrink-0">
-                        {p.statut==='planifie'&&(
-                          <button onClick={()=>{setEncaisseModal(p);setEncModePaiement('especes');setEncDetails('');}} title="Marquer encaissé" className="p-1 hover:bg-primary-100 rounded text-primary-600"><CheckCircle size={13}/></button>
-                        )}
                         {p.statut!=='encaisse'&&(
                           <button onClick={()=>retirerTourPlanning(t.id, p.id)} title="Retirer" className="p-1 hover:bg-red-100 rounded text-red-400"><X size={12}/></button>
                         )}
@@ -884,6 +881,7 @@ export default function Tontines() {
             <p className="text-xs font-bold text-gray-500 uppercase">Paramètres</p>
             <div className="grid grid-cols-2 gap-3">
               <FormField label="Nombre de tours"><F k="nbTours" type="number" min="1" placeholder="12"/></FormField>
+              <FormField label="Tours maximum / séance" hint="1 conserve le fonctionnement classique"><F k="maxCyclesParReunion" type="number" min="1" max="20"/></FormField>
               <FormField label="Date de démarrage"><F k="dateDebut" type="date"/></FormField>
             </div>
             {form.dateDebut&&form.nbTours&&(
@@ -925,6 +923,7 @@ export default function Tontines() {
           </FormField>
           <div className="grid grid-cols-2 gap-3">
             <FormField label="Nb tours"><F k="nbTours" type="number" min="1"/></FormField>
+            <FormField label="Tours maximum / séance"><F k="maxCyclesParReunion" type="number" min="1" max="20"/></FormField>
             <FormField label="Type"><S k="typeAttribution"><option value="rotation"> Rotation</option><option value="tirage"> Tirage</option><option value="enchere"> Enchère</option></S></FormField>
           </div>
           {form.typeAttribution === 'enchere' && (

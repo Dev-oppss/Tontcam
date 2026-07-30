@@ -8,6 +8,7 @@ use App\Models\CycleTontine;
 use App\Models\Pret;
 use App\Models\RetenueBulletin;
 use App\Models\SanctionMembre;
+use App\Models\SeanceTransaction;
 use App\Models\Utilisateur;
 use Illuminate\Support\Facades\DB;
 
@@ -45,31 +46,29 @@ class BulletinGainService
             ]);
 
             $retenues = $this->calculerRetenues($membre, $bulletin);
+            // Une retenue ne peut jamais excéder le gain disponible. Le reliquat
+            // d'une dette reste ouvert et sera repris lors d'un prochain gain.
+            $disponible = $brut;
+            foreach ($retenues as $retenue) {
+                $montantRetenu = min((float) $retenue->montant, max(0, $disponible));
+                if ($montantRetenu <= 0) {
+                    $retenue->delete();
+                    continue;
+                }
+                $retenue->update(['montant' => round($montantRetenu, 2)]);
+                $disponible -= $montantRetenu;
+            }
+            $retenues = array_values(array_filter($retenues, fn ($retenue) => $retenue->exists));
             $totalRetenues = collect($retenues)->sum('montant');
             $net = $this->calculerNet($brut, $totalRetenues);
 
-            // La contrainte CHECK bulletins_montant_net_ck impose montant_net = montant_brut - total_retenues
-            // (égalité stricte) : on ne doit donc jamais "clamper" montant_net à 0 ici, sous peine
-            // de violer la contrainte dès que les retenues dépassent le brut. Le cas négatif est
-            // géré séparément ci-dessous (report de dette).
             $bulletin->update([
                 'total_retenues' => $totalRetenues,
                 'montant_net' => $net,
                 'statut' => 'genere',
             ]);
 
-            if ($net < 0) {
-                // RG : versement suspendu, différence retenue sur le prochain gain du membre
-                RetenueBulletin::create([
-                    'bulletin_id' => $bulletin->id,
-                    'type_retenue' => 'autre',
-                    'libelle' => 'Report de dette sur prochain gain',
-                    'montant' => abs($net),
-                    'priorite' => 99,
-                ]);
-            }
-
-            return $bulletin->fresh('retenues');
+            return $bulletin->fresh(['retenues', 'cycle']);
         });
     }
 
@@ -108,23 +107,11 @@ class BulletinGainService
                 'caisse_id' => $caisse->id,
             ]);
 
-            // Une retenue n'est jamais seulement un calcul sur le bulletin : le
-            // montant retenu devient immédiatement une entrée traçable dans la
-            // caisse choisie, liée à sa ligne de retenue.
-            $transaction = app(CaisseService::class)->entree(
-                $caisse,
-                (float) $retenue->montant,
-                "Retenue bulletin {$bulletin->numero_bulletin} — {$libelle}",
-                [
-                    'reference_type' => 'retenue_bulletin',
-                    'reference_id' => $retenue->id,
-                    'created_by' => $auteur->id,
-                    'valide_par' => $auteur->id,
-                ]
-            );
-            $retenue->update(['transaction_id' => $transaction->id]);
-
             $totalRetenues = (float) $bulletin->retenues()->sum('montant');
+            if ($totalRetenues > (float) $bulletin->montant_brut) {
+                $retenue->delete();
+                throw new \RuntimeException('Le total des retenues ne peut pas dépasser le montant brut du gain.');
+            }
             $net = $this->calculerNet((float) $bulletin->montant_brut, $totalRetenues);
 
             $bulletin->update([
@@ -184,7 +171,6 @@ class BulletinGainService
                 'reference_id' => $sanction->id,
                 'reference_type' => 'sanction_membre',
             ]);
-            $sanction->update(['statut' => 'retenue_sur_gain', 'bulletin_id' => $bulletin->id]);
         }
 
         // 3. Cotisation mutuelle (assurance sociale active)
@@ -223,6 +209,65 @@ class BulletinGainService
     public function calculerNet(float $brut, float $totalRetenues): float
     {
         return round($brut - $totalRetenues, 2);
+    }
+
+    /** Décaisse le net et impute les retenues sans compter deux fois le pot. */
+    public function verser(BulletinGain $bulletin, string $modePaiement, ?string $reference, Utilisateur $auteur): BulletinGain
+    {
+        $bulletin->loadMissing('cycle.tontine.caisse', 'retenues.caisse');
+        if ($bulletin->statut === 'paye') throw new \RuntimeException('Ce bulletin est déjà versé.');
+        if ((float) $bulletin->montant_net < 0) throw new \RuntimeException('Le bulletin contient un montant net invalide.');
+        if ((float) $bulletin->montant_net === 0.0 && $bulletin->retenues->isEmpty()) throw new \RuntimeException('Aucun montant à verser ou à imputer.');
+        $caisse = $bulletin->cycle->tontine->caisse;
+        if (! $caisse || ! $caisse->actif) throw new \RuntimeException('La caisse de la tontine est absente ou inactive.');
+
+        return DB::transaction(function () use ($bulletin, $caisse, $modePaiement, $reference, $auteur) {
+            $caisseService = app(CaisseService::class);
+            $transaction = (float) $bulletin->montant_net > 0
+                ? $caisseService->sortie($caisse, (float) $bulletin->montant_net, "Versement gain — {$bulletin->numero_bulletin}", [
+                    'reference_type' => 'bulletin_gain', 'reference_id' => $bulletin->id,
+                    'mode_paiement' => $modePaiement, 'cheque_numero' => $reference,
+                    'created_by' => $auteur->id, 'valide_par' => $auteur->id,
+                ])
+                : null;
+            if ($transaction) {
+                SeanceTransaction::create([
+                    'reunion_id' => $bulletin->cycle->reunion_id, 'type' => 'attribution_tour',
+                    'membre_id' => $bulletin->gagnant_membre_id, 'montant' => $bulletin->montant_net,
+                    'libelle' => "Versement net du bulletin {$bulletin->numero_bulletin}",
+                    'caisse_id' => $caisse->id, 'note' => 'Transaction '.$transaction->id, 'created_by' => $auteur->id,
+                ]);
+            }
+            foreach ($bulletin->retenues as $retenue) {
+                $destination = $retenue->caisse ?: $caisse;
+                if ($retenue->type_retenue === 'pret' && $retenue->reference_id) {
+                    $pret = Pret::with('caisse')->find($retenue->reference_id);
+                    if ($pret?->caisse) {
+                        $destination = $pret->caisse;
+                        app(PretService::class)->rembourserLibre($pret, (float) $retenue->montant, $auteur, false);
+                    }
+                }
+                if ($destination->id !== $caisse->id) {
+                    $transfert = $caisseService->transfert($caisse, $destination, (float) $retenue->montant,
+                        "Retenue bulletin {$bulletin->numero_bulletin} — {$retenue->libelle}", $auteur);
+                    $retenue->update(['transaction_id' => $transfert['transaction_destination']->id]);
+                }
+                if ($retenue->type_retenue === 'sanction' && $retenue->reference_id) {
+                    SanctionMembre::where('id', $retenue->reference_id)->update(['statut' => 'payee', 'payee_at' => now()]);
+                }
+                SeanceTransaction::create([
+                    'reunion_id' => $bulletin->cycle->reunion_id,
+                    'type' => match ($retenue->type_retenue) { 'pret' => 'remboursement_pret', 'sanction' => 'paiement_sanction', default => 'divers_entree' },
+                    'membre_id' => $bulletin->gagnant_membre_id, 'montant' => $retenue->montant,
+                    'libelle' => "Retenue bulletin {$bulletin->numero_bulletin} — {$retenue->libelle}",
+                    'reference_pret_id' => $retenue->type_retenue === 'pret' ? $retenue->reference_id : null,
+                    'reference_sanction_id' => $retenue->type_retenue === 'sanction' ? $retenue->reference_id : null,
+                    'caisse_id' => $destination->id, 'note' => 'Imputation sur gain (sans nouvel encaissement)', 'created_by' => $auteur->id,
+                ]);
+            }
+            $bulletin->update(['statut' => 'paye', 'mode_versement' => $modePaiement, 'reference_versement' => $reference ?: $transaction?->id, 'date_versement' => now()]);
+            return $bulletin->fresh(['retenues', 'cycle']);
+        });
     }
 
     /**
