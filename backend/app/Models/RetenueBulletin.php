@@ -21,6 +21,8 @@ class RetenueBulletin extends Model
         'priorite',
         'reference_id',
         'reference_type',
+        'caisse_id',
+        'transaction_id',
     ];
 
     protected $casts = [
@@ -31,6 +33,16 @@ class RetenueBulletin extends Model
     public function bulletin()
     {
         return $this->belongsTo(BulletinGain::class, 'bulletin_id');
+    }
+
+    public function caisse()
+    {
+        return $this->belongsTo(Caisse::class);
+    }
+
+    public function transaction()
+    {
+        return $this->belongsTo(Transaction::class);
     }
 
 }

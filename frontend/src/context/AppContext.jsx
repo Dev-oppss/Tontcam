@@ -57,6 +57,7 @@ export const AppProvider = ({ children }) => {
   const [cyclesTontine, setCyclesTontine] = useState([]);
   const [portailMoi, setPortailMoi] = useState(null);
   const [parametres, setParametres] = useState({});
+  const [rubriquesODJ, setRubriquesODJ] = useState([]);
 
   const showToast = useCallback((message, type = 'success') => {
     setToast({ message, type });
@@ -106,6 +107,29 @@ export const AppProvider = ({ children }) => {
     } catch (err) {
       setPortailMoi(null);
     }
+  };
+
+  const chargerRubriquesODJ = useCallback(async () => {
+    try {
+      const rubriques = await request('/ordre-du-jour-rubriques');
+      setRubriquesODJ(rubriques || []);
+      return rubriques || [];
+    } catch (err) {
+      showToast(err.message || 'Impossible de charger les rubriques d’ordre du jour', 'error');
+      return [];
+    }
+  }, [showToast]);
+
+  const creerRubriqueODJ = async (libelle) => {
+    try {
+      const rubrique = await request('/ordre-du-jour-rubriques', {
+        method: 'POST',
+        body: { libelle, ordre_defaut: rubriquesODJ.length + 1, est_obligatoire: false },
+      });
+      setRubriquesODJ((prev) => [...prev, rubrique].sort((a, b) => a.ordre_defaut - b.ordre_defaut));
+      showToast('Rubrique enregistrée pour les prochaines réunions');
+      return rubrique;
+    } catch (err) { return handleError(err); }
   };
 
   // ── Charge toutes les données de l'association une fois connecté ──
@@ -198,6 +222,10 @@ export const AppProvider = ({ children }) => {
       }
     })();
   }, [user, currentAssociation, showToast]);
+
+  useEffect(() => {
+    if (user && currentAssociation) chargerRubriquesODJ();
+  }, [user, currentAssociation, chargerRubriquesODJ]);
 
   const dashboardStats = useMemo(() => ({
     membresActifs: membres.filter((m) => m.statut === 'actif').length,
@@ -585,11 +613,18 @@ export const AppProvider = ({ children }) => {
     try {
       const item = await request(`/reunions/${reunionId}/points`, {
         method: 'POST',
-        body: { titre: data.titre, type: data.type, description: data.description, acteur_role: data.acteurRole || undefined },
+        body: {
+          titre: data.titre,
+          rubrique_id: data.rubriqueId || undefined,
+          type: data.type,
+          description: data.description,
+          acteur_role: data.acteurRole || undefined,
+        },
       });
       const point = {
         id: item.id,
-        titre: item.libelle_libre ?? data.titre,
+        idRubrique: item.rubrique_id || null,
+        titre: item.rubrique?.libelle ?? item.libelle_libre ?? data.titre,
         type: item.type ?? data.type,
         description: item.contenu_rapport ?? data.description,
         acteurRole: item.acteur_role,
@@ -677,7 +712,12 @@ export const AppProvider = ({ children }) => {
 
   const addEnchere = async (data) => {
     try {
-      const part = membresParTontine.find((p) => p.idMembre === data.idMembre);
+      // Un même membre peut participer à plusieurs tontines. La part doit donc
+      // être résolue dans la tontine du cycle, jamais dans la première part
+      // trouvée globalement.
+      const idTontine = data.idTontine || rotations.find((r) => r.id === data.idRotation)?.idTontine;
+      const part = membresParTontine.find((p) => p.idTontine === idTontine && p.idMembre === data.idMembre && p.statut === 'actif');
+      if (!part) throw new Error('Ce membre ne possède aucune part disponible dans cette tontine.');
       const e = await request(`/cycles/${data.idRotation}/encheres`, { method: 'POST', body: {
         tontine_part_id: part?.id, membre_id: data.idMembre, montant_offre: Number(data.montantEnchere),
       } });
@@ -771,7 +811,8 @@ export const AppProvider = ({ children }) => {
         id: t.id, idReunion: t.reunion_id, type: t.type, idMembre: t.membre_id,
         nomMembre: t.membre ? `${t.membre.nom} ${t.membre.prenom}` : null,
         montant: Number(t.montant), libelle: t.libelle, idSanction: t.reference_sanction_id,
-        idPret: t.reference_pret_id, idBanque: t.caisse_id, note: t.note,
+        idPret: t.reference_pret_id, idBanque: t.caisse_id, idCaisse: t.caisse_id,
+        nomCaisse: t.caisse?.libelle || null, note: t.note,
       }))]);
     } catch (err) { showToast(err.message, 'error'); }
   }, [showToast]);
@@ -785,7 +826,12 @@ export const AppProvider = ({ children }) => {
           reference_pret_id: data.idPret || undefined, caisse_id: data.idBanque || undefined, note: data.note || undefined,
         },
       });
-      const item = { id: t.id, idReunion, type: t.type, idMembre: t.membre_id, montant: Number(t.montant), libelle: t.libelle };
+      const item = {
+        id: t.id, idReunion, type: t.type, idMembre: t.membre_id,
+        nomMembre: t.membre ? `${t.membre.nom} ${t.membre.prenom}` : null,
+        montant: Number(t.montant), libelle: t.libelle,
+        idBanque: t.caisse_id, idCaisse: t.caisse_id, nomCaisse: t.caisse?.libelle || null,
+      };
       setSeanceTransactionsState((prev) => [...prev, item]);
       showToast('Transaction enregistrée');
       return item;
@@ -1237,12 +1283,12 @@ export const AppProvider = ({ children }) => {
   // Retenue manuelle « priorité 5 » (frais d'organisation, décision d'AG...) — rien
   // ne la calcule automatiquement, le trésorier/président la saisit à la main avant
   // de signer. Refusé côté serveur si le bulletin a déjà au moins une signature.
-  const ajouterRetenueBulletin = async (idBulletin, libelle, montant) => {
+  const ajouterRetenueBulletin = async (idBulletin, libelle, montant, idCaisse) => {
     try {
       const b = await request(`/bulletins/${idBulletin}/retenues`, {
-        method: 'POST', body: { libelle, montant: Number(montant) },
+        method: 'POST', body: { libelle, montant: Number(montant), caisse_id: idCaisse },
       });
-      showToast('Retenue ajoutée au bulletin');
+      showToast('Retenue ajoutée au bulletin et créditée dans la caisse choisie');
       return b;
     } catch (err) { return handleError(err); }
   };
@@ -1250,7 +1296,7 @@ export const AppProvider = ({ children }) => {
   const resetWorkspace = async () => { await logout(); };
 
   const value = {
-    booting, user, currentAssociation, setupComplete, toast, parametres,
+    booting, user, currentAssociation, setupComplete, toast, parametres, rubriquesODJ,
     membres, tontines, membresParTontine, reunions, rotations, encheres,
     presences: reunions.flatMap((r) => r.presencesReunion || []),
     postes, mandats,
@@ -1273,7 +1319,7 @@ export const AppProvider = ({ children }) => {
     logAuditConsultation, addDecisionAG, addReglement, addRapprochement, justifierEcart,
     addTontine, updateTontine, addMembreTontine, removeMembreTontine, updateMembreTontine,
     addReunion, updateReunion, chargerReunion, ouvrirReunion, cloturerReunion, ouvrirSeance, cloturerSeance,
-    addPointODJ, updatePointODJ, removePointODJ, movePointODJ,
+    addPointODJ, updatePointODJ, removePointODJ, movePointODJ, chargerRubriquesODJ, creerRubriqueODJ,
     setPresenceMembre, signerPV,
     chargerRotations, tirerAuSort, addEnchere, attribuerTour, annulerEncheres,
     addBanque, addCaisse: addBanque, doOperation, addMembreBanque, transfererCaisse, addCompteBancaire, chargerTransferts,

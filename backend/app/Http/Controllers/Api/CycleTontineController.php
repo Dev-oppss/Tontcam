@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Models\CotisationTontine;
+use App\Models\Caisse;
 use App\Models\CycleTontine;
 use App\Models\Reunion;
 use App\Models\Tontine;
@@ -286,11 +287,16 @@ class CycleTontineController extends Controller
         $data = $request->validate([
             'libelle' => ['required', 'string', 'max:200'],
             'montant' => ['required', 'numeric', 'min:0.01'],
+            'caisse_id' => ['required', 'uuid'],
         ]);
+
+        $caisse = $this->scope->scopeAssociation(Caisse::query())
+            ->where('actif', true)
+            ->findOrFail($data['caisse_id']);
 
         try {
             $bulletin = $this->bulletinService->ajouterRetenueManuelle(
-                $bulletin, $data['libelle'], (float) $data['montant'], $request->user()
+                $bulletin, $caisse, $data['libelle'], (float) $data['montant'], $request->user()
             );
         } catch (\RuntimeException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
@@ -318,6 +324,18 @@ class CycleTontineController extends Controller
         $miseMin = (float) ($cycle->tontine->mise_min_enchere ?? 0);
         if ($miseMin && $data['montant_offre'] < $miseMin) {
             return response()->json(['message' => "L'offre doit être supérieure ou égale à la mise minimale ({$miseMin})."], 422);
+        }
+
+        // La part soumise doit appartenir à la tontine de ce cycle et au membre
+        // qui fait l'offre. Cette vérification évite toute attribution croisée
+        // lorsqu'un membre possède des parts dans plusieurs tontines.
+        $partValide = $cycle->tontine->parts()
+            ->whereKey($data['tontine_part_id'])
+            ->where('membre_id', $data['membre_id'])
+            ->where('statut', 'disponible')
+            ->exists();
+        if (! $partValide) {
+            return response()->json(['message' => 'La part proposée est invalide ou n’est plus disponible pour ce membre.'], 422);
         }
 
         $enchere = \App\Models\Encherite::updateOrCreate(

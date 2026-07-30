@@ -186,24 +186,32 @@ class ReunionController extends Controller
     {
         $reunion = $this->scope->scopeAssociation(Reunion::query())->findOrFail($id);
         $data = $request->validate([
-            'titre' => ['required', 'string', 'max:200'],
+            'titre' => ['nullable', 'string', 'max:200', 'required_without:rubrique_id'],
+            'rubrique_id' => ['nullable', 'uuid'],
             'type' => ['nullable', 'string', 'max:50'],
             'description' => ['nullable', 'string'],
             'acteur_role' => ['nullable', 'string', 'max:50'],
         ]);
 
+        $rubrique = !empty($data['rubrique_id'])
+            ? $this->scope->scopeAssociation(\App\Models\OrdreDuJourRubrique::query())
+                ->where('actif', true)
+                ->findOrFail($data['rubrique_id'])
+            : null;
+
         $ordre = OrdreDuJourItem::where('reunion_id', $reunion->id)->max('ordre') + 1;
 
         $item = OrdreDuJourItem::create([
             'reunion_id' => $reunion->id,
-            'libelle_libre' => $data['titre'],
+            'rubrique_id' => $rubrique?->id,
+            'libelle_libre' => $rubrique ? null : $data['titre'],
             'type' => $data['type'] ?? null,
             'acteur_role' => $data['acteur_role'] ?? null,
             'ordre' => $ordre,
             'contenu_rapport' => $data['description'] ?? null,
         ]);
 
-        return response()->json($item, 201);
+        return response()->json($item->load('rubrique'), 201);
     }
 
     public function modifierPoint(Request $request, string $id, string $pointId): JsonResponse

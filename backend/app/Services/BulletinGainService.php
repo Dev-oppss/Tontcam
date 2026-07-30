@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\BulletinGain;
+use App\Models\Caisse;
 use App\Models\CycleTontine;
 use App\Models\Pret;
 use App\Models\RetenueBulletin;
@@ -80,7 +81,7 @@ class BulletinGainService
      * Interdit dès qu'une signature existe — modifier un bulletin déjà engagé
      * romprait la valeur probante du document (voir hash_integrite).
      */
-    public function ajouterRetenueManuelle(BulletinGain $bulletin, string $libelle, float $montant, Utilisateur $auteur): BulletinGain
+    public function ajouterRetenueManuelle(BulletinGain $bulletin, Caisse $caisse, string $libelle, float $montant, Utilisateur $auteur): BulletinGain
     {
         if ($montant <= 0) {
             throw new \RuntimeException('Le montant de la retenue doit être positif.');
@@ -89,10 +90,14 @@ class BulletinGainService
             throw new \RuntimeException('Impossible de modifier un bulletin déjà signé — au moins une signature existe.');
         }
 
-        return DB::transaction(function () use ($bulletin, $libelle, $montant, $auteur) {
+        if ($caisse->association_id !== $bulletin->cycle->tontine->association_id || ! $caisse->actif) {
+            throw new \RuntimeException('La caisse sélectionnée est invalide ou inactive pour cette association.');
+        }
+
+        return DB::transaction(function () use ($bulletin, $caisse, $libelle, $montant, $auteur) {
             $prochainePriorite = (int) $bulletin->retenues()->max('priorite') + 1;
 
-            RetenueBulletin::create([
+            $retenue = RetenueBulletin::create([
                 'bulletin_id' => $bulletin->id,
                 'type_retenue' => 'autre',
                 'libelle' => $libelle,
@@ -100,7 +105,24 @@ class BulletinGainService
                 'priorite' => max($prochainePriorite, 5),
                 'reference_id' => $auteur->id,
                 'reference_type' => 'saisie_manuelle',
+                'caisse_id' => $caisse->id,
             ]);
+
+            // Une retenue n'est jamais seulement un calcul sur le bulletin : le
+            // montant retenu devient immédiatement une entrée traçable dans la
+            // caisse choisie, liée à sa ligne de retenue.
+            $transaction = app(CaisseService::class)->entree(
+                $caisse,
+                (float) $retenue->montant,
+                "Retenue bulletin {$bulletin->numero_bulletin} — {$libelle}",
+                [
+                    'reference_type' => 'retenue_bulletin',
+                    'reference_id' => $retenue->id,
+                    'created_by' => $auteur->id,
+                    'valide_par' => $auteur->id,
+                ]
+            );
+            $retenue->update(['transaction_id' => $transaction->id]);
 
             $totalRetenues = (float) $bulletin->retenues()->sum('montant');
             $net = $this->calculerNet((float) $bulletin->montant_brut, $totalRetenues);
@@ -110,7 +132,7 @@ class BulletinGainService
                 'montant_net' => $net,
             ]);
 
-            return $bulletin->fresh('retenues');
+            return $bulletin->fresh('retenues.caisse');
         });
     }
 

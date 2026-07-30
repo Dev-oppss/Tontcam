@@ -30,6 +30,7 @@ export default function Encheres() {
     const m = membres.find(x => x.id === form.idMembre);
     addEnchere({
       idRotation: tourEnCours?.id,
+      idTontine: tourEnCours?.idTontine,
       idMembre: form.idMembre,
       nomMembre: `${m.nom} ${m.prenom}`,
       montantEnchere: Number(form.montantEnchere),

@@ -63,7 +63,7 @@ const ROLES_LECTURE_SEULE = ['president','controleur'];
 const EMPTY_REUNION   = { date:'', lieu:'', numero:'', observation:'' };
 const EMPTY_OUVERTURE = { heureOuverture:'', presidentSeance:'', secretaireSeance:'', motOuverture:'' };
 const EMPTY_CLOTURE   = { heureCloture:'', presents:'', absents:'', membresAbsents:'', observation:'' };
-const EMPTY_POINT     = { titre:'', type:'administratif', description:'', acteurRole:'' };
+const EMPTY_POINT     = { titre:'', rubriqueId:'', type:'administratif', description:'', acteurRole:'' };
 const EMPTY_TX        = { type:'cotisation', idMembre:'', montant:'', libelle:'', idSanction:'', idPret:'', idBanque:'', sousType:'', note:'', modePaiement:'especes', detailsPaiement:'' };
 
 // ── Feuille de présence / cotisation tontine ─────────────────
@@ -74,7 +74,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
     tontines, membres, membresParTontine,
     addSeanceTransaction, addSanction, seanceTransactions,
     planningTours, ouvrirCycle, saisirCotisationCycle, designerGagnantCycle, cloturerCycle,
-    encheres, cyclesTontine, ouvrirBulletinPdf, addEnchere, ajouterRetenueBulletin,
+    encheres, cyclesTontine, ouvrirBulletinPdf, addEnchere, ajouterRetenueBulletin, banques,
   } = useApp();
 
   const locked   = !!reunion.verrouillee;
@@ -115,6 +115,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
   const [retenueModal, setRetenueModal] = useState(false);
   const [retenueLibelle, setRetenueLibelle] = useState('');
   const [retenueMontant, setRetenueMontant] = useState('');
+  const [retenueCaisseId, setRetenueCaisseId] = useState('');
 
   const tontineSelectee = tontines.find(t => t.id === idTontineSelectee);
   const typeAttr = tontineSelectee?.typeAttribution;
@@ -156,8 +157,15 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
   // ici par erreur.
   const encheresEnAttente = useMemo(() => {
     if (!tontineSelectee || typeAttr !== 'enchere' || !cycleActuelId) return [];
-    return encheres.filter(e => e.statut === 'en_attente' && e.idRotation === cycleActuelId);
+    return encheres.filter(e => !e.estGagnante && e.idRotation === cycleActuelId);
   }, [tontineSelectee, typeAttr, encheres, cycleActuelId]);
+
+  // Le serveur reste la source de vérité pour départager les offres : montant
+  // maximal, puis offre la plus ancienne en cas d'égalité. Ce calcul sert
+  // uniquement à indiquer visuellement l'offre qui sera retenue.
+  const meilleureEnchere = useMemo(() => [...encheresEnAttente].sort((a, b) =>
+    b.montantEnchere - a.montantEnchere || new Date(a.dateEnchere) - new Date(b.dateEnchere)
+  )[0] || null, [encheresEnAttente]);
 
   // Par défaut, chaque membre est considéré cotisé (RG-TON-030 : toute
   // cotisation non renseignée est marquée impayée) — l'utilisateur décoche
@@ -254,20 +262,53 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
     if (!cycleActuelId || !nouvelleEnchereMembre || !nouvelleEnchereMontant) return;
     const ok = await addEnchere({
       idRotation: cycleActuelId,
+      idTontine: tontineSelectee.id,
       idMembre: nouvelleEnchereMembre,
       montantEnchere: nouvelleEnchereMontant,
     });
     if (ok) { setNouvelleEnchereMembre(''); setNouvelleEnchereMontant(''); }
   };
 
-  const handleConfirmerEnchere = async (nomMembre, idMembre, mise) => {
-    if (!cycleActuelId) return;
-    const idPart = resolvePartId(idMembre);
-    await designerGagnantCycle(cycleActuelId, idPart);
-    const cycleFinal = await cloturerCycle(cycleActuelId);
+  const terminerEnchere = async (cycleFinal) => {
     if (!cycleFinal) return;
-    setGagnant({ nomMembre: cycleFinal.gagnantNom, montantPot: cycleFinal.montantCollecteReel - Number(mise), mise: Number(mise), idBulletin: cycleFinal.idBulletin });
+    setGagnant({
+      nomMembre: cycleFinal.gagnantNom,
+      montantPot: cycleFinal.montantCollecteReel - cycleFinal.montantEnchere,
+      mise: cycleFinal.montantEnchere,
+      idBulletin: cycleFinal.idBulletin,
+    });
     setEtape('recap');
+  };
+
+  // Clôture normale : le backend choisit obligatoirement la meilleure offre.
+  const handleCloturerEncheres = async () => {
+    if (!cycleActuelId || !meilleureEnchere) return;
+    const apresDesignation = await designerGagnantCycle(cycleActuelId);
+    if (!apresDesignation) return;
+    await terminerEnchere(await cloturerCycle(cycleActuelId));
+  };
+
+  // Dérogation explicitement manuelle : l'offre sélectionnée est conservée et
+  // enregistrée comme gagnante par le backend avant la clôture.
+  const handleConfirmerEnchere = async (idPart) => {
+    if (!cycleActuelId) return;
+    if (!idPart) return;
+    const apresDesignation = await designerGagnantCycle(cycleActuelId, idPart);
+    if (!apresDesignation) return;
+    await terminerEnchere(await cloturerCycle(cycleActuelId));
+  };
+
+  // La désignation manuelle sans offre crée d'abord une offre réelle, afin que
+  // le montant apparaisse dans l'historique et le bulletin de gain.
+  const handleEnregistrerEtDesignerManuellement = async () => {
+    if (!cycleActuelId || !enchereIdGagnant || !miseGagnante) return;
+    const offre = await addEnchere({
+      idRotation: cycleActuelId,
+      idTontine: tontineSelectee.id,
+      idMembre: enchereIdGagnant,
+      montantEnchere: miseGagnante,
+    });
+    if (offre) await handleConfirmerEnchere(offre.idPart);
   };
 
   const reset = () => {
@@ -593,11 +634,12 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
 
               {encheresEnAttente.length > 0 ? (
                 <>
-                  <p className="text-xs font-semibold text-gray-600">Enchères enregistrées — sélectionnez le gagnant :</p>
+                  <p className="text-xs font-semibold text-gray-600">Enchères enregistrées — la meilleure offre est proposée automatiquement :</p>
                   {encheresEnAttente.map(e => (
                     <label key={e.id}
                       className={clsx('flex items-center gap-3 p-3 rounded-xl border-2 cursor-pointer transition-all',
-                        enchereIdGagnant === e.id ? 'border-amber-400 bg-amber-50' : 'border-gray-200 hover:border-amber-300')}>
+                        enchereIdGagnant === e.id ? 'border-amber-400 bg-amber-50' : 'border-gray-200 hover:border-amber-300',
+                        meilleureEnchere?.id === e.id && 'ring-1 ring-amber-300')}>
                       <input type="radio" name="enc_gagnant" value={e.id}
                         checked={enchereIdGagnant === e.id}
                         onChange={() => { setEnchereIdGagnant(String(e.id)); setMiseGagnante(String(e.montantEnchere)); }}/>
@@ -605,8 +647,12 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
                         <p className="font-bold text-gray-800">{e.nomMembre}</p>
                         <p className="text-xs text-gray-500">Mise : <strong className="text-amber-600">{fmt(e.montantEnchere)}</strong></p>
                       </div>
+                      {meilleureEnchere?.id === e.id && <Badge variant="amber">Meilleure offre</Badge>}
                     </label>
                   ))}
+                  <button onClick={handleCloturerEncheres} className="btn-primary w-full justify-center">
+                    <Trophy size={15}/> Clôturer les enchères — attribuer au meilleur offrant
+                  </button>
                   {enchereIdGagnant && (
                     <>
                       <div className="grid grid-cols-2 gap-2 text-xs">
@@ -616,9 +662,9 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
                       </div>
                       <button onClick={() => {
                         const enc = encheres.find(e => e.id === enchereIdGagnant);
-                        if (enc) handleConfirmerEnchere(enc.nomMembre, enc.idMembre, miseGagnante);
-                      }} className="btn-primary w-full justify-center">
-                        <Trophy size={15}/> Confirmer le gagnant de l'enchère
+                        if (enc) handleConfirmerEnchere(enc.idPart);
+                      }} className="btn-secondary w-full justify-center">
+                        <Trophy size={15}/> Désigner manuellement cette offre
                       </button>
                     </>
                   )}
@@ -626,7 +672,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
               ) : (
                 // Saisie manuelle
                 <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 space-y-3">
-                  <p className="text-xs font-semibold text-amber-700">Aucune enchère saisie — désigner directement sans enchère (dérogation)</p>
+                  <p className="text-xs font-semibold text-amber-700">Aucune offre saisie — enregistrer puis désigner manuellement une offre (dérogation)</p>
                   <select className="select" value={enchereIdGagnant} onChange={e => setEnchereIdGagnant(e.target.value)}>
                     <option value="">— Sélectionner le gagnant —</option>
                     {membresDeLatontine.map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
@@ -636,9 +682,9 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
                   {enchereIdGagnant && miseGagnante && (() => {
                     const m = membres.find(x => x.id === enchereIdGagnant);
                     return m ? (
-                      <button onClick={() => handleConfirmerEnchere(`${m.nom} ${m.prenom}`, m.id, miseGagnante)}
+                      <button onClick={handleEnregistrerEtDesignerManuellement}
                         className="btn-primary w-full justify-center">
-                        <Trophy size={15}/> Confirmer le gagnant
+                        <Trophy size={15}/> Enregistrer l'offre et désigner le gagnant
                       </button>
                     ) : null;
                   })()}
@@ -698,7 +744,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
                 </div>
                 {gagnant.idBulletin && (
                   <div className="shrink-0 flex items-center gap-1.5">
-                    <button onClick={() => { setRetenueLibelle(''); setRetenueMontant(''); setRetenueModal(true); }}
+                    <button onClick={() => { setRetenueLibelle(''); setRetenueMontant(''); setRetenueCaisseId(''); setRetenueModal(true); }}
                       className="text-xs px-2.5 py-1.5 bg-white border border-amber-300 text-amber-700 rounded-lg font-medium hover:bg-amber-50">
                       + Retenue
                     </button>
@@ -737,11 +783,11 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
           <button
             onClick={async () => {
               if (!retenueLibelle.trim() || !retenueMontant || Number(retenueMontant) <= 0) return;
-              const b = await ajouterRetenueBulletin(gagnant.idBulletin, retenueLibelle.trim(), retenueMontant);
+              const b = await ajouterRetenueBulletin(gagnant.idBulletin, retenueLibelle.trim(), retenueMontant, retenueCaisseId);
               if (b) setRetenueModal(false);
             }}
-            disabled={!retenueLibelle.trim() || !retenueMontant || Number(retenueMontant) <= 0}
-            className={clsx('btn-primary', (!retenueLibelle.trim() || !retenueMontant || Number(retenueMontant) <= 0) && 'opacity-40 cursor-not-allowed')}>
+            disabled={!retenueLibelle.trim() || !retenueMontant || Number(retenueMontant) <= 0 || !retenueCaisseId}
+            className={clsx('btn-primary', (!retenueLibelle.trim() || !retenueMontant || Number(retenueMontant) <= 0 || !retenueCaisseId) && 'opacity-40 cursor-not-allowed')}>
             Ajouter
           </button>
         </>}>
@@ -756,13 +802,21 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
         <FormField label="Montant (FCFA)" required>
           <input type="number" className="input" placeholder="10000" value={retenueMontant} onChange={e => setRetenueMontant(e.target.value)}/>
         </FormField>
+        <FormField label="Caisse à créditer" required hint="La retenue sera enregistrée comme une entrée dans cette caisse.">
+          <select className="select" value={retenueCaisseId} onChange={e => setRetenueCaisseId(e.target.value)}>
+            <option value="">— Sélectionner une caisse —</option>
+            {banques.filter(caisse => caisse.statut === 'active').map(caisse => (
+              <option key={caisse.id} value={caisse.id}>{caisse.nom} — solde {fmt(caisse.totalSolde)}</option>
+            ))}
+          </select>
+        </FormField>
       </Modal>
     </div>
   );
 }
 
 function RapportSeance({ reunion, transactions, membres, onClose }) {
-  const { tontines, cyclesTontine } = useApp();
+  const { tontines, cyclesTontine, banques } = useApp();
   const txs = transactions.filter(t => t.idReunion === reunion.id);
 
   // reunion.beneficiairesSeance n'a jamais existé côté API — dérivé ici de la vraie
@@ -779,19 +833,39 @@ function RapportSeance({ reunion, transactions, membres, onClose }) {
       };
     }), [cyclesTontine, tontines, reunion.id]);
 
-  const totalEntrees = txs.filter(t => TX_TYPES.find(tt => tt.value === t.type)?.dir === 'entree')
-    .reduce((s, t) => s + t.montant, 0);
-  const totalSorties = txs.filter(t => TX_TYPES.find(tt => tt.value === t.type)?.dir === 'sortie')
-    .reduce((s, t) => s + t.montant, 0);
-  const totalBanque  = txs.filter(t => t.type === 'depot_banque')
-    .reduce((s, t) => s + t.montant, 0);
-  const soldeSeance  = totalEntrees - totalSorties;
+  // Le PV est un document de contrôle : chaque mouvement doit être rattaché à
+  // sa caisse. Les mouvements sans caisse restent visibles dans un groupe dédié
+  // plutôt que d'être confondus avec une caisse réelle.
+  const transactionsParCaisse = useMemo(() => {
+    const groupes = new Map();
+    txs.forEach((tx) => {
+      const idCaisse = tx.idCaisse || tx.idBanque || null;
+      const caisse = banques.find((b) => b.id === idCaisse);
+      const cle = idCaisse || '__sans_caisse__';
+      if (!groupes.has(cle)) {
+        groupes.set(cle, {
+          idCaisse,
+          nomCaisse: tx.nomCaisse || caisse?.nom || 'Sans caisse affectée',
+          items: [],
+        });
+      }
+      groupes.get(cle).items.push(tx);
+    });
 
-  const txByType = TX_TYPES.reduce((acc, tt) => {
-    const groupe = txs.filter(t => t.type === tt.value);
-    if (groupe.length > 0) acc[tt.value] = { meta: tt, items: groupe };
-    return acc;
-  }, {});
+    return [...groupes.values()].map((groupe) => {
+      const totalEntrees = groupe.items
+        .filter((tx) => TX_TYPES.find((type) => type.value === tx.type)?.dir === 'entree')
+        .reduce((somme, tx) => somme + tx.montant, 0);
+      const totalSorties = groupe.items
+        .filter((tx) => TX_TYPES.find((type) => type.value === tx.type)?.dir === 'sortie')
+        .reduce((somme, tx) => somme + tx.montant, 0);
+      const totalBanque = groupe.items
+        .filter((tx) => tx.type === 'depot_banque')
+        .reduce((somme, tx) => somme + tx.montant, 0);
+
+      return { ...groupe, totalEntrees, totalSorties, totalBanque, soldeNet: totalEntrees - totalSorties };
+    });
+  }, [txs, banques]);
 
   const tauxPresence = reunion.cloture && (reunion.cloture.presents + reunion.cloture.absents) > 0
     ? Math.round(reunion.cloture.presents / (reunion.cloture.presents + reunion.cloture.absents) * 100)
@@ -885,71 +959,61 @@ function RapportSeance({ reunion, transactions, membres, onClose }) {
               ? <p className="text-gray-400 italic text-sm">Aucune transaction enregistrée pour cette séance</p>
               : (
                 <>
-                  {/* Tableau des transactions */}
-                  <div className="overflow-x-auto rounded-xl border border-gray-200">
-                    <table className="w-full text-xs">
-                      <thead className="bg-gray-50">
-                        <tr>
-                          <th className="text-left p-2.5 font-semibold text-gray-600">Heure</th>
-                          <th className="text-left p-2.5 font-semibold text-gray-600">Type</th>
-                          <th className="text-left p-2.5 font-semibold text-gray-600">Membre</th>
-                          <th className="text-left p-2.5 font-semibold text-gray-600">Libellé</th>
-                          <th className="text-right p-2.5 font-semibold text-green-600">Entrée</th>
-                          <th className="text-right p-2.5 font-semibold text-red-500">Sortie</th>
-                          <th className="text-right p-2.5 font-semibold text-blue-600">Banque</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-100">
-                        {txs.map(tx => {
-                          const meta = TX_TYPES.find(t => t.value === tx.type);
-                          const isEntree = meta?.dir === 'entree';
-                          const isSortie = meta?.dir === 'sortie';
-                          const isBanque = tx.type === 'depot_banque';
-                          return (
-                            <tr key={tx.id} className="hover:bg-gray-50">
-                              <td className="p-2.5 text-gray-400 font-mono">{tx.heure}</td>
-                              <td className="p-2.5">
-                                <span className="text-xs">{meta?.icon} {meta?.label || tx.type}</span>
-                              </td>
-                              <td className="p-2.5 font-medium text-gray-700">{tx.nomMembre || '—'}</td>
-                              <td className="p-2.5 text-gray-500 italic truncate max-w-[140px]">{tx.libelle || '—'}</td>
-                              <td className="p-2.5 text-right font-bold text-green-600">{isEntree ? fmt(tx.montant) : '—'}</td>
-                              <td className="p-2.5 text-right font-bold text-red-500">{isSortie ? fmt(tx.montant) : '—'}</td>
-                              <td className="p-2.5 text-right font-bold text-blue-600">{isBanque ? fmt(tx.montant) : '—'}</td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                      <tfoot className="bg-gray-50 border-t-2 border-gray-200 font-bold text-xs">
-                        <tr>
-                          <td colSpan={4} className="p-2.5 text-gray-700">TOTAUX</td>
-                          <td className="p-2.5 text-right text-green-600">{fmt(totalEntrees)}</td>
-                          <td className="p-2.5 text-right text-red-500">{fmt(totalSorties)}</td>
-                          <td className="p-2.5 text-right text-blue-600">{fmt(totalBanque)}</td>
-                        </tr>
-                        <tr className="bg-primary-50">
-                          <td colSpan={4} className="p-2.5 text-primary-700 font-bold">SOLDE NET SÉANCE (entrées − sorties)</td>
-                          <td colSpan={3} className={clsx('p-2.5 text-right text-base font-black', soldeSeance >= 0 ? 'text-primary-700' : 'text-red-600')}>
-                            {soldeSeance >= 0 ? '+' : ''}{fmt(soldeSeance)}
-                          </td>
-                        </tr>
-                      </tfoot>
-                    </table>
-                  </div>
-
-                  {/* Récapitulatif par rubrique */}
-                  <div className="mt-3 grid grid-cols-2 gap-2">
-                    {Object.values(txByType).map(({ meta, items }) => {
-                      const total = items.reduce((s, t) => s + t.montant, 0);
-                      return (
-                        <div key={meta.value} className="flex items-center justify-between p-2 bg-gray-50 rounded-lg">
-                          <span className="text-xs text-gray-600">{meta.icon} {meta.label}</span>
-                          <span className={clsx('text-xs font-bold', meta.dir === 'entree' ? 'text-green-600' : meta.dir === 'sortie' ? 'text-red-500' : 'text-blue-600')}>
-                            {fmt(total)} <span className="text-gray-400 font-normal">({items.length})</span>
-                          </span>
+                  <div className="space-y-4">
+                    {transactionsParCaisse.map((groupe) => (
+                      <div key={groupe.idCaisse || '__sans_caisse__'} className="overflow-x-auto rounded-xl border border-gray-200">
+                        <div className="flex items-center justify-between gap-3 px-3 py-2.5 bg-slate-50 border-b border-gray-200">
+                          <p className="font-bold text-gray-800">Caisse : {groupe.nomCaisse}</p>
+                          <Badge variant={groupe.idCaisse ? 'blue' : 'amber'}>{groupe.items.length} opération(s)</Badge>
                         </div>
-                      );
-                    })}
+                        <table className="w-full text-xs">
+                          <thead className="bg-gray-50">
+                            <tr>
+                              <th className="text-left p-2.5 font-semibold text-gray-600">Heure</th>
+                              <th className="text-left p-2.5 font-semibold text-gray-600">Type</th>
+                              <th className="text-left p-2.5 font-semibold text-gray-600">Membre</th>
+                              <th className="text-left p-2.5 font-semibold text-gray-600">Libellé</th>
+                              <th className="text-right p-2.5 font-semibold text-green-600">Entrée</th>
+                              <th className="text-right p-2.5 font-semibold text-red-500">Sortie</th>
+                              <th className="text-right p-2.5 font-semibold text-blue-600">Banque</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100">
+                            {groupe.items.map((tx) => {
+                              const meta = TX_TYPES.find((type) => type.value === tx.type);
+                              const isEntree = meta?.dir === 'entree';
+                              const isSortie = meta?.dir === 'sortie';
+                              const isBanque = tx.type === 'depot_banque';
+                              return (
+                                <tr key={tx.id} className="hover:bg-gray-50">
+                                  <td className="p-2.5 text-gray-400 font-mono">{tx.heure}</td>
+                                  <td className="p-2.5"><span>{meta?.icon} {meta?.label || tx.type}</span></td>
+                                  <td className="p-2.5 font-medium text-gray-700">{tx.nomMembre || '—'}</td>
+                                  <td className="p-2.5 text-gray-500 italic truncate max-w-[140px]">{tx.libelle || '—'}</td>
+                                  <td className="p-2.5 text-right font-bold text-green-600">{isEntree ? fmt(tx.montant) : '—'}</td>
+                                  <td className="p-2.5 text-right font-bold text-red-500">{isSortie ? fmt(tx.montant) : '—'}</td>
+                                  <td className="p-2.5 text-right font-bold text-blue-600">{isBanque ? fmt(tx.montant) : '—'}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                          <tfoot className="bg-gray-50 border-t-2 border-gray-200 font-bold text-xs">
+                            <tr>
+                              <td colSpan={4} className="p-2.5 text-gray-700">TOTAUX — {groupe.nomCaisse}</td>
+                              <td className="p-2.5 text-right text-green-600">{fmt(groupe.totalEntrees)}</td>
+                              <td className="p-2.5 text-right text-red-500">{fmt(groupe.totalSorties)}</td>
+                              <td className="p-2.5 text-right text-blue-600">{fmt(groupe.totalBanque)}</td>
+                            </tr>
+                            <tr className="bg-primary-50">
+                              <td colSpan={4} className="p-2.5 text-primary-700 font-bold">SOLDE NET — {groupe.nomCaisse}</td>
+                              <td colSpan={3} className={clsx('p-2.5 text-right text-base font-black', groupe.soldeNet >= 0 ? 'text-primary-700' : 'text-red-600')}>
+                                {groupe.soldeNet >= 0 ? '+' : ''}{fmt(groupe.soldeNet)}
+                              </td>
+                            </tr>
+                          </tfoot>
+                        </table>
+                      </div>
+                    ))}
                   </div>
                 </>
               )
@@ -1578,11 +1642,12 @@ function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, san
 
 // ── Panneau Bénéficiaire de séance ────────────────────────────
 function BeneficiaireSeancePanel({ reunion }) {
-  const { tontines, cyclesTontine, ouvrirBulletinPdf, ajouterRetenueBulletin } = useApp();
+  const { tontines, cyclesTontine, ouvrirBulletinPdf, ajouterRetenueBulletin, banques } = useApp();
   const [bulletinUrl, setBulletinUrl] = useState(null);
   const [retenueModal, setRetenueModal] = useState(null); // idBulletin ciblé
   const [retenueLibelle, setRetenueLibelle] = useState('');
   const [retenueMontant, setRetenueMontant] = useState('');
+  const [retenueCaisseId, setRetenueCaisseId] = useState('');
 
   // Onglet purement informatif : affiche le(s) bénéficiaire(s) déjà désigné(s)
   // cette séance, quel que soit le mode d'attribution (rotation/tirage/enchère).
@@ -1619,7 +1684,7 @@ function BeneficiaireSeancePanel({ reunion }) {
               </div>
               {b.idBulletin && (
                 <div className="shrink-0 flex items-center gap-1.5">
-                  <button onClick={() => { setRetenueLibelle(''); setRetenueMontant(''); setRetenueModal(b.idBulletin); }}
+                  <button onClick={() => { setRetenueLibelle(''); setRetenueMontant(''); setRetenueCaisseId(''); setRetenueModal(b.idBulletin); }}
                     className="text-xs px-2.5 py-1.5 bg-white border border-amber-300 text-amber-700 rounded-lg font-medium hover:bg-amber-50">
                     + Retenue
                   </button>
@@ -1653,11 +1718,11 @@ function BeneficiaireSeancePanel({ reunion }) {
           <button
             onClick={async () => {
               if (!retenueLibelle.trim() || !retenueMontant || Number(retenueMontant) <= 0) return;
-              const b = await ajouterRetenueBulletin(retenueModal, retenueLibelle.trim(), retenueMontant);
+              const b = await ajouterRetenueBulletin(retenueModal, retenueLibelle.trim(), retenueMontant, retenueCaisseId);
               if (b) setRetenueModal(null);
             }}
-            disabled={!retenueLibelle.trim() || !retenueMontant || Number(retenueMontant) <= 0}
-            className={clsx('btn-primary', (!retenueLibelle.trim() || !retenueMontant || Number(retenueMontant) <= 0) && 'opacity-40 cursor-not-allowed')}>
+            disabled={!retenueLibelle.trim() || !retenueMontant || Number(retenueMontant) <= 0 || !retenueCaisseId}
+            className={clsx('btn-primary', (!retenueLibelle.trim() || !retenueMontant || Number(retenueMontant) <= 0 || !retenueCaisseId) && 'opacity-40 cursor-not-allowed')}>
             Ajouter
           </button>
         </>}>
@@ -1671,6 +1736,14 @@ function BeneficiaireSeancePanel({ reunion }) {
         </FormField>
         <FormField label="Montant (FCFA)" required>
           <input type="number" className="input" placeholder="10000" value={retenueMontant} onChange={e => setRetenueMontant(e.target.value)}/>
+        </FormField>
+        <FormField label="Caisse à créditer" required hint="La retenue sera enregistrée comme une entrée dans cette caisse.">
+          <select className="select" value={retenueCaisseId} onChange={e => setRetenueCaisseId(e.target.value)}>
+            <option value="">— Sélectionner une caisse —</option>
+            {banques.filter(caisse => caisse.statut === 'active').map(caisse => (
+              <option key={caisse.id} value={caisse.id}>{caisse.nom} — solde {fmt(caisse.totalSolde)}</option>
+            ))}
+          </select>
         </FormField>
       </Modal>
     </div>
@@ -2132,6 +2205,7 @@ export function Reunions() {
     addReunion, updateReunion, chargerReunion, ouvrirSeance,
     addPointODJ, updatePointODJ, removePointODJ, movePointODJ, cloturerSeance,
     seanceTransactions, chargerSeanceTransactions, showToast, cyclesTontine,
+    rubriquesODJ, creerRubriqueODJ,
   } = useApp();
 
   // La liste (index()) ne charge jamais l'ordre du jour / les présences / les
@@ -2160,6 +2234,7 @@ export function Reunions() {
   const [formOuv,      setFormOuv]      = useState(EMPTY_OUVERTURE);
   const [formCloture,  setFormCloture]  = useState(EMPTY_CLOTURE);
   const [formPoint,    setFormPoint]    = useState(EMPTY_POINT);
+  const [enregistrerPointCommeRubrique, setEnregistrerPointCommeRubrique] = useState(false);
 
   const membresNoms = membres.map(m => `${m.nom} ${m.prenom}`);
 
@@ -2192,10 +2267,20 @@ export function Reunions() {
     setShowCloture(null); setFormCloture(EMPTY_CLOTURE);
   };
 
-  const handleAddPoint = () => {
+  const handleAddPoint = async () => {
     if (!formPoint.titre.trim()) return;
-    addPointODJ(showAddPoint, formPoint);
-    setShowAddPoint(null); setFormPoint(EMPTY_POINT);
+    let point = { ...formPoint };
+    if (enregistrerPointCommeRubrique && !point.rubriqueId) {
+      const rubrique = await creerRubriqueODJ(point.titre.trim());
+      if (!rubrique) return;
+      point = { ...point, rubriqueId: rubrique.id, titre: rubrique.libelle };
+    }
+    const ajoute = await addPointODJ(showAddPoint, point);
+    if (ajoute) {
+      setShowAddPoint(null);
+      setFormPoint(EMPTY_POINT);
+      setEnregistrerPointCommeRubrique(false);
+    }
   };
 
   const handleEditPoint = () => {
@@ -2487,7 +2572,7 @@ export function Reunions() {
                         Ordre du jour ({r.pointsOrdreJour?.length || 0})
                       </p>
                       {!locked && (
-                        <button onClick={()=>{ setShowAddPoint(r.id); setFormPoint(EMPTY_POINT); }} className="btn-secondary text-xs py-1">
+                        <button onClick={()=>{ setShowAddPoint(r.id); setFormPoint(EMPTY_POINT); setEnregistrerPointCommeRubrique(false); }} className="btn-secondary text-xs py-1">
                           <Plus size={12}/> Ajouter
                         </button>
                       )}
@@ -2794,7 +2879,35 @@ export function Reunions() {
       <Modal open={!!showAddPoint} onClose={()=>setShowAddPoint(null)} title="Ajouter un point à l'ordre du jour"
         footer={<><button onClick={()=>setShowAddPoint(null)} className="btn-secondary">Annuler</button><button onClick={handleAddPoint} className="btn-primary"><Plus size={14}/>Ajouter</button></>}>
         <div className="space-y-4">
-          <FormField label="Titre du point" required><FP k="titre" placeholder="Ex : Collecte des cotisations"/></FormField>
+          <div className="p-3 bg-primary-50 border border-primary-100 rounded-xl space-y-2">
+            <FormField label="Rubrique enregistrée" hint="Sélectionnez une rubrique utilisée régulièrement pour ne pas la ressaisir.">
+              <select className="select" value={formPoint.rubriqueId || ''} onChange={e => {
+                const rubrique = rubriquesODJ.find((item) => item.id === e.target.value);
+                setFormPoint((point) => ({
+                  ...point,
+                  rubriqueId: e.target.value,
+                  titre: rubrique?.libelle || point.titre,
+                }));
+                setEnregistrerPointCommeRubrique(false);
+              }}>
+                <option value="">— Saisir une rubrique ponctuelle —</option>
+                {rubriquesODJ.filter((rubrique) => rubrique.actif).map((rubrique) => (
+                  <option key={rubrique.id} value={rubrique.id}>{rubrique.libelle}</option>
+                ))}
+              </select>
+            </FormField>
+            {rubriquesODJ.length === 0 && <p className="text-xs text-primary-700">Aucune rubrique enregistrée : ajoutez votre premier point puis cochez l’option ci-dessous.</p>}
+          </div>
+          <FormField label="Titre du point" required>
+            <input className="input" value={formPoint.titre || ''} placeholder="Ex : Collecte des cotisations"
+              onChange={e => setFormPoint((point) => ({ ...point, titre: e.target.value, rubriqueId: '' }))}/>
+          </FormField>
+          {!formPoint.rubriqueId && formPoint.titre.trim() && (
+            <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+              <input type="checkbox" checked={enregistrerPointCommeRubrique} onChange={e => setEnregistrerPointCommeRubrique(e.target.checked)}/>
+              Enregistrer cette rubrique pour les prochaines réunions
+            </label>
+          )}
           <FormField label="Type">
             <select className="select" value={formPoint.type||'administratif'} onChange={e=>setFormPoint(f=>({...f,type:e.target.value}))}>
               {Object.entries(typePointLabel).map(([k,l])=><option key={k} value={k}>{l}</option>)}

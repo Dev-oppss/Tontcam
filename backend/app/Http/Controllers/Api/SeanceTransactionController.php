@@ -35,7 +35,7 @@ class SeanceTransactionController extends Controller
     {
         $reunion = $this->scope->scopeAssociation(Reunion::query())->findOrFail($reunionId);
 
-        return response()->json($reunion->seanceTransactions()->with('membre')->latest()->get());
+        return response()->json($reunion->seanceTransactions()->with(['membre', 'caisse'])->latest()->get());
     }
 
     public function store(Request $request, string $reunionId): JsonResponse
@@ -99,7 +99,7 @@ class SeanceTransactionController extends Controller
                     ]);
                 }
 
-                return response()->json($seance->load('membre'), 201);
+                return response()->json($seance->load(['membre', 'caisse']), 201);
             });
         } catch (\RuntimeException $e) {
             return response()->json(['message' => $e->getMessage()], 422);

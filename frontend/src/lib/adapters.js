@@ -411,8 +411,14 @@ export const cycleToRotation = (c) => !c ? null : ({
 export const enchereFromApi = (e) => !e ? null : ({
   id: e.id,
   idRotation: e.cycle_id,
+  idPart: e.tontine_part_id,
   idMembre: e.membre_id,
   nomMembre: e.membre ? `${e.membre.nom} ${e.membre.prenom}` : undefined,
   montantEnchere: Number(e.montant_offre),
   dateEnchere: e.created_at,
+  // Une enchère n'a pas de colonne "statut" en base : son état est porté par
+  // est_gagnante. On expose une forme cohérente pour les écrans qui affichent
+  // les offres encore ouvertes et celles déjà attribuées.
+  estGagnante: Boolean(e.est_gagnante),
+  statut: e.est_gagnante ? 'gagnante' : 'en_attente',
 });

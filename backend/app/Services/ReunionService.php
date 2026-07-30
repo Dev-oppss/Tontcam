@@ -28,6 +28,7 @@ class ReunionService
             // Ordre du jour : rubriques système + rubriques par défaut de l'association
             $rubriques = \App\Models\OrdreDuJourRubrique::where('association_id', $reunion->association_id)
                 ->where('actif', true)
+                ->where('est_obligatoire', true)
                 ->orderBy('ordre_defaut')
                 ->get();
 

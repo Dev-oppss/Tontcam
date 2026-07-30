@@ -260,8 +260,17 @@ class TontineCycleService
      */
     public function designerGagnant(CycleTontine $cycle, ?string $partIdForcee = null): TontinePart
     {
+        $tontine = $cycle->tontine;
+
+        // En mode enchère, une désignation manuelle reste possible mais doit
+        // obligatoirement correspondre à une offre réelle. Ainsi le bulletin,
+        // les surplus et l'historique restent cohérents avec le choix effectué.
+        if ($tontine->mode_attribution === 'enchere') {
+            return $this->designerParEnchere($cycle, $tontine, $partIdForcee);
+        }
+
         if ($partIdForcee) {
-            $part = $cycle->tontine->parts()->where('statut', 'disponible')->find($partIdForcee);
+            $part = $tontine->parts()->where('statut', 'disponible')->find($partIdForcee);
             if (! $part) {
                 throw new RuntimeException("Ce membre n'a pas de part disponible pour ce tirage (déjà gagnée ou introuvable).");
             }
@@ -269,8 +278,6 @@ class TontineCycleService
 
             return $part;
         }
-
-        $tontine = $cycle->tontine;
 
         return match ($tontine->mode_attribution) {
             'rotation' => $this->designerParRotation($cycle, $tontine),
@@ -307,11 +314,15 @@ class TontineCycleService
      * Clôture les enchères : la part va au plus offrant.
      * Surplus = Montant_enchère_gagnante − (nb_parts × montant_par_part) (cahier des charges 5.2).
      */
-    private function designerParEnchere(CycleTontine $cycle, Tontine $tontine): TontinePart
+    private function designerParEnchere(CycleTontine $cycle, Tontine $tontine, ?string $partIdForcee = null): TontinePart
     {
         // RG-TON-020 : en cas d'égalité entre plusieurs offres au montant maximal,
         // la première soumise (created_at le plus ancien) l'emporte.
-        $meilleure = Encherite::where('cycle_id', $cycle->id)
+        $offres = Encherite::where('cycle_id', $cycle->id);
+        if ($partIdForcee) {
+            $offres->where('tontine_part_id', $partIdForcee);
+        }
+        $meilleure = $offres
             ->orderByDesc('montant_offre')
             ->orderBy('created_at')
             ->first();
@@ -322,6 +333,7 @@ class TontineCycleService
             throw new RuntimeException('La meilleure enchère est sous la mise minimale.');
         }
 
+        Encherite::where('cycle_id', $cycle->id)->update(['est_gagnante' => false]);
         $meilleure->update(['est_gagnante' => true]);
         $part = TontinePart::find($meilleure->tontine_part_id);
         if (! $part) {
