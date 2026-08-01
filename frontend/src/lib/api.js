@@ -1,5 +1,10 @@
 const API_BASE = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000/api";
 export { API_BASE };
+export const resolveApiUrl = (url) => {
+  if (!url || /^https?:\/\//i.test(url)) return url;
+  const origin = API_BASE.replace(/\/api\/?$/, "");
+  return `${origin}${url.startsWith("/") ? "" : "/"}${url}`;
+};
 const TOKEN_KEY = "tontix_api_token";
 
 export const getApiToken = () => (typeof window === "undefined" ? null : window.localStorage.getItem(TOKEN_KEY));

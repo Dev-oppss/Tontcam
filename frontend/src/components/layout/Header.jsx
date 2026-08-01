@@ -17,6 +17,7 @@ const names = {
   '/fond-assurance':  { title: 'Fonds assurance',   sub: 'Garanties et assistance' },
   '/sanctions':       { title: 'Sanctions',         sub: 'Pénalités et infractions' },
   '/rapports':        { title: 'Rapports',          sub: 'Analyses et statistiques' },
+  '/import-historique': { title: 'Reprise d’historique', sub: 'Import initial et traçable' },
   '/utilisateurs':    { title: 'Sécurité',          sub: 'Accès et permissions' },
 };
 

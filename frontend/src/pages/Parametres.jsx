@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { SlidersHorizontal, Save, Wallet, Users2, CalendarClock, ShieldAlert, HeartHandshake } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { PageHeader, SectionCard, FormField, Badge } from '../components/ui/index';
@@ -37,11 +37,16 @@ export default function Parametres() {
   const [form, setForm] = useState({ ...DEFAULTS, ...(app?.parametres || {}) });
   const [saved, setSaved] = useState(false);
 
+  useEffect(() => {
+    setForm((previous) => ({ ...previous, ...DEFAULTS, ...(app?.parametres || {}) }));
+  }, [app?.parametres]);
+
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const setBool = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.checked }));
 
   const handleSave = async () => {
-    if (app?.updateParametres) await app.updateParametres(form);
+    if (!app?.updateParametres) return;
+    await app.updateParametres(form);
     setSaved(true);
     setTimeout(() => setSaved(false), 2500);
   };

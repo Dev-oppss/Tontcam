@@ -36,7 +36,7 @@ class TontineCycleService
 
             // Génère une ligne de cotisation "due" pour chaque part de la tontine (RG-TON règle parts multiples)
             foreach ($tontine->parts as $part) {
-                CotisationTontine::create([
+                $cotisation = CotisationTontine::create([
                     'cycle_id' => $cycle->id,
                     'tontine_part_id' => $part->id,
                     'membre_id' => $part->membre_id,
@@ -124,6 +124,17 @@ class TontineCycleService
                     'statut' => $statut,
                     'date_versement' => $ligne['date_versement'] ?? null,
                 ]);
+                // Un import doit reconstruire le livre de caisse, pas seulement
+                // l'historique métier : chaque cotisation réellement versée est
+                // donc rejouée à sa date d'origine.
+                if ($montantVerse > 0) {
+                    app(CaisseService::class)->entree(
+                        $tontine->caisse,
+                        $montantVerse,
+                        "Cotisation tontine cycle n°{$numero} (import historique)",
+                        ['reference_type' => 'cotisation_tontine', 'reference_id' => $cotisation->id, 'created_by' => $superAdmin->id, 'valide_par' => $superAdmin->id, 'date' => $ligne['date_versement'] ?? $data['date_cloture']]
+                    );
+                }
                 $montantCollecteReel += $montantVerse;
             }
             $cycle->update(['montant_collecte_reel' => $montantCollecteReel]);
@@ -148,7 +159,16 @@ class TontineCycleService
 
             // Même bulletin de gain que pour un cycle clôturé en direct (retenues prêts/
             // sanctions calculées sur l'état courant du membre, comme le fait cloturerCycle()).
-            app(BulletinGainService::class)->genererDepuisCycle($cycle, $superAdmin);
+            $bulletin = app(BulletinGainService::class)->genererDepuisCycle($cycle, $superAdmin);
+            if ($data['gain_verse']) {
+                app(BulletinGainService::class)->verser(
+                    $bulletin,
+                    $data['mode_versement'] ?? 'especes',
+                    $data['reference_versement'] ?? null,
+                    $superAdmin,
+                    $data['date_cloture']
+                );
+            }
 
             return $cycle;
         });

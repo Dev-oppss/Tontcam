@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { FileText, Upload, CheckCircle2, History } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { fmtDate } from '../data/mockData';
+import { resolveApiUrl } from '../lib/api';
 import { PageHeader, SectionCard, Table, Badge, Modal, FormField } from '../components/ui/index';
 
 const EMPTY = { version: '', dateAdoption: new Date().toISOString().split('T')[0], decisionAG: '', fichier: '', notes: '' };
@@ -11,15 +12,17 @@ export default function ReglementInterieur() {
   const [add, setAdd] = useState(false);
   const [form, setForm] = useState(EMPTY);
 
-  const actif = reglements.find((r) => r.statut === 'adopte') ||
+  const actif = reglements.find((r) => r.estActif) ||
     reglements.slice().sort((a, b) => new Date(b.dateAdoption) - new Date(a.dateAdoption))[0];
 
-  const handleAdd = () => {
-    if (!form.version.trim() || !form.fichier) return;
+  const handleAdd = async () => {
+    if (!form.version.trim() || !form.fichier || !form.decisionAG) return;
     // Toute modification nécessite une décision AG enregistrée avant publication (RG-ORG-006)
-    addReglement?.({ ...form, statut: 'adopte' });
-    setAdd(false);
-    setForm(EMPTY);
+    try {
+      await addReglement?.({ ...form });
+      setAdd(false);
+      setForm(EMPTY);
+    } catch { /* L'erreur est affichée par le contexte et le formulaire reste ouvert. */ }
   };
 
   return (
@@ -38,7 +41,7 @@ export default function ReglementInterieur() {
             </div>
             <div className="min-w-0 flex-1">
               <p className="font-semibold text-ink-900">Version {actif.version}</p>
-              <p className="text-xs text-ink-600/50 mt-0.5">{actif.fichier}</p>
+              <a href={resolveApiUrl(actif.fichier)} target="_blank" rel="noreferrer" className="text-xs text-indigo-600 mt-0.5 hover:underline">Consulter le PDF</a>
             </div>
             <Badge variant="green"><CheckCircle2 size={11} className="inline mr-1" />Adopté</Badge>
           </div>
@@ -52,7 +55,7 @@ export default function ReglementInterieur() {
               <td className="td font-semibold">{r.version}</td>
               <td className="td text-ink-600/60">{fmtDate(r.dateAdoption)}</td>
               <td className="td font-mono text-xs">{r.decisionAG || '—'}</td>
-              <td className="td text-indigo-600 text-xs truncate max-w-[160px]">{r.fichier}</td>
+              <td className="td text-indigo-600 text-xs truncate max-w-[160px]"><a href={resolveApiUrl(r.fichier)} target="_blank" rel="noreferrer" className="hover:underline">Consulter le PDF</a></td>
               <td className="td"><Badge variant={r === actif ? 'green' : 'gray'}>{r === actif ? 'Actif' : 'Archivé'}</Badge></td>
             </tr>
           ))}
@@ -74,7 +77,7 @@ export default function ReglementInterieur() {
           <FormField label="Décision d'AG associée" required hint="Requis avant publication (RG-ORG-006)">
             <select className="select" value={form.decisionAG} onChange={(e) => setForm((f) => ({ ...f, decisionAG: e.target.value }))}>
               <option value="">Sélectionner…</option>
-              {decisionsAG.filter((d) => d.type === 'statutaire').map((d) => (
+              {decisionsAG.filter((d) => d.type === 'statutaire' && d.statut === 'adopte').map((d) => (
                 <option key={d.id} value={d.numero}>{d.numero} — {d.objet}</option>
               ))}
             </select>

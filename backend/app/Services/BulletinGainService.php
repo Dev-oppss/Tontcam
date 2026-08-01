@@ -212,7 +212,7 @@ class BulletinGainService
     }
 
     /** Décaisse le net et impute les retenues sans compter deux fois le pot. */
-    public function verser(BulletinGain $bulletin, string $modePaiement, ?string $reference, Utilisateur $auteur): BulletinGain
+    public function verser(BulletinGain $bulletin, string $modePaiement, ?string $reference, Utilisateur $auteur, ?string $dateVersement = null): BulletinGain
     {
         $bulletin->loadMissing('cycle.tontine.caisse', 'retenues.caisse');
         if ($bulletin->statut === 'paye') throw new \RuntimeException('Ce bulletin est déjà versé.');
@@ -221,13 +221,13 @@ class BulletinGainService
         $caisse = $bulletin->cycle->tontine->caisse;
         if (! $caisse || ! $caisse->actif) throw new \RuntimeException('La caisse de la tontine est absente ou inactive.');
 
-        return DB::transaction(function () use ($bulletin, $caisse, $modePaiement, $reference, $auteur) {
+        return DB::transaction(function () use ($bulletin, $caisse, $modePaiement, $reference, $auteur, $dateVersement) {
             $caisseService = app(CaisseService::class);
             $transaction = (float) $bulletin->montant_net > 0
                 ? $caisseService->sortie($caisse, (float) $bulletin->montant_net, "Versement gain — {$bulletin->numero_bulletin}", [
                     'reference_type' => 'bulletin_gain', 'reference_id' => $bulletin->id,
                     'mode_paiement' => $modePaiement, 'cheque_numero' => $reference,
-                    'created_by' => $auteur->id, 'valide_par' => $auteur->id,
+                    'created_by' => $auteur->id, 'valide_par' => $auteur->id, 'date' => $dateVersement ?? now(),
                 ])
                 : null;
             if ($transaction) {
@@ -265,7 +265,7 @@ class BulletinGainService
                     'caisse_id' => $destination->id, 'note' => 'Imputation sur gain (sans nouvel encaissement)', 'created_by' => $auteur->id,
                 ]);
             }
-            $bulletin->update(['statut' => 'paye', 'mode_versement' => $modePaiement, 'reference_versement' => $reference ?: $transaction?->id, 'date_versement' => now()]);
+            $bulletin->update(['statut' => 'paye', 'mode_versement' => $modePaiement, 'reference_versement' => $reference ?: $transaction?->id, 'date_versement' => $dateVersement ?? now()]);
             return $bulletin->fresh(['retenues', 'cycle']);
         });
     }

@@ -102,32 +102,32 @@ export default function Caisse() {
   const totalDepotsBL  = opsBanqueLibre.filter(o => o.typeOperation === 'depot' || o.typeOperation === 'depot_collectif').reduce((s, o) => s + o.montant, 0);
   const totalRetraitBL = opsBanqueLibre.filter(o => o.typeOperation === 'retrait').reduce((s, o) => s + o.montant, 0);
 
-  const handleTransfer = () => {
+  const handleTransfer = async () => {
     if (!transferForm.caisseSourceId || !transferForm.caisseDestinationId || transferForm.caisseSourceId === transferForm.caisseDestinationId) return;
     if (!transferForm.montant || Number(transferForm.montant) <= 0) return;
-    transfererCaisse({
-      caisseSourceId: transferForm.caisseSourceId,
-      caisseDestinationId: transferForm.caisseDestinationId,
+    try {
+      await transfererCaisse({
+      idSource: transferForm.caisseSourceId,
+      idDestination: transferForm.caisseDestinationId,
       montant: Number(transferForm.montant),
       motif: transferForm.motif,
-      dateTransfert: transferForm.dateTransfert,
-    });
+      });
+    } catch { return; }
     setShowTransfer(false);
     setTransferForm({
       caisseSourceId: '',
       caisseDestinationId: '',
       montant: '',
       motif: '',
-      dateTransfert: new Date().toISOString().split('T')[0],
     });
   };
 
   const exportCSV = () => {
-    const rows = [['Date','Opération','Catégorie','Entrée','Sortie','Solde cumulé']];
+    const rows = [['Date','Caisse','Opération','Catégorie','Entrée','Sortie','Solde cumulé']];
     let cumul = 0;
     journalSansCotisations.forEach(op => {
       cumul += (op.entree || 0) - (op.sortie || 0);
-      rows.push([op.date, op.operation, op.categorie, op.entree||0, op.sortie||0, cumul]);
+      rows.push([op.date, banques.find((b) => b.id === op.idCaisse)?.nom || op.idCaisse, op.operation, op.categorie, op.entree||0, op.sortie||0, cumul]);
     });
     const csv  = rows.map(r => r.join(';')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -571,6 +571,7 @@ export default function Caisse() {
                 <div className="divide-y divide-gray-100 max-h-[480px] overflow-y-auto">
                   {[...journalFiltré].reverse().map((op, idx) => {
                     const cfg  = CAT_CFG[op.categorie] || {};
+                    const nomCaisse = banques.find((b) => b.id === op.idCaisse)?.nom || 'Caisse supprimée';
                     const cumul = journalFiltré.slice(0, journalFiltré.indexOf(op) + 1).reduce((s, o) => s + (o.entree||0) - (o.sortie||0), 0);
                     const isEntree = (op.entree || 0) > 0;
                     return (
@@ -582,6 +583,7 @@ export default function Caisse() {
                           <p className="text-xs font-medium text-gray-800 truncate">{op.operation}</p>
                           <div className="flex items-center gap-2 mt-0.5">
                             <span className="text-xs text-gray-400">{fmtDate(op.date)}</span>
+                            <span className="text-xs font-medium text-primary-700">{nomCaisse}</span>
                             {cfg.label && <span className={clsx('text-xs px-1.5 py-0.5 rounded-full font-medium', cfg.bg, cfg.text)}>{cfg.icon} {cfg.label}</span>}
                           </div>
                         </div>
@@ -663,7 +665,7 @@ export default function Caisse() {
       >
         <div className="space-y-4">
           <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-xl p-3">
-            Opération réservée à la caisse centrale.
+            Le transfert crée une sortie dans la caisse source et une entrée dans la caisse destination.
           </p>
           <FormField label="Caisse source" required>
             <select className="select" value={transferForm.caisseSourceId} onChange={(e) => setTransferForm((f) => ({ ...f, caisseSourceId: e.target.value }))}>
@@ -677,12 +679,9 @@ export default function Caisse() {
               {banques.map((b) => <option key={b.id} value={b.id}>{b.nom}</option>)}
             </select>
           </FormField>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3">
             <FormField label="Montant (FCFA)" required>
               <input type="number" className="input" min="1" value={transferForm.montant} onChange={(e) => setTransferForm((f) => ({ ...f, montant: e.target.value }))} />
-            </FormField>
-            <FormField label="Date">
-              <input type="date" className="input" value={transferForm.dateTransfert} onChange={(e) => setTransferForm((f) => ({ ...f, dateTransfert: e.target.value }))} />
             </FormField>
           </div>
           <FormField label="Motif">

@@ -35,6 +35,7 @@ class CaisseService
                 'date_transaction' => $options['date'] ?? now(),
                 'mode_paiement' => $options['mode_paiement'] ?? null,
                 'cheque_numero' => $options['cheque_numero'] ?? null,
+                'reference_externe' => $options['reference_externe'] ?? null,
                 'reference_type' => $options['reference_type'] ?? null,
                 'reference_id' => $options['reference_id'] ?? null,
                 'valide' => $options['valide'] ?? true,
@@ -76,6 +77,7 @@ class CaisseService
                 'date_transaction' => $options['date'] ?? now(),
                 'mode_paiement' => $options['mode_paiement'] ?? null,
                 'cheque_numero' => $options['cheque_numero'] ?? null,
+                'reference_externe' => $options['reference_externe'] ?? null,
                 'reference_type' => $options['reference_type'] ?? null,
                 'reference_id' => $options['reference_id'] ?? null,
                 'valide' => $options['valide'] ?? true,
@@ -94,7 +96,7 @@ class CaisseService
     /**
      * Transfert atomique entre deux caisses de la même association.
      */
-    public function transfert(Caisse $source, Caisse $destination, float $montant, string $motif, ?Utilisateur $approbateur = null): array
+    public function transfert(Caisse $source, Caisse $destination, float $montant, string $motif, ?Utilisateur $approbateur = null, array $options = []): array
     {
         if ($source->id === $destination->id) {
             throw new RuntimeException('Caisse source et destination identiques.');
@@ -103,14 +105,14 @@ class CaisseService
             throw new RuntimeException('Transfert impossible entre deux associations différentes.');
         }
 
-        return DB::transaction(function () use ($source, $destination, $montant, $motif, $approbateur) {
+        return DB::transaction(function () use ($source, $destination, $montant, $motif, $approbateur, $options) {
             $txSource = $this->sortie($source, $montant, "Transfert vers {$destination->libelle} — {$motif}", [
-                'reference_type' => 'transfert_caisse',
+                'reference_type' => 'transfert_caisse', 'created_by' => $options['created_by'] ?? $approbateur?->id, 'valide_par' => $options['valide_par'] ?? $approbateur?->id, 'date' => $options['date'] ?? now(),
             ]);
             $txSource->update(['type' => 'transfert_sortant']);
 
             $txDest = $this->entree($destination, $montant, "Transfert depuis {$source->libelle} — {$motif}", [
-                'reference_type' => 'transfert_caisse',
+                'reference_type' => 'transfert_caisse', 'created_by' => $options['created_by'] ?? $approbateur?->id, 'valide_par' => $options['valide_par'] ?? $approbateur?->id, 'date' => $options['date'] ?? now(),
             ]);
             $txDest->update(['type' => 'transfert_entrant']);
 

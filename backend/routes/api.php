@@ -109,6 +109,7 @@ Route::middleware(['auth:sanctum', 'association.context'])->group(function () {
     // contrainte whereUuid() le rend impossible structurellement, peu importe l'ordre.
     Route::post('/caisses/transferts', [CaisseController::class, 'transfert']);
     Route::get('/caisses/transferts', [CaisseController::class, 'transferts']);
+    Route::post('/caisses/import-historique', [CaisseController::class, 'importHistorique']);
     Route::apiResource('caisses', CaisseController::class)->except(['destroy'])->whereUuid('caisse');
     Route::post('/caisses/{id}/transactions', [CaisseController::class, 'transaction']);
     Route::get('/caisses/{id}/journal', [CaisseController::class, 'journal']);
@@ -128,6 +129,7 @@ Route::middleware(['auth:sanctum', 'association.context'])->group(function () {
     // ── Sanctions & Social ──────────────────────────────────────
     Route::apiResource('sanctions', SanctionController::class)->except(['destroy'])->whereUuid('sanction');
     Route::post('/sanctions/import-historique', [SanctionController::class, 'importHistorique']);
+    Route::post('/decisions-ag/import-historique', [DecisionAgController::class, 'importHistorique']);
     Route::post('/sanctions/{id}/payer', [SanctionController::class, 'payer']);
     Route::get('/types-sanction', [TypeSanctionController::class, 'index']);
     Route::post('/types-sanction', [TypeSanctionController::class, 'store']);

@@ -125,6 +125,7 @@ function Section({ item, collapsed }) {
 export default function Sidebar({ collapsed, setCollapsed }) {
   const { currentAssociation, user, logout } = useApp();
   const navigate = useNavigate();
+  const navigation = user?.role === 'super_admin' ? [...nav, { label: 'Reprise historique', path: '/import-historique' }] : nav;
   return (
     <aside
       className={clsx(
@@ -185,7 +186,7 @@ export default function Sidebar({ collapsed, setCollapsed }) {
       <nav className={clsx('flex-1 overflow-y-auto py-3 sidebar-scroll relative z-10', collapsed ? 'px-2' : 'px-3')}>
         {!collapsed && <p className="px-2 pb-2 pt-1 text-[11px] font-bold uppercase tracking-[0.16em] text-white/45">Modules métier</p>}
         <div className="space-y-1">
-          {nav.map((item) => (
+          {navigation.map((item) => (
             <Section key={item.label} item={item} collapsed={collapsed} />
           ))}
         </div>

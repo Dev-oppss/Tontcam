@@ -99,6 +99,56 @@ class CaisseController extends Controller
         return response()->json($transaction, 201);
     }
 
+    /**
+     * Reprise du journal existant avant l'adoption de TONTIX. Les écritures
+     * sont créées via CaisseService afin de préserver soldes, audit et règles
+     * d'interdiction de solde négatif.
+     */
+    public function importHistorique(Request $request): JsonResponse
+    {
+        if ($request->user()->role !== 'super_admin') {
+            return response()->json(['message' => 'Réservé au super_admin.'], 403);
+        }
+        $data = $request->validate([
+            'lignes' => ['required', 'array', 'min:1', 'max:1000'],
+            'lignes.*.caisse_id' => ['required', 'uuid'],
+            'lignes.*.sens' => ['required', 'in:entree,sortie'],
+            'lignes.*.montant' => ['required', 'numeric', 'min:0.01'],
+            'lignes.*.libelle' => ['required', 'string', 'max:400'],
+            'lignes.*.date_transaction' => ['required', 'date'],
+            'lignes.*.mode_paiement' => ['nullable', 'in:especes,cheque,virement,mobile_money,carte_bancaire'],
+            'lignes.*.reference_externe' => ['nullable', 'string', 'max:200'],
+            'lignes.*.notes' => ['nullable', 'string'],
+            'transferts' => ['sometimes', 'array', 'max:500'],
+            'transferts.*.caisse_source_id' => ['required', 'uuid'],
+            'transferts.*.caisse_destination_id' => ['required', 'uuid', 'different:transferts.*.caisse_source_id'],
+            'transferts.*.montant' => ['required', 'numeric', 'min:0.01'],
+            'transferts.*.motif' => ['required', 'string'],
+            'transferts.*.date_transaction' => ['required', 'date'],
+        ]);
+
+        $resultat = \Illuminate\Support\Facades\DB::transaction(function () use ($data, $request) {
+            $transactions = collect($data['lignes'])->sortBy('date_transaction')->map(function (array $ligne) use ($request) {
+                $caisse = $this->scope->scopeAssociation(Caisse::query())->findOrFail($ligne['caisse_id']);
+                return $this->service->{$ligne['sens']}($caisse, (float) $ligne['montant'], $ligne['libelle'], [
+                    'date' => $ligne['date_transaction'], 'mode_paiement' => $ligne['mode_paiement'] ?? null,
+                    'reference_type' => 'import_historique', 'reference_externe' => $ligne['reference_externe'] ?? null,
+                    'notes' => $ligne['notes'] ?? null, 'created_by' => $request->user()->id, 'valide_par' => $request->user()->id,
+                ]);
+            })->values();
+            $transferts = collect($data['transferts'] ?? [])->sortBy('date_transaction')->map(function (array $ligne) use ($request) {
+                $source = $this->scope->scopeAssociation(Caisse::query())->findOrFail($ligne['caisse_source_id']);
+                $destination = $this->scope->scopeAssociation(Caisse::query())->findOrFail($ligne['caisse_destination_id']);
+                return $this->service->transfert($source, $destination, (float) $ligne['montant'], $ligne['motif'], $request->user(), [
+                    'date' => $ligne['date_transaction'], 'created_by' => $request->user()->id, 'valide_par' => $request->user()->id,
+                ])['transfert'];
+            })->values();
+            return compact('transactions', 'transferts');
+        });
+
+        return response()->json($resultat, 201);
+    }
+
     public function transferts(Request $request): JsonResponse
     {
         $transferts = \App\Models\TransfertCaisse::whereHas('caisseSource', fn ($q) => $this->scope->scopeAssociation($q))

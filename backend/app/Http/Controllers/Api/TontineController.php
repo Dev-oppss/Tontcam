@@ -68,7 +68,7 @@ class TontineController extends Controller
         $tontine = $this->scope->scopeAssociation(Tontine::query())->findOrFail($id);
         $this->authorize('update', $tontine);
 
-        $tontine->update($request->validate([
+        $data = $request->validate([
             'libelle' => ['sometimes', 'string', 'max:200'],
             'description' => ['sometimes', 'nullable', 'string'],
             'statut' => ['sometimes', 'in:en_preparation,active,suspendue,cloturee'],
@@ -82,7 +82,18 @@ class TontineController extends Controller
             'option_surplus' => ['sometimes', 'in:redistribution,mise_en_caisse'],
             'date_debut' => ['sometimes', 'nullable', 'date'],
             'caisse_id' => ['sometimes', 'nullable', 'uuid'],
-        ]));
+        ]);
+
+        // Le mode définit les règles de désignation, le calcul du gain et les
+        // traces des cycles. Dès le premier cycle ouvert, le modifier rendrait
+        // l'historique incohérent (ex. enchère devenue rotation).
+        if (array_key_exists('mode_attribution', $data)
+            && $data['mode_attribution'] !== $tontine->mode_attribution
+            && $tontine->cycles()->exists()) {
+            return response()->json(['message' => 'Le type d’attribution ne peut plus être modifié après le démarrage de la tontine.'], 422);
+        }
+
+        $tontine->update($data);
 
         return response()->json($tontine);
     }

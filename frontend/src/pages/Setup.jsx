@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Navigate, useNavigate, Link } from 'react-router-dom';
 import { Building2, ArrowRight, ArrowLeft, Layers3, ShieldCheck, BadgeCheck } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import { resolveApiUrl } from '../lib/api';
 
 const flow = [
   { title: '1. Association', desc: 'Fiche complète, contacts, siège et devise.' },
@@ -28,6 +29,7 @@ export default function Setup() {
   const navigate = useNavigate();
   const [form, setForm] = useState(EMPTY_FORM);
   const [busy, setBusy] = useState(false);
+  const [statuts, setStatuts] = useState({ version: '', dateAdoption: new Date().toISOString().slice(0, 10) });
 
   useEffect(() => {
     // Tant que le profil n'est pas complété, l'association ne contient qu'un nom
@@ -63,6 +65,13 @@ export default function Setup() {
     } finally {
       setBusy(false);
     }
+  };
+
+  const deposerStatuts = async (file) => {
+    if (!file || !currentAssociation || !statuts.version.trim() || !statuts.dateAdoption) return;
+    try {
+      await uploadStatutsAssociation(currentAssociation.id, file, statuts);
+    } catch { /* Le contexte affiche l'erreur. */ }
   };
 
   return (
@@ -201,12 +210,23 @@ export default function Setup() {
               <p className="text-xs text-ink-500 mt-0.5">
                 {currentAssociation.statutsUrl ? 'Un document est déjà déposé — en choisir un nouveau le remplace.' : 'Aucun document déposé pour le moment.'}
               </p>
+              <div className="grid sm:grid-cols-2 gap-3 mt-3">
+                <div>
+                  <label className="label">Version des statuts</label>
+                  <input className="input" value={statuts.version} onChange={(e) => setStatuts((s) => ({ ...s, version: e.target.value }))} placeholder="Ex. 1.0" />
+                </div>
+                <div>
+                  <label className="label">Date d'adoption</label>
+                  <input type="date" className="input" value={statuts.dateAdoption} onChange={(e) => setStatuts((s) => ({ ...s, dateAdoption: e.target.value }))} />
+                </div>
+              </div>
               <input
                 type="file" accept="application/pdf" className="input mt-2"
-                onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadStatutsAssociation(currentAssociation.id, f); }}
+                disabled={!statuts.version.trim() || !statuts.dateAdoption}
+                onChange={(e) => deposerStatuts(e.target.files?.[0])}
               />
               {currentAssociation.statutsUrl && (
-                <a href={currentAssociation.statutsUrl} target="_blank" rel="noreferrer" className="text-xs text-[#1f4aa6] font-semibold mt-2 inline-block">
+                <a href={resolveApiUrl(currentAssociation.statutsUrl)} target="_blank" rel="noreferrer" className="text-xs text-[#1f4aa6] font-semibold mt-2 inline-block">
                   Voir le document actuel
                 </a>
               )}

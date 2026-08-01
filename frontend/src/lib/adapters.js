@@ -74,6 +74,7 @@ export const reglementFromApi = (r) => !r ? null : ({
   dateAdoption: r.date_adoption,
   decisionAG: r.numero_decision_ag,
   notes: r.contenu_html,
+  estActif: Boolean(r.est_actif),
   statut: r.date_adoption ? 'adopte' : 'brouillon',
 });
 
@@ -381,6 +382,7 @@ export const transactionFromApi = (t) => !t ? null : ({
   entree: t.type === 'entree' ? Number(t.montant) : 0,
   sortie: t.type !== 'entree' ? Number(t.montant) : 0,
   libelle: t.libelle,
+  operation: t.libelle,
   modePaiement: t.mode_paiement,
   categorie: deriveCategorie(t),
 });

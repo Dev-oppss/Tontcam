@@ -133,6 +133,7 @@ export default function Tontines() {
   };
   const getNbEncaisses    = (id) => (planningTours || []).filter(p => p.idTontine === id && p.statut === 'encaisse').length;
   const getProchainTour   = (id, nb) => Math.min(getNbEncaisses(id) + 1, nb);
+  const modeAttributionVerrouillee = !!showEdit && (cyclesTontine || []).some((cycle) => cycle.idTontine === showEdit.id);
 
   const handleAdd = () => {
     if (!form.nom.trim() || !form.idCaisse) return;
@@ -242,7 +243,7 @@ export default function Tontines() {
 
   const formRef = useRef(form); formRef.current = form;
   const F = useRef(({ k, ...p }) => <input className="input" value={formRef.current[k]||''} onChange={e=>setForm(f=>({...f,[k]:e.target.value}))} {...p}/>).current;
-  const S = useRef(({ k, children }) => <select className="select" value={formRef.current[k]||''} onChange={e=>setForm(f=>({...f,[k]:e.target.value}))}>{children}</select>).current;
+  const S = useRef(({ k, children, ...p }) => <select className="select" value={formRef.current[k]||''} onChange={e=>setForm(f=>({...f,[k]:e.target.value}))} {...p}>{children}</select>).current;
 
   const tabs = [
     { id:'toutes',   label:'Toutes',       count: tontines.length },
@@ -924,7 +925,7 @@ export default function Tontines() {
           <div className="grid grid-cols-2 gap-3">
             <FormField label="Nb tours"><F k="nbTours" type="number" min="1"/></FormField>
             <FormField label="Tours maximum / séance"><F k="maxCyclesParReunion" type="number" min="1" max="20"/></FormField>
-            <FormField label="Type"><S k="typeAttribution"><option value="rotation"> Rotation</option><option value="tirage"> Tirage</option><option value="enchere"> Enchère</option></S></FormField>
+            <FormField label="Type" hint={modeAttributionVerrouillee ? "Verrouillé : au moins un tour a déjà démarré." : undefined}><S k="typeAttribution" disabled={modeAttributionVerrouillee}><option value="rotation"> Rotation</option><option value="tirage"> Tirage</option><option value="enchere"> Enchère</option></S></FormField>
           </div>
           {form.typeAttribution === 'enchere' && (
             <FormField label="Mise minimum (FCFA)" required hint="Obligatoire pour une tontine à enchère.">

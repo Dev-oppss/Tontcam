@@ -25,6 +25,26 @@ export const TX_LABELS = TX_TYPES.reduce((acc, t) => ({ ...acc, [t.value]: t.lab
 
 export const AppContext = createContext(null);
 
+const PARAMETRES_VERS_UI = {
+  seuil_approbation_pret: 'seuilApprobationPret', nb_signataires_pv: 'nbSignatairesPV',
+  delai_rappel_j7: 'delaiRappelJ7', delai_rappel_j3: 'delaiRappelJ3', delai_rappel_j1: 'delaiRappelJ1',
+  plafond_cumul_postes: 'plafondCumulPostes', taux_penalite_retard: 'tauxPenaliteRetard',
+  duree_max_pret_mois: 'dureeMaxPretMois', tolerance_retard_minutes: 'toleranceRetardMinutes',
+  seuil_suspension_sanctions: 'seuilSuspensionSanctions', cycles_impayes_avant_suspension: 'cyclesImpayesAvantSuspension',
+  aide_naissance: 'aideNaissance', aide_mariage: 'aideMariage', aide_deces_membre: 'aideDecesMembre',
+  aide_deces_famille: 'aideDecesFamille', max_aides_par_categorie_an: 'maxAidesParCategorieAn',
+};
+const PARAMETRES_VERS_API = Object.fromEntries(Object.entries(PARAMETRES_VERS_UI).map(([api, ui]) => [ui, api]));
+const parametresDepuisApi = (data) => Object.fromEntries(
+  Object.entries({ ...(data?.coeur || {}), ...(data?.etendus || {}) }).map(([key, value]) => [PARAMETRES_VERS_UI[key] || key, value])
+);
+const transfertDepuisApi = (t) => ({
+  ...t,
+  caisseSourceId: t.caisse_source_id,
+  caisseDestinationId: t.caisse_destination_id,
+  dateTransfert: t.created_at,
+});
+
 export const AppProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [booting, setBooting] = useState(true);
@@ -132,6 +152,31 @@ export const AppProvider = ({ children }) => {
     } catch (err) { return handleError(err); }
   };
 
+  const importerHistorique = async (type, payload) => {
+    try {
+      const routes = {
+        transactions: '/caisses/import-historique',
+        decisions: '/decisions-ag/import-historique',
+        prets: '/prets/import-historique',
+        sanctions: '/sanctions/import-historique',
+      };
+      if (type === 'cycles') {
+        const { tontine_id, ...cycle } = payload;
+        const resultat = await request(`/tontines/${tontine_id}/cycles/import-historique`, { method: 'POST', body: cycle });
+        const cycleAdapte = adapt.cycleFromApi(resultat);
+        setCyclesTontine((prev) => [...prev.filter((item) => item.id !== cycleAdapte.id), cycleAdapte]);
+        showToast('Cycle historique importé');
+        return resultat;
+      }
+      const resultat = await request(routes[type], { method: 'POST', body: payload });
+      if (type === 'decisions') setDecisionsAG((prev) => [...prev, ...(Array.isArray(resultat) ? resultat : [resultat]).map(adapt.decisionAgFromApi)]);
+      if (type === 'prets') setPrets((prev) => [...prev, adapt.pretFromApi(resultat)]);
+      if (type === 'sanctions') setSanctions((prev) => [...prev, adapt.sanctionFromApi(resultat)]);
+      showToast('Historique importé');
+      return resultat;
+    } catch (err) { return handleError(err); }
+  };
+
   // ── Charge toutes les données de l'association une fois connecté ──
   useEffect(() => {
     if (!user || !currentAssociation) return;
@@ -174,7 +219,7 @@ export const AppProvider = ({ children }) => {
         setBanques((cRes.data || cRes).map(adapt.caisseFromApi));
         setPrets((pRes.data || pRes).map(adapt.pretFromApi));
         setSanctions((sRes.data || sRes).map(adapt.sanctionFromApi));
-        setParametres({ ...paramRes.coeur, ...paramRes.etendus });
+        setParametres(parametresDepuisApi(paramRes));
         setFondAssurance((aRes.data || []).map(adapt.aideFromApi));
         setUtilisateurs((uRes || []).map(adapt.utilisateurFromApi));
         setTypesSanction((typeSancRes || []).map(adapt.typeSanctionFromApi));
@@ -198,7 +243,7 @@ export const AppProvider = ({ children }) => {
         setDecisionsAG((decAgRes.data || decAgRes).map(adapt.decisionAgFromApi));
         setReglements((reglRes || []).map(adapt.reglementFromApi));
         setRapprochements((rapproRes || []).map(adapt.rapprochementFromApi));
-        setTransfertsCaisse(transfRes || []);
+        setTransfertsCaisse((transfRes || []).map(transfertDepuisApi));
 
         // Parts de tontine : agrégées depuis le détail de chaque tontine
         const tontinesDetail = await Promise.all(
@@ -330,10 +375,13 @@ export const AppProvider = ({ children }) => {
     showToast('Déconnecté');
   };
 
-  const uploadStatutsAssociation = async (id, file) => {
+  const uploadStatutsAssociation = async (id, file, { version, dateAdoption, signataires } = {}) => {
     try {
       const fd = new FormData();
       fd.append('fichier', file);
+      fd.append('version', version);
+      fd.append('date_adoption', dateAdoption);
+      if (signataires?.length) signataires.forEach((signataire, index) => fd.append(`signataires[${index}]`, signataire));
       const asso = await request(`/associations/${id}/statuts`, { method: 'POST', body: fd });
       setCurrentAssociationState((prev) => ({ ...prev, statutsUrl: asso.statuts_url }));
       showToast('Statuts déposés');
@@ -748,7 +796,7 @@ export const AppProvider = ({ children }) => {
   const chargerTransferts = useCallback(async () => {
     try {
       const list = await request('/caisses/transferts');
-      setTransfertsCaisse(list || []);
+      setTransfertsCaisse((list || []).map(transfertDepuisApi));
     } catch (err) { showToast(err.message, 'error'); }
   }, [showToast]);
 
@@ -926,6 +974,14 @@ export const AppProvider = ({ children }) => {
         caisse_source_id: data.idSource, caisse_destination_id: data.idDestination,
         montant: Number(data.montant), motif: data.motif || 'Transfert',
       } });
+      const txSource = adapt.transactionFromApi(res.transaction_source);
+      const txDestination = adapt.transactionFromApi(res.transaction_destination);
+      setCaisseJournal((prev) => [...prev, txSource, txDestination].filter(Boolean));
+      setBanques((prev) => prev.map((caisse) => {
+        if (caisse.id === data.idSource) return { ...caisse, totalSolde: caisse.totalSolde - Number(data.montant) };
+        if (caisse.id === data.idDestination) return { ...caisse, totalSolde: caisse.totalSolde + Number(data.montant) };
+        return caisse;
+      }));
       await chargerTransferts();
       showToast('Transfert enregistré');
       return res;
@@ -1293,6 +1349,25 @@ export const AppProvider = ({ children }) => {
       return b;
     } catch (err) { return handleError(err); }
   };
+
+  const updateParametres = async (data) => {
+    try {
+      const coeur = {};
+      const etendus = {};
+      Object.entries(data).forEach(([key, value]) => {
+        const apiKey = PARAMETRES_VERS_API[key] || key;
+        if (['devise', 'seuil_approbation_pret', 'nb_signataires_pv', 'delai_rappel_j7', 'delai_rappel_j3', 'delai_rappel_j1'].includes(apiKey)) coeur[apiKey] = value;
+        else etendus[apiKey] = value;
+      });
+      const resultat = await request('/parametres', { method: 'PUT', body: { ...coeur, etendus } });
+      setParametres(parametresDepuisApi(resultat));
+      if (resultat.coeur?.devise) {
+        setCurrentAssociationState((association) => association ? { ...association, devise: resultat.coeur.devise } : association);
+      }
+      showToast('Paramètres enregistrés');
+      return resultat;
+    } catch (err) { return handleError(err); }
+  };
   const payerBulletin = async (idBulletin, modePaiement = 'especes', referenceVersement = '') => {
     try {
       const bulletin = await request(`/bulletins/${idBulletin}/payer`, { method: 'POST', body: { mode_paiement: modePaiement, reference_versement: referenceVersement || null } });
@@ -1321,8 +1396,8 @@ export const AppProvider = ({ children }) => {
     comptesBanque: [], operationsBanque: [], seanceTransactions: seanceTransactionsState, transfertsCaisse, chargerJournalCaisse,
     utilisateurs, planningTours, cyclesTontine, chargerCycles, dashboardStats, repartitionBanques, evolutionCaisse: mock.evolutionCaisse,
     portailMoi, chargerPortailMoi,
-    showToast,
-    login, logout, changePassword, updateMonProfil, register, updateAssociation, uploadStatutsAssociation,
+    showToast, importerHistorique,
+    login, logout, changePassword, updateMonProfil, register, updateAssociation, uploadStatutsAssociation, updateParametres,
     addMembre, updateMembre, deleteMembre,
     addMandat, cloturerMandat,
     logAuditConsultation, addDecisionAG, addReglement, addRapprochement, justifierEcart,

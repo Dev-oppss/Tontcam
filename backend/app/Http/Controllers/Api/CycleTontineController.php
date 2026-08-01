@@ -56,11 +56,16 @@ class CycleTontineController extends Controller
             'date_cloture' => ['required', 'date'],
             'montant_enchere' => ['nullable', 'numeric', 'min:0'],
             'surplus_enchere' => ['nullable', 'numeric', 'min:0'],
+            'gain_verse' => ['sometimes', 'boolean'],
+            'mode_versement' => ['sometimes', 'in:especes,cheque,virement,mobile_money,carte_bancaire'],
+            'reference_versement' => ['nullable', 'string', 'max:200'],
             'cotisations' => ['nullable', 'array'],
             'cotisations.*.tontine_part_id' => ['required', 'uuid'],
             'cotisations.*.montant_verse' => ['required', 'numeric', 'min:0'],
             'cotisations.*.date_versement' => ['nullable', 'date'],
         ]);
+
+        $data['gain_verse'] = $data['gain_verse'] ?? true;
 
         $cycle = $this->service->importerHistorique($tontine, $data, $request->user());
 

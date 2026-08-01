@@ -1,90 +1,10 @@
 import { useState } from 'react';
-import {
-  Plus, ArrowDownCircle, ArrowUpCircle, Eye, UserPlus, Users, Landmark,
-  PiggyBank, HandCoins, Heart, GraduationCap, Calendar, FolderOpen,
-  ShieldCheck, Banknote, CheckCircle2, Settings2, ChevronRight
-} from 'lucide-react';
+import { Plus, ArrowDownCircle, ArrowUpCircle, Eye, UserPlus, Users, Landmark } from 'lucide-react';
 import { fmt, fmtDate } from '../data/mockData';
 import { useApp } from '../context/AppContext';
 import { PageHeader, Table, Badge, Modal, FormField, SectionCard } from '../components/ui/index';
 import { ModePaiementFields, isModePaiementValid } from '../components/ui/ModePaiement';
 import clsx from 'clsx';
-
-/* ─── Définition des types d'opérations disponibles ─────────── */
-const ALL_OPERATIONS = [
-  {
-    id: 'epargne',
-    label: 'Épargne',
-    desc: 'Dépôts et retraits d\'épargne classique',
-    icon: PiggyBank,
-    color: 'text-primary-600',
-    bg: 'bg-primary-50 border-primary-200',
-    bgActive: 'bg-primary-600',
-  },
-  {
-    id: 'pret',
-    label: 'Prêt / Crédit',
-    desc: 'Accorder et rembourser des prêts',
-    icon: HandCoins,
-    color: 'text-blue-600',
-    bg: 'bg-blue-50 border-blue-200',
-    bgActive: 'bg-blue-600',
-  },
-  {
-    id: 'aide',
-    label: 'Aide / Assistance',
-    desc: 'Versements d\'aides solidaires',
-    icon: Heart,
-    color: 'text-rose-600',
-    bg: 'bg-rose-50 border-rose-200',
-    bgActive: 'bg-rose-500',
-  },
-  {
-    id: 'scolaire',
-    label: 'Frais scolaires',
-    desc: 'Financement frais de scolarité',
-    icon: GraduationCap,
-    color: 'text-indigo-600',
-    bg: 'bg-indigo-50 border-indigo-200',
-    bgActive: 'bg-indigo-600',
-  },
-  {
-    id: 'cotisation',
-    label: 'Cotisation',
-    desc: 'Collecte de cotisations périodiques',
-    icon: Calendar,
-    color: 'text-amber-600',
-    bg: 'bg-amber-50 border-amber-200',
-    bgActive: 'bg-amber-500',
-  },
-  {
-    id: 'projet',
-    label: 'Projet / Investissement',
-    desc: 'Financement de projets membres',
-    icon: FolderOpen,
-    color: 'text-purple-600',
-    bg: 'bg-purple-50 border-purple-200',
-    bgActive: 'bg-purple-600',
-  },
-  {
-    id: 'assurance',
-    label: 'Fond d\'assurance',
-    desc: 'Couverture risques et sinistres',
-    icon: ShieldCheck,
-    color: 'text-teal-600',
-    bg: 'bg-teal-50 border-teal-200',
-    bgActive: 'bg-teal-600',
-  },
-  {
-    id: 'retrait_libre',
-    label: 'Retrait libre',
-    desc: 'Retrait à tout moment sans conditions',
-    icon: Banknote,
-    color: 'text-orange-600',
-    bg: 'bg-orange-50 border-orange-200',
-    bgActive: 'bg-orange-500',
-  },
-];
 
 const typeColors = {
   banque_libre:'green', banque_scolaire:'blue',
@@ -100,7 +20,6 @@ const createEmptyBanque = () => ({
   type: 'autre',
   compteBancaireId: '',
   montantCotisation: '',
-  operationsAutorisees: ['epargne'],
   pretAutorise: false,
   tauxInteretPret: 10,
   dureeMaxPretMois: 6,
@@ -125,8 +44,9 @@ export default function Banques() {
   const [opForm,     setOpForm]     = useState({ montant:'', observation:'', dateOperation: new Date().toISOString().split('T')[0], modePaiement: 'especes', detailsPaiement: '' });
   const [enrollForm, setEnrollForm] = useState({ idMembre:'' });
 
-  // ── Step du wizard création ─────────────────────────────────
-  const [step, setStep] = useState(1); // 1 = infos, 2 = opérations
+  // L'ancien second écran « opérations autorisées » a été retiré : ces
+  // opérations ne faisaient l'objet d'aucune règle métier ni persistance.
+  const step = 1;
 
   const totalGlobal = banques.reduce((s, b) => s + (b.totalSolde || 0), 0);
 
@@ -136,19 +56,6 @@ export default function Banques() {
 
   const resetAddWizard = () => {
     setNewBanque(createEmptyBanque());
-    setStep(1);
-  };
-
-  const toggleOp = (opId) => {
-    setNewBanque(prev => {
-      const ops = prev.operationsAutorisees || [];
-      return {
-        ...prev,
-        operationsAutorisees: ops.includes(opId)
-          ? ops.filter(o => o !== opId)
-          : [...ops, opId],
-      };
-    });
   };
 
   const openAddModal = () => {
@@ -182,17 +89,10 @@ export default function Banques() {
   /* ─── Création banque ──────────────────────────────────────── */
   const handleAddBanque = () => {
     if (!newBanque.nom.trim()) return;
-    if (!newBanque.operationsAutorisees?.length) return;
-    const pretAutorise = newBanque.operationsAutorisees.includes('pret');
     addBanque({
       ...newBanque,
-      pretAutorise,
-      tauxInteretPret: pretAutorise ? Number(newBanque.tauxInteretPret || 0) : 0,
-      dureeMaxPretMois: pretAutorise ? Number(newBanque.dureeMaxPretMois || 0) : 0,
-      amortissementPret: pretAutorise ? newBanque.amortissementPret || 'unique' : 'unique',
-      echeancesPret: pretAutorise ? newBanque.echeancesPret || 'mensuel' : 'mensuel',
-      penaliteRetardActive: pretAutorise ? Boolean(newBanque.penaliteRetardActive) : false,
-      tauxPenalite: pretAutorise && newBanque.penaliteRetardActive ? Number(newBanque.tauxPenalite || 0) : 0,
+      pretAutorise: Boolean(newBanque.pretAutorise),
+      tauxInteretPret: newBanque.pretAutorise ? Number(newBanque.tauxInteretPret || 0) : 0,
       totalSolde: 0,
     });
     setAddModal(false);
@@ -210,19 +110,7 @@ export default function Banques() {
     setEnrollModal(null);
   };
 
-  /* ─── Badge opérations autorisées ─────────────────────────── */
-  const OpTag = ({ opId }) => {
-    const op = ALL_OPERATIONS.find(o => o.id === opId);
-    if (!op) return null;
-    const Icon = op.icon;
-    return (
-      <span className={clsx('inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full border', op.bg, op.color)}>
-        <Icon size={10} />
-        {op.label}
-      </span>
-    );
-  };
-  const pretAutorise = newBanque.operationsAutorisees?.includes('pret');
+  const pretAutorise = Boolean(newBanque.pretAutorise);
 
   return (
     <div className="space-y-6">
@@ -240,7 +128,6 @@ export default function Banques() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 stagger">
         {banques.map(b => {
           const comptes = comptesDeBanque(b.id);
-          const ops = (b.operationsAutorisees || []).slice(0, 3);
           return (
             <div key={b.id} className="card-hover fade-up group cursor-pointer" onClick={() => setShowComptes(b)}>
               {/* Header */}
@@ -261,15 +148,6 @@ export default function Banques() {
               <p className="text-2xl font-bold text-primary-600 mb-0.5">{fmt(b.totalSolde || 0)}</p>
               <p className="text-xs text-ink-600/40 mb-3">{comptes.length} membre{comptes.length > 1 ? 's' : ''}</p>
 
-              {/* Opérations autorisées */}
-              {ops.length > 0 && (
-                <div className="flex flex-wrap gap-1 mb-4">
-                  {ops.map(opId => <OpTag key={opId} opId={opId} />)}
-                  {(b.operationsAutorisees || []).length > 3 && (
-                    <span className="text-[11px] text-ink-600/40 px-1">+{b.operationsAutorisees.length - 3}</span>
-                  )}
-                </div>
-              )}
 
               {/* Actions */}
               <div className="flex gap-2 pt-3 border-t border-surface-100">
@@ -388,58 +266,17 @@ export default function Banques() {
         </Table>
       </SectionCard>
 
-      {/* ══ MODAL NOUVELLE BANQUE — wizard 2 étapes ══════════ */}
+      {/* ══ MODAL NOUVELLE CAISSE ═════════════════════════════ */}
       <Modal
         open={addModal}
         onClose={() => { setAddModal(false); resetAddWizard(); }}
         size="xl"
-        title={
-          <div className="flex items-center gap-3">
-            <span>Nouvelle caisse</span>
-            <div className="flex items-center gap-1.5 ml-2">
-              {[1, 2].map(s => (
-                <div key={s} className={clsx(
-                  'h-1.5 rounded-full transition-all duration-300',
-                  s === step ? 'w-6 bg-primary-500' : s < step ? 'w-3 bg-primary-300' : 'w-3 bg-surface-200'
-                )} />
-              ))}
-            </div>
-          </div>
-        }
-        footer={
-          step === 1 ? (
-            <>
-              <button onClick={() => setAddModal(false)} className="btn-secondary">Annuler</button>
-              <button
-                onClick={() => setStep(2)}
-                disabled={!newBanque.nom.trim()}
-                className="btn-primary disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                Suivant <ChevronRight size={14} />
-              </button>
-            </>
-          ) : (
-            <>
-              <button onClick={() => setStep(1)} className="btn-secondary">- Retour</button>
-            <button
-              onClick={handleAddBanque}
-              disabled={!newBanque.operationsAutorisees?.length}
-              className="btn-primary disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              <Plus size={14} /> Créer la caisse
-            </button>
-            </>
-          )
-        }
+        title="Nouvelle caisse"
+        footer={<><button onClick={() => setAddModal(false)} className="btn-secondary">Annuler</button><button onClick={handleAddBanque} disabled={!newBanque.nom.trim()} className="btn-primary disabled:opacity-40 disabled:cursor-not-allowed"><Plus size={14} /> Créer la caisse</button></>}
       >
         {/* ── Étape 1 : Informations ─────────────────────── */}
         {step === 1 && (
           <div className="space-y-4">
-            <div className="flex items-center gap-2 text-xs text-ink-600/50 mb-2">
-              <Settings2 size={13} />
-              <span>Étape 1 sur 2 — Informations générales</span>
-            </div>
-
             <FormField label="Nom de la caisse" required>
               <input
                 className="input"
@@ -497,11 +334,18 @@ export default function Banques() {
                 onChange={e => setNewBanque(f => ({ ...f, description: e.target.value }))}
               />
             </FormField>
+            <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-3 space-y-3">
+              <label className="flex items-center gap-2 cursor-pointer text-sm font-semibold text-blue-900">
+                <input type="checkbox" checked={pretAutorise} onChange={e => setNewBanque(f => ({ ...f, pretAutorise: e.target.checked }))} className="w-4 h-4 rounded" />
+                Autoriser les prêts depuis cette caisse
+              </label>
+              {pretAutorise && <FormField label="Taux d'intérêt mensuel (%)"><input type="number" className="input" min="0" max="100" value={newBanque.tauxInteretPret} onChange={e => setNewBanque(f => ({ ...f, tauxInteretPret: e.target.value }))} /></FormField>}
+            </div>
           </div>
         )}
 
         {/* ── Étape 2 : Types d'opérations ──────────────── */}
-        {step === 2 && (
+        {false && (
           <div className="space-y-4">
             <div className="flex items-center gap-2 text-xs text-ink-600/50 mb-2">
               <CheckCircle2 size={13} />
@@ -680,15 +524,6 @@ export default function Banques() {
             }
           >
             <div className="space-y-4">
-              {/* Opérations autorisées */}
-              {b.operationsAutorisees?.length > 0 && (
-                <div className="p-3 bg-surface-50 rounded-xl border border-surface-200">
-                  <p className="text-xs font-semibold text-ink-600/60 mb-2 uppercase tracking-wide">Opérations autorisées</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {b.operationsAutorisees.map(opId => <OpTag key={opId} opId={opId} />)}
-                  </div>
-                </div>
-              )}
 
               {/* Stats */}
               <div className="grid grid-cols-3 gap-2">

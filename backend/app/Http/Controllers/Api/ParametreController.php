@@ -41,6 +41,15 @@ class ParametreController extends Controller
             'etendus' => ['sometimes', 'array'],
         ]);
 
+        if (array_key_exists('devise', $data) && $data['devise'] !== $association->devise) {
+            $existeTransaction = \App\Models\Transaction::whereHas(
+                'caisse', fn ($query) => $query->where('association_id', $association->id)
+            )->exists();
+            if ($existeTransaction) {
+                return response()->json(['message' => 'La devise ne peut plus être modifiée : des transactions existent déjà.'], 422);
+            }
+        }
+
         $this->service->definirCoeur($association, $data);
 
         foreach ($data['etendus'] ?? [] as $cle => $valeur) {
