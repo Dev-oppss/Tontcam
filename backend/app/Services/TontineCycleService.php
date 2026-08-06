@@ -115,7 +115,7 @@ class TontineCycleService
                     default => 'payee',
                 };
 
-                CotisationTontine::create([
+                $cotisation = CotisationTontine::create([
                     'cycle_id' => $cycle->id,
                     'tontine_part_id' => $p->id,
                     'membre_id' => $p->membre_id,

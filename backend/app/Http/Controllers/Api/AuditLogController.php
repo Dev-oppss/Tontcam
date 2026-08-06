@@ -40,6 +40,49 @@ class AuditLogController extends Controller
             $query->whereBetween('created_at', [$request->du, $request->au]);
         }
 
-        return response()->json($query->paginate($request->integer('per_page', 50)));
+        $logs = $query->paginate($request->integer('per_page', 50));
+        $logs->getCollection()->transform(fn (AuditLog $log) => $this->presenter($log));
+
+        return response()->json($logs);
+    }
+
+    /** Données métier lisibles, sans divulgation des structures et valeurs internes. */
+    private function presenter(AuditLog $log): array
+    {
+        $modules = [
+            'audit_log' => 'Journal d’audit',
+            'transactions' => 'Opérations de caisse',
+            'tontine.transactions' => 'Opérations de tontine',
+            'tontine_transactions' => 'Opérations de tontine',
+            'tontines' => 'Tontines',
+            'cotisations_tontine' => 'Cotisations de tontine',
+            'prets' => 'Prêts',
+            'sanctions_membres' => 'Sanctions',
+            'decisions_ag' => 'Décisions d’AG',
+            'reunions' => 'Réunions',
+            'membres' => 'Membres',
+            'caisses' => 'Caisses',
+        ];
+        $resume = match ($log->action) {
+            'create' => 'Création enregistrée',
+            'update' => 'Modification enregistrée',
+            'delete' => 'Suppression enregistrée',
+            'view' => 'Consultation enregistrée',
+            default => 'Opération enregistrée',
+        };
+
+        return [
+            'id' => $log->id,
+            'created_at' => $log->created_at,
+            'utilisateur' => $log->utilisateur?->membre ? [
+                'membre' => [
+                    'nom' => $log->utilisateur->membre->nom,
+                    'prenom' => $log->utilisateur->membre->prenom,
+                ],
+            ] : ['email' => 'Administrateur'],
+            'module' => $modules[$log->table_name] ?? 'Gestion interne',
+            'action' => $log->action,
+            'resume' => $resume,
+        ];
     }
 }

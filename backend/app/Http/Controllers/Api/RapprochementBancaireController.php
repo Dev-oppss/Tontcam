@@ -58,17 +58,23 @@ class RapprochementBancaireController extends Controller
 
     public function justifier(Request $request, string $id): JsonResponse
     {
+        if (! in_array($request->user()->role, ['tresorier', 'super_admin'], true)) abort(403);
         $rapprochement = RapprochementBancaire::whereHas('caisse', fn ($q) => $this->scope->scopeAssociation($q))->findOrFail($id);
         $this->authorize('update', $rapprochement);
         $data = $request->validate(['motif' => ['required', 'string'], 'ajuster_solde' => ['sometimes', 'boolean']]);
 
-        $rapprochement = $this->service->justifier($rapprochement, $data['motif'], $request->user(), $data['ajuster_solde'] ?? false);
+        try {
+            $rapprochement = $this->service->justifier($rapprochement, $data['motif'], $request->user(), $data['ajuster_solde'] ?? false);
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
 
         return response()->json($rapprochement);
     }
 
     public function enRetard(): JsonResponse
     {
+        $this->authorize('viewAny', RapprochementBancaire::class);
         return response()->json($this->service->ecartsEnRetard($this->scope->associationId())->values());
     }
 }

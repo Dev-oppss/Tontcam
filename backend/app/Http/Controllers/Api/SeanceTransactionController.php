@@ -34,6 +34,7 @@ class SeanceTransactionController extends Controller
     public function index(string $reunionId): JsonResponse
     {
         $reunion = $this->scope->scopeAssociation(Reunion::query())->findOrFail($reunionId);
+        $this->authorize('view', $reunion);
 
         return response()->json($reunion->seanceTransactions()->with(['membre', 'caisse'])->latest()->get());
     }
@@ -41,6 +42,7 @@ class SeanceTransactionController extends Controller
     public function store(Request $request, string $reunionId): JsonResponse
     {
         $reunion = $this->scope->scopeAssociation(Reunion::query())->findOrFail($reunionId);
+        $this->authorize('update', $reunion);
 
         $data = $request->validate([
             'type' => ['required', 'in:cotisation,remboursement_pret,paiement_sanction,amende,depot_banque,attribution_tour,divers_entree,divers_sortie,pret_accorde,aide_sociale'],
@@ -65,6 +67,7 @@ class SeanceTransactionController extends Controller
                 if ($estRemboursementPret) {
                     $pret = Pret::whereHas('caisse', fn ($q) => $this->scope->scopeAssociation($q))
                         ->findOrFail($data['reference_pret_id']);
+                    $this->authorize('update', $pret->caisse);
                     $this->pretService->rembourserLibre($pret, (float) $data['montant'], $request->user());
                     // Le journal de séance reflète toujours le prêt réel, pas un choix
                     // de caisse potentiellement différent saisi par erreur à l'écran.
@@ -80,7 +83,8 @@ class SeanceTransactionController extends Controller
                 // Si une caisse est renseignée, on répercute réellement le mouvement (books
                 // cohérents) — sauf remboursement_pret, déjà traité ci-dessus.
                 if (!$estRemboursementPret && !empty($data['caisse_id'])) {
-                    $caisse = Caisse::findOrFail($data['caisse_id']);
+                    $caisse = $this->scope->scopeAssociation(Caisse::query())->findOrFail($data['caisse_id']);
+                    $this->authorize('update', $caisse);
                     $libelle = $data['libelle'] ?: "Séance du {$reunion->date_reunion} — {$data['type']}";
                     $sens = in_array($data['type'], self::TYPES_SORTIE, true) ? 'sortie' : 'entree';
 
@@ -111,6 +115,7 @@ class SeanceTransactionController extends Controller
         $seance = SeanceTransaction::where('reunion_id', $reunionId)
             ->whereHas('reunion', fn ($q) => $this->scope->scopeAssociation($q))
             ->findOrFail($id);
+        $this->authorize('update', $seance->reunion);
 
         // Ne supprime que l'entrée du journal — ne défait pas une transaction de caisse déjà validée
         // (RG-CAI : jamais de suppression silencieuse d'un mouvement financier). Utiliser un ajustement sinon.

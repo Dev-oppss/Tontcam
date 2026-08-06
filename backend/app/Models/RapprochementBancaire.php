@@ -23,6 +23,7 @@ class RapprochementBancaire extends Model
         'justification',
         'valide_par',
         'valide_at',
+        'alerte_envoyee_at',
     ];
 
     protected $casts = [
@@ -30,7 +31,8 @@ class RapprochementBancaire extends Model
             'periode_fin' => 'date',
             'solde_banque' => 'decimal:2',
             'solde_logiciel' => 'decimal:2',
-            'valide_at' => 'datetime'
+            'valide_at' => 'datetime',
+            'alerte_envoyee_at' => 'datetime',
     ];
 
     public function compteBancaire()

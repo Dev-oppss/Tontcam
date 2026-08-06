@@ -4,7 +4,8 @@ import { useApp } from '../context/AppContext';
 import { fmtDate } from '../data/mockData';
 import { PageHeader, Table, Badge, EmptyState } from '../components/ui/index';
 
-const ACTIONS = { create: 'green', update: 'blue', delete: 'red' };
+const ACTIONS = { create: 'green', update: 'blue', delete: 'red', view: 'gray' };
+const ACTION_LABELS = { create: 'Création', update: 'Modification', delete: 'Suppression', view: 'Consultation' };
 
 export default function AuditLog() {
   const { user, auditLog = [], logAuditConsultation } = useApp();
@@ -58,19 +59,18 @@ export default function AuditLog() {
         <Badge variant="gray">{filtres.length} entrée(s)</Badge>
       </div>
 
-      <Table headers={['Date', 'Utilisateur', 'Module', 'Action', 'Valeur avant', 'Valeur après']}>
+      <Table headers={['Date', 'Utilisateur', 'Module', 'Action', 'Résumé']}>
         {filtres.slice().reverse().map((l) => (
           <tr key={l.id} className="hover:bg-white/40 transition-colors">
             <td className="td text-ink-600/60 text-xs font-mono">{fmtDate(l.date)}</td>
             <td className="td font-medium">{l.utilisateur}</td>
             <td className="td">{l.module}</td>
-            <td className="td"><Badge variant={ACTIONS[l.action] || 'gray'}>{l.action}</Badge></td>
-            <td className="td text-xs text-ink-600/50 max-w-[180px] truncate font-mono">{l.avant || '—'}</td>
-            <td className="td text-xs text-ink-600/70 max-w-[180px] truncate font-mono">{l.apres || '—'}</td>
+            <td className="td"><Badge variant={ACTIONS[l.action] || 'gray'}>{ACTION_LABELS[l.action] || 'Opération'}</Badge></td>
+            <td className="td text-sm text-ink-600">{l.resume}</td>
           </tr>
         ))}
         {filtres.length === 0 && (
-          <tr><td colSpan={6} className="td text-center text-ink-600/40 py-8">Aucune entrée</td></tr>
+          <tr><td colSpan={5} className="td text-center text-ink-600/40 py-8">Aucune entrée</td></tr>
         )}
       </Table>
 

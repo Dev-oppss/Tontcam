@@ -109,6 +109,8 @@ Route::middleware(['auth:sanctum', 'association.context'])->group(function () {
     // contrainte whereUuid() le rend impossible structurellement, peu importe l'ordre.
     Route::post('/caisses/transferts', [CaisseController::class, 'transfert']);
     Route::get('/caisses/transferts', [CaisseController::class, 'transferts']);
+    Route::post('/caisses/transferts/{id}/approuver', [CaisseController::class, 'approuverTransfert']);
+    Route::get('/caisses/journal-global', [CaisseController::class, 'journalGlobal']);
     Route::post('/caisses/import-historique', [CaisseController::class, 'importHistorique']);
     Route::apiResource('caisses', CaisseController::class)->except(['destroy'])->whereUuid('caisse');
     Route::post('/caisses/{id}/transactions', [CaisseController::class, 'transaction']);

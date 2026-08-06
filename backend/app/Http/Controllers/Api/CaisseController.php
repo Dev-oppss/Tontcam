@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Models\Caisse;
+use App\Models\Transaction;
 use App\Services\AccessScopeService;
 use App\Services\CaisseService;
 use Illuminate\Http\JsonResponse;
@@ -33,7 +34,8 @@ class CaisseController extends Controller
             'seuil_alerte_bas' => ['nullable', 'numeric'],
         ]);
         $data['association_id'] = $this->scope->associationId();
-        $data['solde_actuel'] = $data['solde_initial'] ?? 0;
+        $soldeInitial = (float) ($data['solde_initial'] ?? 0);
+        $data['solde_actuel'] = 0;
         // Sans ceci, 'actif' n'est jamais passé à Caisse::create() : la colonne prend bien
         // sa valeur DEFAULT TRUE côté SQL, mais l'instance Eloquent en mémoire (renvoyée
         // immédiatement dans la réponse JSON) ne reflète pas ce défaut — elle reste "actif:
@@ -43,18 +45,30 @@ class CaisseController extends Controller
         $data['actif'] = true;
 
         $caisse = Caisse::create($data);
+        if ($soldeInitial > 0) {
+            $this->service->entree($caisse, $soldeInitial, 'Solde initial de la caisse', [
+                'reference_type' => 'solde_initial',
+                'created_by' => $request->user()->id,
+                'valide_par' => $request->user()->id,
+                'date' => $caisse->date_ouverture,
+            ]);
+            $caisse->refresh();
+        }
 
         return response()->json($caisse, 201);
     }
 
     public function show(string $id): JsonResponse
     {
-        return response()->json($this->scope->scopeAssociation(Caisse::query())->findOrFail($id));
+        $caisse = $this->scope->scopeAssociation(Caisse::query())->findOrFail($id);
+        $this->authorize('view', $caisse);
+        return response()->json($caisse);
     }
 
     public function update(Request $request, string $id): JsonResponse
     {
         $caisse = $this->scope->scopeAssociation(Caisse::query())->findOrFail($id);
+        $this->authorize('update', $caisse);
 
         $caisse->update($request->validate([
             'libelle' => ['sometimes', 'string', 'max:200'],
@@ -80,7 +94,7 @@ class CaisseController extends Controller
             'sens' => ['required', 'in:entree,sortie'],
             'montant' => ['required', 'numeric', 'min:0.01'],
             'libelle' => ['required', 'string', 'max:400'],
-            'mode_paiement' => ['nullable', 'in:especes,cheque,virement,mobile_money,carte_bancaire'],
+            'mode_paiement' => ['required', 'in:especes,cheque,virement,mobile_money,carte_bancaire'],
             'cheque_numero' => ['required_if:mode_paiement,cheque', 'nullable', 'string'],
         ]);
 
@@ -116,7 +130,7 @@ class CaisseController extends Controller
             'lignes.*.montant' => ['required', 'numeric', 'min:0.01'],
             'lignes.*.libelle' => ['required', 'string', 'max:400'],
             'lignes.*.date_transaction' => ['required', 'date'],
-            'lignes.*.mode_paiement' => ['nullable', 'in:especes,cheque,virement,mobile_money,carte_bancaire'],
+            'lignes.*.mode_paiement' => ['required', 'in:especes,cheque,virement,mobile_money,carte_bancaire'],
             'lignes.*.reference_externe' => ['nullable', 'string', 'max:200'],
             'lignes.*.notes' => ['nullable', 'string'],
             'transferts' => ['sometimes', 'array', 'max:500'],
@@ -131,7 +145,7 @@ class CaisseController extends Controller
             $transactions = collect($data['lignes'])->sortBy('date_transaction')->map(function (array $ligne) use ($request) {
                 $caisse = $this->scope->scopeAssociation(Caisse::query())->findOrFail($ligne['caisse_id']);
                 return $this->service->{$ligne['sens']}($caisse, (float) $ligne['montant'], $ligne['libelle'], [
-                    'date' => $ligne['date_transaction'], 'mode_paiement' => $ligne['mode_paiement'] ?? null,
+                    'date' => $ligne['date_transaction'], 'mode_paiement' => $ligne['mode_paiement'],
                     'reference_type' => 'import_historique', 'reference_externe' => $ligne['reference_externe'] ?? null,
                     'notes' => $ligne['notes'] ?? null, 'created_by' => $request->user()->id, 'valide_par' => $request->user()->id,
                 ]);
@@ -151,6 +165,7 @@ class CaisseController extends Controller
 
     public function transferts(Request $request): JsonResponse
     {
+        $this->authorize('viewAny', Caisse::class);
         $transferts = \App\Models\TransfertCaisse::whereHas('caisseSource', fn ($q) => $this->scope->scopeAssociation($q))
             ->with('caisseSource', 'caisseDestination')
             ->latest()
@@ -170,13 +185,19 @@ class CaisseController extends Controller
 
         $source = $this->scope->scopeAssociation(Caisse::query())->findOrFail($data['caisse_source_id']);
         $destination = $this->scope->scopeAssociation(Caisse::query())->findOrFail($data['caisse_destination_id']);
+        $this->authorize('update', $source);
+        $this->authorize('update', $destination);
 
-        // RG-CAI-016 : au-delà du seuil, seul le Président (ou le Super Admin) peut
-        // exécuter le transfert — avant ce contrôle, n'importe quel rôle autorisé aux
-        // caisses pouvait déplacer n'importe quel montant sans validation.
+        // RG-CAI-016 : au-delà du seuil, aucune écriture ne part en caisse avant
+        // l'approbation explicite du Président.
         $seuil = (float) ($source->association->seuil_approbation_caisse ?? PHP_INT_MAX);
-        if ((float) $data['montant'] > $seuil && ! in_array($request->user()->role, ['president', 'super_admin'], true)) {
-            return response()->json(['message' => "Ce montant dépasse le seuil ({$seuil}) et requiert l'approbation du Président."], 422);
+        if ((float) $data['montant'] > $seuil) {
+            $transfert = \App\Models\TransfertCaisse::create([
+                'caisse_source_id' => $source->id, 'caisse_destination_id' => $destination->id,
+                'montant' => $data['montant'], 'motif' => $data['motif'], 'statut' => 'en_attente',
+                'demande_par' => $request->user()->id, 'demande_at' => now(),
+            ]);
+            return response()->json($transfert, 202);
         }
 
         try {
@@ -188,9 +209,24 @@ class CaisseController extends Controller
         return response()->json($result, 201);
     }
 
+    public function approuverTransfert(Request $request, string $id): JsonResponse
+    {
+        if (! in_array($request->user()->role, ['president', 'super_admin'], true)) abort(403);
+        $transfert = \App\Models\TransfertCaisse::whereHas('caisseSource', fn ($q) => $this->scope->scopeAssociation($q))->findOrFail($id);
+        if ($transfert->statut !== 'en_attente') return response()->json(['message' => 'Ce transfert n’est plus en attente.'], 422);
+
+        try {
+            $resultat = $this->service->transfert($transfert->caisseSource, $transfert->caisseDestination, (float) $transfert->montant, $transfert->motif, $request->user(), ['transfert' => $transfert]);
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+        return response()->json($resultat);
+    }
+
     public function journal(Request $request, string $id): JsonResponse
     {
         $caisse = $this->scope->scopeAssociation(Caisse::query())->findOrFail($id);
+        $this->authorize('view', $caisse);
 
         $query = $caisse->transactions()->orderByDesc('date_transaction');
         if ($request->filled('type')) {
@@ -201,5 +237,23 @@ class CaisseController extends Controller
         }
 
         return response()->json($query->paginate($request->integer('per_page', 50)));
+    }
+
+    /** Journal consolidé de toutes les caisses de l'association. */
+    public function journalGlobal(Request $request): JsonResponse
+    {
+        $this->authorize('viewAny', Caisse::class);
+
+        $query = Transaction::query()
+            ->whereHas('caisse', fn ($q) => $this->scope->scopeAssociation($q))
+            ->with('caisse:id,libelle')
+            ->orderByDesc('date_transaction')
+            ->orderByDesc('id');
+
+        if ($request->filled('caisse_id')) $query->where('caisse_id', $request->caisse_id);
+        if ($request->filled('type')) $query->where('type', $request->type);
+        if ($request->filled('du') && $request->filled('au')) $query->whereBetween('date_transaction', [$request->du, $request->au]);
+
+        return response()->json($query->paginate(min($request->integer('per_page', 100), 500)));
     }
 }

@@ -6,6 +6,8 @@ use App\Models\Caisse;
 use App\Models\CompteBancaire;
 use App\Models\RapprochementBancaire;
 use App\Models\Utilisateur;
+use App\Models\Membre;
+use Illuminate\Support\Carbon;
 use RuntimeException;
 
 class RapprochementService
@@ -40,6 +42,9 @@ class RapprochementService
      */
     public function justifier(RapprochementBancaire $rapprochement, string $motif, Utilisateur $tresorier, bool $ajusterSolde = false): RapprochementBancaire
     {
+        if (Carbon::parse($rapprochement->periode_fin)->addDays(30)->isPast()) {
+            throw new RuntimeException('Le délai de 30 jours pour justifier cet écart est dépassé.');
+        }
         $ecart = $this->ecart($rapprochement);
 
         if ($ajusterSolde && $ecart !== 0.0) {
@@ -64,5 +69,30 @@ class RapprochementService
             ->whereNull('valide_at')
             ->get()
             ->filter(fn ($r) => $this->ecart($r) !== 0.0 && now()->diffInDays($r->periode_fin) > 30);
+    }
+
+    /** Crée une alerte in-app unique pour chaque écart dépassant le délai. */
+    public function notifierEcartsEnRetard(string $associationId): int
+    {
+        $presidents = Membre::where('association_id', $associationId)
+            ->whereHas('utilisateur', fn ($q) => $q->where('role', 'president')->where('actif', true))
+            ->get();
+        $notifier = app(NotificationService::class);
+        $nombre = 0;
+
+        foreach ($this->ecartsEnRetard($associationId)->whereNull('alerte_envoyee_at') as $rapprochement) {
+            if ($presidents->isEmpty()) continue;
+            foreach ($presidents as $president) {
+                $notifier->journaliser(
+                    $associationId, $president, 'push', 'ecart_rapprochement_retard',
+                    "Écart bancaire non justifié depuis plus de 30 jours pour la caisse {$rapprochement->caisse->libelle}.",
+                    now(), 'Alerte rapprochement bancaire'
+                );
+            }
+            $rapprochement->update(['alerte_envoyee_at' => now()]);
+            $nombre++;
+        }
+
+        return $nombre;
     }
 }

@@ -41,12 +41,11 @@ export const membreToApi = (m) => ({
 // ── Journal d'audit ──────────────────────────────────────────────
 export const auditLogFromApi = (l) => !l ? null : ({
   id: l.id,
-  module: l.table_name,
+  module: l.module || 'Gestion interne',
   action: l.action,
   date: l.created_at,
   utilisateur: l.utilisateur?.membre ? `${l.utilisateur.membre.nom} ${l.utilisateur.membre.prenom}` : (l.utilisateur?.email || '—'),
-  avant: l.valeur_avant ? JSON.stringify(l.valeur_avant) : null,
-  apres: l.valeur_apres ? JSON.stringify(l.valeur_apres) : null,
+  resume: l.resume || 'Opération enregistrée',
 });
 
 // ── Décisions d'AG ───────────────────────────────────────────────
@@ -377,14 +376,16 @@ export const transactionFromApi = (t) => !t ? null : ({
   id: t.id,
   idCaisse: t.caisse_id,
   date: t.date_transaction,
-  type: t.type === 'entree' ? 'entree' : 'sortie',
+  type: ['entree', 'transfert_entrant'].includes(t.type) || Number(t.solde_apres) > Number(t.solde_avant) ? 'entree' : 'sortie',
   montant: Number(t.montant),
-  entree: t.type === 'entree' ? Number(t.montant) : 0,
-  sortie: t.type !== 'entree' ? Number(t.montant) : 0,
+  entree: ['entree', 'transfert_entrant'].includes(t.type) || Number(t.solde_apres) > Number(t.solde_avant) ? Number(t.montant) : 0,
+  sortie: ['sortie', 'transfert_sortant'].includes(t.type) || Number(t.solde_apres) < Number(t.solde_avant) ? Number(t.montant) : 0,
   libelle: t.libelle,
   operation: t.libelle,
+  nomCaisse: t.caisse?.libelle,
+  soldeApres: Number(t.solde_apres),
   modePaiement: t.mode_paiement,
-  categorie: deriveCategorie(t),
+  categorie: t.type === 'transfert_entrant' || t.type === 'transfert_sortant' ? 'transfert' : deriveCategorie(t),
 });
 
 // ── Utilisateurs ────────────────────────────────────────────────

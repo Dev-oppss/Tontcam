@@ -43,6 +43,7 @@ const transfertDepuisApi = (t) => ({
   caisseSourceId: t.caisse_source_id,
   caisseDestinationId: t.caisse_destination_id,
   dateTransfert: t.created_at,
+  statut: t.statut || 'execute',
 });
 
 export const AppProvider = ({ children }) => {
@@ -72,6 +73,7 @@ export const AppProvider = ({ children }) => {
   const [reglements, setReglements] = useState([]);
   const [rapprochements, setRapprochements] = useState([]);
   const [caisseJournal, setCaisseJournal] = useState([]);
+  const [caisseJournalPagination, setCaisseJournalPagination] = useState({ currentPage: 1, lastPage: 1, total: 0 });
   const [utilisateurs, setUtilisateurs] = useState([]);
   const [planningTours, setPlanningTours] = useState([]);
   const [cyclesTontine, setCyclesTontine] = useState([]);
@@ -960,7 +962,7 @@ export const AppProvider = ({ children }) => {
     try {
       const sens = data.type && TX_TYPES.find((t) => t.value === data.type)?.dir === 'sortie' ? 'sortie' : 'entree';
       const t = await request(`/caisses/${data.idBanque || data.idCaisse}/transactions`, { method: 'POST', body: {
-        sens, montant: Number(data.montant), libelle: data.libelle || TX_LABELS[data.type] || 'Opération', mode_paiement: data.modePaiement,
+        sens, montant: Number(data.montant), libelle: data.libelle || TX_LABELS[data.type] || 'Opération', mode_paiement: data.modePaiement || 'especes',
       } });
       const tx = adapt.transactionFromApi(t);
       setCaisseJournal((prev) => [...prev, tx]);
@@ -974,6 +976,11 @@ export const AppProvider = ({ children }) => {
         caisse_source_id: data.idSource, caisse_destination_id: data.idDestination,
         montant: Number(data.montant), motif: data.motif || 'Transfert',
       } });
+      if (res.statut === 'en_attente') {
+        await chargerTransferts();
+        showToast('Demande de transfert envoyée au Président pour approbation', 'info');
+        return res;
+      }
       const txSource = adapt.transactionFromApi(res.transaction_source);
       const txDestination = adapt.transactionFromApi(res.transaction_destination);
       setCaisseJournal((prev) => [...prev, txSource, txDestination].filter(Boolean));
@@ -1349,6 +1356,32 @@ export const AppProvider = ({ children }) => {
       return b;
     } catch (err) { return handleError(err); }
   };
+  const approuverTransfertCaisse = async (idTransfert) => {
+    try {
+      const res = await request(`/caisses/transferts/${idTransfert}/approuver`, { method: 'POST' });
+      const txSource = adapt.transactionFromApi(res.transaction_source);
+      const txDestination = adapt.transactionFromApi(res.transaction_destination);
+      setCaisseJournal((prev) => [...prev, txSource, txDestination].filter(Boolean));
+      setBanques((prev) => prev.map((caisse) => {
+        if (caisse.id === txSource?.idCaisse) return { ...caisse, totalSolde: caisse.totalSolde - txSource.sortie };
+        if (caisse.id === txDestination?.idCaisse) return { ...caisse, totalSolde: caisse.totalSolde + txDestination.entree };
+        return caisse;
+      }));
+      await chargerTransferts();
+      showToast('Transfert approuvé et exécuté');
+      return res;
+    } catch (err) { return handleError(err); }
+  };
+  const chargerJournalGlobal = async (filtres = {}) => {
+    try {
+      const qs = new URLSearchParams({ per_page: '500', ...filtres }).toString();
+      const res = await request(`/caisses/journal-global?${qs}`);
+      const lignes = (res.data || res).map(adapt.transactionFromApi);
+      setCaisseJournal(lignes);
+      setCaisseJournalPagination({ currentPage: res.current_page || 1, lastPage: res.last_page || 1, total: res.total || lignes.length });
+      return lignes;
+    } catch (err) { return handleError(err); }
+  };
 
   const updateParametres = async (data) => {
     try {
@@ -1385,7 +1418,7 @@ export const AppProvider = ({ children }) => {
     presences: reunions.flatMap((r) => r.presencesReunion || []),
     postes, mandats,
     banques, caisses: banques, prets, sanctions, typesSanction,
-    fondAssurance, aidesAssurance: fondAssurance, caisseSociale: fondAssurance, caisseJournal,
+    fondAssurance, aidesAssurance: fondAssurance, caisseSociale: fondAssurance, caisseJournal, caisseJournalPagination,
     typesAideSociale, comptesBancaire,
     aidesSociales: fondAssurance,
     auditLog, decisionsAG, reglements, rapprochements,
@@ -1393,7 +1426,7 @@ export const AppProvider = ({ children }) => {
     // que des caisses partagées, pas de sous-comptes individuels par membre, ni de journal
     // de transactions par réunion distinct du journal de caisse) — exposés vides pour éviter
     // les crashs sur Membres.jsx/Rapports.jsx ; à construire côté backend si le besoin est confirmé.
-    comptesBanque: [], operationsBanque: [], seanceTransactions: seanceTransactionsState, transfertsCaisse, chargerJournalCaisse,
+    comptesBanque: [], operationsBanque: [], seanceTransactions: seanceTransactionsState, transfertsCaisse, chargerJournalCaisse, chargerJournalGlobal,
     utilisateurs, planningTours, cyclesTontine, chargerCycles, dashboardStats, repartitionBanques, evolutionCaisse: mock.evolutionCaisse,
     portailMoi, chargerPortailMoi,
     showToast, importerHistorique,
@@ -1406,7 +1439,7 @@ export const AppProvider = ({ children }) => {
     addPointODJ, updatePointODJ, removePointODJ, movePointODJ, chargerRubriquesODJ, creerRubriqueODJ,
     setPresenceMembre, signerPV,
     chargerRotations, tirerAuSort, addEnchere, attribuerTour, annulerEncheres,
-    addBanque, addCaisse: addBanque, doOperation, addMembreBanque, transfererCaisse, addCompteBancaire, chargerTransferts,
+    addBanque, addCaisse: addBanque, doOperation, addMembreBanque, transfererCaisse, approuverTransfertCaisse, addCompteBancaire, chargerTransferts,
     addTypeSanction, updateTypeSanction, addSanction, payerSanction,
     addPret, validerPret, approuverPret, refuserPret, decaisserPret, rembourserPret, distribuerInteretsPret,
     addAide, addAideSociale: addAide, validerAideSociale, verserAideSociale, addTypeAideSociale, membreEligibleAssurance, addCaisseEntry, uploadFichier,

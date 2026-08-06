@@ -20,11 +20,21 @@ class TransfertCaisse extends Model
         'transaction_source_id',
         'transaction_dest_id',
         'motif',
+        'statut',
+        'demande_par',
+        'demande_at',
         'approuve_par',
+        'approuve_at',
+        'refuse_par',
+        'refuse_at',
+        'motif_refus',
     ];
 
     protected $casts = [
-            'montant' => 'decimal:2'
+            'montant' => 'decimal:2',
+            'demande_at' => 'datetime',
+            'approuve_at' => 'datetime',
+            'refuse_at' => 'datetime',
     ];
 
     public function caisseSource()
@@ -54,6 +64,11 @@ class TransfertCaisse extends Model
     public function approbateur()
     {
         return $this->belongsTo(Utilisateur::class, 'approuve_par');
+    }
+
+    public function demandeur()
+    {
+        return $this->belongsTo(Utilisateur::class, 'demande_par');
     }
 
 }
