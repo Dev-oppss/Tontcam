@@ -195,7 +195,7 @@ class PretService
             throw new RuntimeException('Le montant du remboursement doit être positif.');
         }
 
-        return DB::transaction(function () use ($pret, $montant, $tresorier) {
+        return DB::transaction(function () use ($pret, $montant, $tresorier, $encaisserEnCaisse) {
             $restant = $montant;
             $echeancesTouchees = [];
 

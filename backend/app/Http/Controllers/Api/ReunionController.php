@@ -154,7 +154,7 @@ class ReunionController extends Controller
             'presences' => ['required', 'array'],
             'presences.*.membre_id' => ['required', 'uuid'],
             'presences.*.statut' => ['required', 'in:present,absent_excuse,absent,en_retard'],
-            'presences.*.heure_arrivee' => ['nullable'],
+            'presences.*.heure_arrivee' => ['nullable', 'date_format:H:i,H:i:s'],
             'presences.*.motif_absence' => ['nullable', 'string'],
         ]);
 

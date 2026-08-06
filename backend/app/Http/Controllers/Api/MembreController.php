@@ -7,6 +7,7 @@ use App\Services\AccessScopeService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use App\Http\Controllers\Controller;
 
 class MembreController extends Controller
@@ -32,12 +33,13 @@ class MembreController extends Controller
     public function store(Request $request): JsonResponse
     {
         $this->authorize('create', Membre::class);
+        $request->merge(['telephone' => $this->normaliserTelephone($request->input('telephone'))]);
         $data = $request->validate([
             'nom' => ['required', 'string', 'max:100'],
             'prenom' => ['required', 'string', 'max:100'],
             'date_naissance' => ['nullable', 'date'],
             'sexe' => ['nullable', 'in:M,F,A'],
-            'telephone' => ['required', 'string', 'max:30', Rule::unique('membres', 'telephone')->where('association_id', $this->scope->associationId())],
+            'telephone' => ['required', 'string', 'max:30'],
             'email' => ['nullable', 'email'],
             'adresse' => ['nullable', 'string'],
             'ville' => ['nullable', 'string', 'max:100'],
@@ -45,6 +47,8 @@ class MembreController extends Controller
             'date_adhesion' => ['nullable', 'date', 'before_or_equal:today'],
             'matricule' => ['nullable', 'string', 'max:50', Rule::unique('membres', 'matricule')->where('association_id', $this->scope->associationId())],
         ]);
+
+        $this->verifierTelephoneUnique($this->scope->associationId(), $data['telephone']);
 
         $data['association_id'] = $this->scope->associationId();
         $data['statut'] = 'en_attente';
@@ -70,9 +74,11 @@ class MembreController extends Controller
         while (($row = fgetcsv($handle)) !== false) {
             $ligne = array_combine($headers, $row);
             try {
-                if (Membre::where('association_id', $associationId)->where('telephone', $ligne['telephone'])->exists()) {
-                    throw new \RuntimeException("Numéro de téléphone déjà utilisé par un autre membre (RG-MBR-002).");
+                $telephone = $this->normaliserTelephone($ligne['telephone'] ?? null);
+                if (! $telephone) {
+                    throw new \RuntimeException('Numéro de téléphone obligatoire (RG-MBR-002).');
                 }
+                $this->verifierTelephoneUnique($associationId, $telephone);
                 $dateAdhesion = $ligne['date_adhesion'] ?? now()->toDateString();
                 if (\Carbon\Carbon::parse($dateAdhesion)->isFuture()) {
                     throw new \RuntimeException("La date d'adhésion ne peut pas être postérieure à aujourd'hui (RG-MBR-007).");
@@ -81,7 +87,7 @@ class MembreController extends Controller
                     'association_id' => $associationId,
                     'nom' => $ligne['nom'],
                     'prenom' => $ligne['prenom'],
-                    'telephone' => $ligne['telephone'],
+                    'telephone' => $telephone,
                     'email' => $ligne['email'] ?? null,
                     'date_adhesion' => $dateAdhesion,
                     'statut' => 'en_attente',
@@ -160,10 +166,14 @@ class MembreController extends Controller
         $membre = $this->scope->scopeAssociation(Membre::query())->findOrFail($id);
         $this->authorize('update', $membre);
 
+        if ($request->has('telephone')) {
+            $request->merge(['telephone' => $this->normaliserTelephone($request->input('telephone'))]);
+        }
+
         $validated = $request->validate([
             'nom' => ['sometimes', 'string', 'max:100'],
             'prenom' => ['sometimes', 'string', 'max:100'],
-            'telephone' => ['sometimes', 'string', 'max:30', Rule::unique('membres', 'telephone')->where('association_id', $membre->association_id)->ignore($membre->id)],
+            'telephone' => ['sometimes', 'string', 'max:30'],
             'email' => ['sometimes', 'nullable', 'email'],
             'adresse' => ['sometimes', 'nullable', 'string'],
             'profession' => ['sometimes', 'nullable', 'string', 'max:150'],
@@ -173,6 +183,10 @@ class MembreController extends Controller
             'matricule' => ['sometimes', 'nullable', 'string', 'max:50', Rule::unique('membres', 'matricule')->where('association_id', $membre->association_id)->ignore($membre->id)],
         ]);
 
+        if (array_key_exists('telephone', $validated)) {
+            $this->verifierTelephoneUnique($membre->association_id, $validated['telephone'], $membre->id);
+        }
+
         // RG-MBR-005 : le statut EXCLU est irréversible.
         if ($membre->statut === 'exclu' && isset($validated['statut']) && $validated['statut'] !== 'exclu') {
             return response()->json(['message' => "Un membre exclu ne peut pas être réactivé (RG-MBR-005)."], 422);
@@ -181,6 +195,38 @@ class MembreController extends Controller
         $membre->update($validated);
 
         return response()->json($membre);
+    }
+
+    /** Canonicalise +237 6XX XX XX XX, 2376... et 6... dans un seul format. */
+    private function normaliserTelephone(?string $telephone): ?string
+    {
+        $numero = preg_replace('/\D+/', '', trim((string) $telephone));
+        if ($numero === '') {
+            return null;
+        }
+        if (str_starts_with($numero, '00')) {
+            $numero = substr($numero, 2);
+        }
+        if (strlen($numero) === 9 && preg_match('/^[236]/', $numero)) {
+            $numero = '237'.$numero;
+        }
+
+        return '+'.$numero;
+    }
+
+    /** Inclut les anciennes valeurs non normalisées déjà en base. */
+    private function verifierTelephoneUnique(string $associationId, string $telephone, ?string $ignorerId = null): void
+    {
+        $existe = Membre::where('association_id', $associationId)
+            ->when($ignorerId, fn ($query) => $query->where('id', '!=', $ignorerId))
+            ->pluck('telephone')
+            ->contains(fn ($valeur) => $this->normaliserTelephone($valeur) === $telephone);
+
+        if ($existe) {
+            throw ValidationException::withMessages([
+                'telephone' => 'Ce numéro de téléphone est déjà utilisé par un autre membre (RG-MBR-002).',
+            ]);
+        }
     }
 
     public function destroy(string $id): JsonResponse

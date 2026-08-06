@@ -1356,6 +1356,14 @@ export const AppProvider = ({ children }) => {
       return b;
     } catch (err) { return handleError(err); }
   };
+  const addPoste = async (data) => {
+    try {
+      const poste = adapt.posteFromApi(await request('/postes', { method: 'POST', body: data }));
+      setPostes((prev) => [...prev, { ...poste, mandats: [] }]);
+      showToast('Poste créé');
+      return poste;
+    } catch (err) { return handleError(err); }
+  };
   const approuverTransfertCaisse = async (idTransfert) => {
     try {
       const res = await request(`/caisses/transferts/${idTransfert}/approuver`, { method: 'POST' });
@@ -1432,7 +1440,7 @@ export const AppProvider = ({ children }) => {
     showToast, importerHistorique,
     login, logout, changePassword, updateMonProfil, register, updateAssociation, uploadStatutsAssociation, updateParametres,
     addMembre, updateMembre, deleteMembre,
-    addMandat, cloturerMandat,
+    addPoste, addMandat, cloturerMandat,
     logAuditConsultation, addDecisionAG, addReglement, addRapprochement, justifierEcart,
     addTontine, updateTontine, addMembreTontine, removeMembreTontine, updateMembreTontine,
     addReunion, updateReunion, chargerReunion, ouvrirReunion, cloturerReunion, ouvrirSeance, cloturerSeance,

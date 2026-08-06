@@ -27,13 +27,21 @@ class PosteService
 
         return DB::transaction(function () use ($poste, $membre, $dateDebut) {
             // Clôture le mandat en cours sur ce poste, s'il existe
+            $titulairePrecedent = MembrePoste::where('poste_id', $poste->id)
+                ->whereNull('date_fin')->with('membre')->first();
             MembrePoste::where('poste_id', $poste->id)->whereNull('date_fin')->update(['date_fin' => $dateDebut]);
 
-            return MembrePoste::create([
+            $mandat = MembrePoste::create([
                 'membre_id' => $membre->id,
                 'poste_id' => $poste->id,
                 'date_debut' => $dateDebut,
             ]);
+            if ($titulairePrecedent) {
+                $this->synchroniserRoleUtilisateur($titulairePrecedent->membre);
+            }
+            $this->synchroniserRoleUtilisateur($membre);
+
+            return $mandat;
         });
     }
 
@@ -44,6 +52,7 @@ class PosteService
         }
 
         $mandat->update(['date_fin' => $dateFin, 'est_actif' => false]);
+        $this->synchroniserRoleUtilisateur($mandat->membre);
 
         return $mandat;
     }
@@ -64,5 +73,23 @@ class PosteService
         }
 
         return $vacants;
+    }
+
+    /** Applique le rôle lié au mandat actif le plus prioritaire au compte du membre. */
+    private function synchroniserRoleUtilisateur(Membre $membre): void
+    {
+        $utilisateur = $membre->utilisateur;
+        if (! $utilisateur || $utilisateur->role === 'super_admin') {
+            return;
+        }
+
+        $role = MembrePoste::where('membre_id', $membre->id)
+            ->whereNull('date_fin')
+            ->whereHas('poste', fn ($query) => $query->whereNotNull('role_utilisateur'))
+            ->join('postes', 'membre_postes.poste_id', '=', 'postes.id')
+            ->orderBy('postes.niveau_hierarchie')
+            ->value('postes.role_utilisateur');
+
+        $utilisateur->update(['role' => $role ?: 'membre']);
     }
 }

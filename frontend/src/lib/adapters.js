@@ -108,6 +108,7 @@ export const posteFromApi = (p) => !p ? null : ({
   id: p.id,
   libelle: p.libelle,
   code: p.code,
+  roleUtilisateur: p.role_utilisateur || '',
   estBureau: p.est_bureau,
   estObligatoire: p.est_obligatoire,
   mandats: (p.mandats || []).map(mandatFromApi),

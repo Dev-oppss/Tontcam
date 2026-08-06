@@ -380,6 +380,13 @@ class TontineCycleService
             throw new RuntimeException('La meilleure enchère est sous la mise minimale.');
         }
 
+        $pot = (float) ($cycle->montant_collecte_reel > 0
+            ? $cycle->montant_collecte_reel
+            : $cycle->montant_collecte_prevu);
+        if ((float) $meilleure->montant_offre > $pot) {
+            throw new RuntimeException("L'enchère gagnante dépasse le pot disponible ({$pot} FCFA).");
+        }
+
         Encherite::where('cycle_id', $cycle->id)->update(['est_gagnante' => false]);
         $meilleure->update(['est_gagnante' => true]);
         $part = TontinePart::find($meilleure->tontine_part_id);

@@ -122,6 +122,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
   const [referenceVersement, setReferenceVersement] = useState('');
 
   const tontineSelectee = tontines.find(t => t.id === idTontineSelectee);
+  const cycleActuel = cyclesTontine.find(c => c.id === cycleActuelId);
   const typeAttr = tontineSelectee?.typeAttribution;
   const TYPE_ICONS  = { rotation:'', tirage:'', enchere:'' };
   const TYPE_LABELS = { rotation:'Rotation fixe', tirage:'Tirage au sort', enchere:'Enchère' };
@@ -645,7 +646,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
                       .filter(m => !encheresEnAttente.some(e => e.idMembre === m.id))
                       .map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
                   </select>
-                  <input type="number" className="input text-sm" placeholder="Montant (FCFA)"
+                  <input type="number" min="0" max={cycleActuel?.montantCollecteReel || cycleActuel?.montantCollectePrevu || undefined} className="input text-sm" placeholder="Montant (FCFA)"
                     value={nouvelleEnchereMontant} onChange={e => setNouvelleEnchereMontant(e.target.value)}/>
                 </div>
                 <button onClick={handleAjouterEnchere} disabled={!nouvelleEnchereMembre || !nouvelleEnchereMontant}

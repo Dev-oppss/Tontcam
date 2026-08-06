@@ -10,6 +10,7 @@ use App\Services\AccessScopeService;
 use App\Services\PosteService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 
 class PosteController extends Controller
 {
@@ -43,7 +44,8 @@ class PosteController extends Controller
         $this->authorize('create', Poste::class);
         $data = $request->validate([
             'libelle' => ['required', 'string', 'max:150'],
-            'code' => ['required', 'string', 'max:50'],
+            'code' => ['required', 'string', 'max:50', Rule::unique('postes', 'code')->where('association_id', $this->scope->associationId())],
+            'role_utilisateur' => ['nullable', 'in:president,vice_president,tresorier,secretaire,controleur,membre'],
             'niveau_hierarchie' => ['nullable', 'integer'],
             'est_bureau' => ['sometimes', 'boolean'],
             'est_obligatoire' => ['sometimes', 'boolean'],

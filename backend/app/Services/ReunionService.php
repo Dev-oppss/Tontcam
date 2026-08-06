@@ -61,8 +61,11 @@ class ReunionService
         // ne peut ni forcer "en_retard" sans preuve, ni le contourner en omettant l'heure.
         if ($statut === 'present' || $statut === 'en_retard') {
             if ($heureArrivee) {
-                $limite = \Carbon\Carbon::parse($reunion->date_reunion->format('Y-m-d').' '.$reunion->heure_debut)->addMinutes(15);
-                $arrivee = \Carbon\Carbon::parse($reunion->date_reunion->format('Y-m-d').' '.$heureArrivee);
+                $date = $reunion->date_reunion->format('Y-m-d');
+                $debut = substr((string) $reunion->heure_debut, 0, 5);
+                $arriveeSaisie = substr($heureArrivee, 0, 5);
+                $limite = \Carbon\Carbon::createFromFormat('Y-m-d H:i', "{$date} {$debut}")->addMinutes(15);
+                $arrivee = \Carbon\Carbon::createFromFormat('Y-m-d H:i', "{$date} {$arriveeSaisie}");
                 $statut = $arrivee->gt($limite) ? 'en_retard' : 'present';
             } else {
                 $statut = 'present';

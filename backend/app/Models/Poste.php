@@ -15,6 +15,7 @@ class Poste extends Model
         'association_id',
         'libelle',
         'code',
+        'role_utilisateur',
         'niveau_hierarchie',
         'est_bureau',
         'est_obligatoire',

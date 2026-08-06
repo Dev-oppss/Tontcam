@@ -1,12 +1,14 @@
 import { useState } from 'react';
-import { Landmark, UserCheck, History, LogOut } from 'lucide-react';
+import { Landmark, UserCheck, History, LogOut, Plus } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { PageHeader, SectionCard, Table, Badge, Modal, FormField } from '../components/ui/index';
 
 export default function Postes() {
-  const { membres = [], postes = [], mandats = [], addMandat, cloturerMandat, parametres } = useApp();
+  const { membres = [], postes = [], mandats = [], addPoste, addMandat, cloturerMandat, parametres } = useApp();
   const [assignModal, setAssignModal] = useState(null); // { poste }
   const [form, setForm] = useState({ idMembre: '', dateDebut: new Date().toISOString().split('T')[0] });
+  const [posteModal, setPosteModal] = useState(false);
+  const [posteForm, setPosteForm] = useState({ libelle: '', code: '', role_utilisateur: '', niveau_hierarchie: 3, est_bureau: false });
 
   const plafond = Number(parametres?.plafondCumulPostes || 2);
 
@@ -22,6 +24,14 @@ export default function Postes() {
     setAssignModal(null);
     setForm({ idMembre: '', dateDebut: new Date().toISOString().split('T')[0] });
   };
+  const handleCreatePoste = async () => {
+    if (!posteForm.libelle.trim() || !posteForm.code.trim()) return;
+    const poste = await addPoste?.(posteForm);
+    if (poste) {
+      setPosteModal(false);
+      setPosteForm({ libelle: '', code: '', role_utilisateur: '', niveau_hierarchie: 3, est_bureau: false });
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -29,6 +39,9 @@ export default function Postes() {
         title="Organisation & Postes"
         subtitle="Organigramme, mandats et règles de cumul — distinct de la fiche membre"
       />
+      <div className="flex justify-end -mt-3">
+        <button onClick={() => setPosteModal(true)} className="btn-primary"><Plus size={15}/> Créer un poste</button>
+      </div>
 
       <div className="grid sm:grid-cols-3 gap-4">
         {postes.map((poste) => {
@@ -119,6 +132,17 @@ export default function Postes() {
             <input type="date" className="input" value={form.dateDebut} onChange={(e) => setForm((f) => ({ ...f, dateDebut: e.target.value }))} />
           </FormField>
           <p className="text-xs text-ink-600/50 flex items-center gap-1.5"><History size={12} /> L'attribution clôture automatiquement le mandat précédent, s'il existe.</p>
+        </div>
+      </Modal>
+
+      <Modal open={posteModal} onClose={() => setPosteModal(false)} title="Créer un poste"
+        footer={<><button onClick={() => setPosteModal(false)} className="btn-secondary">Annuler</button><button onClick={handleCreatePoste} className="btn-primary">Créer</button></>}>
+        <div className="space-y-4">
+          <FormField label="Intitulé" required><input className="input" value={posteForm.libelle} onChange={e => setPosteForm(f => ({ ...f, libelle: e.target.value }))}/></FormField>
+          <FormField label="Code" required hint="Ex. COMMISSAIRE_AUX_COMPTES"><input className="input uppercase" value={posteForm.code} onChange={e => setPosteForm(f => ({ ...f, code: e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '_') }))}/></FormField>
+          <FormField label="Rôle applicatif / droits"><select className="select" value={posteForm.role_utilisateur} onChange={e => setPosteForm(f => ({ ...f, role_utilisateur: e.target.value }))}><option value="">Aucun droit applicatif</option><option value="president">Président</option><option value="vice_president">Vice-président</option><option value="tresorier">Trésorier</option><option value="secretaire">Secrétaire</option><option value="controleur">Contrôleur</option><option value="membre">Membre</option></select></FormField>
+          <FormField label="Niveau hiérarchique"><input type="number" min="1" className="input" value={posteForm.niveau_hierarchie} onChange={e => setPosteForm(f => ({ ...f, niveau_hierarchie: Number(e.target.value) }))}/></FormField>
+          <p className="text-xs text-ink-600/60">Le rôle choisi est appliqué au compte du titulaire pendant son mandat actif.</p>
         </div>
       </Modal>
     </div>

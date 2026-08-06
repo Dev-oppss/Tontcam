@@ -342,6 +342,12 @@ class CycleTontineController extends Controller
         ]);
 
         $miseMin = (float) ($cycle->tontine->mise_min_enchere ?? 0);
+        $pot = (float) ($cycle->montant_collecte_reel > 0
+            ? $cycle->montant_collecte_reel
+            : $cycle->montant_collecte_prevu);
+        if ($data['montant_offre'] > $pot) {
+            return response()->json(['message' => "L'offre ne peut pas dépasser le pot disponible ({$pot} FCFA)."], 422);
+        }
         if ($miseMin && $data['montant_offre'] < $miseMin) {
             return response()->json(['message' => "L'offre doit être supérieure ou égale à la mise minimale ({$miseMin})."], 422);
         }
