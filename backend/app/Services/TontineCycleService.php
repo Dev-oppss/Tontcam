@@ -199,11 +199,13 @@ class TontineCycleService
             throw new RuntimeException('Impossible de désigner un bénéficiaire pour une réunion annulée.');
         }
 
-        $cyclesDansReunion = CycleTontine::where('tontine_id', $tontine->id)
-            ->where('reunion_id', $reunion->id)
-            ->count();
-        if ($cyclesDansReunion >= (int) $tontine->max_cycles_par_reunion) {
-            throw new RuntimeException('La limite de tours autorisés pour cette réunion et cette tontine est atteinte.');
+        $reunionsPlan = $this->reunionsDuPlan($tontine);
+        $cyclesParReunion = CycleTontine::where('tontine_id', $tontine->id)
+            ->selectRaw('reunion_id, COUNT(*) as total')->groupBy('reunion_id')->pluck('total', 'reunion_id');
+        $cyclesDansReunion = (int) ($cyclesParReunion[$reunion->id] ?? 0);
+        $capacite = $this->capacitePourSeance($tontine, $reunion, $reunionsPlan);
+        if ($cyclesDansReunion >= $capacite) {
+            throw new RuntimeException("Cette séance comporte déjà le nombre de tours prévu ({$capacite}) pour la durée configurée.");
         }
 
         $statutsEligibles = $tontine->mode_attribution === 'rotation'
@@ -224,15 +226,9 @@ class TontineCycleService
             return;
         }
 
-        $prochaineReunionEligible = Reunion::where('association_id', $tontine->association_id)
-            ->where('statut', '!=', 'annulee')
-            ->whereRaw(
-                '(SELECT COUNT(*) FROM cycles_tontine WHERE cycles_tontine.reunion_id = reunions.id AND cycles_tontine.tontine_id = ?) < ?',
-                [$tontine->id, (int) $tontine->max_cycles_par_reunion]
-            )
-            ->orderBy('date_reunion')
-            ->orderBy('numero')
-            ->first();
+        $prochaineReunionEligible = $reunionsPlan->first(fn (Reunion $candidate) =>
+            (int) ($cyclesParReunion[$candidate->id] ?? 0) < $this->capacitePourSeance($tontine, $candidate, $reunionsPlan)
+        );
 
         if (! $prochaineReunionEligible || $prochaineReunionEligible->id !== $reunion->id) {
             if (! $prochaineReunionEligible) {
@@ -245,6 +241,31 @@ class TontineCycleService
 
             throw new RuntimeException("Le tirage doit se faire pour la prochaine séance programmée de la tontine (réunion n°{$prochaineReunionEligible->numero} du {$date}), pas une date choisie librement.");
         }
+    }
+
+    private function reunionsDuPlan(Tontine $tontine)
+    {
+        return Reunion::where('association_id', $tontine->association_id)
+            ->where('statut', '!=', 'annulee')
+            ->when($tontine->date_debut, fn ($query) => $query->whereDate('date_reunion', '>=', $tontine->date_debut))
+            ->orderBy('date_reunion')->orderBy('numero')->get();
+    }
+
+    /** Répartit les tours supplémentaires sur les séances de la durée cible : 14 parts / 12 séances => 1,1,1,1,1,2,...,2. */
+    private function capacitePourSeance(Tontine $tontine, Reunion $reunion, $reunionsPlan): int
+    {
+        $position = $reunionsPlan->search(fn (Reunion $item) => $item->id === $reunion->id);
+        if ($position === false) {
+            return max(1, (int) $tontine->max_cycles_par_reunion);
+        }
+        $position++;
+        $parts = max((int) $tontine->nb_parts_total, $tontine->parts()->count());
+        $duree = max(1, (int) (($tontine->config['duree_seances'] ?? null) ?: $parts));
+        if ($position > $duree) {
+            return 1; // rattrapage si une séance prévue a été annulée ou manquée
+        }
+
+        return max(1, (int) floor($position * $parts / $duree) - (int) floor(($position - 1) * $parts / $duree));
     }
 
     /**

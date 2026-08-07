@@ -54,7 +54,7 @@ function calcDateFin(dateDebut, nbTours, periode) {
   return d.toISOString().split('T')[0];
 }
 
-const EMPTY_FORM = { nom:'', cotisation:'', idCaisse:'', periode:'mensuel', nbTours:12, maxCyclesParReunion:1, typeAttribution:'rotation', dateDebut:'', dateFin:'' };
+const EMPTY_FORM = { nom:'', cotisation:'', idCaisse:'', periode:'mensuel', nbTours:12, dureeSeances:12, typeAttribution:'rotation', dateDebut:'', dateFin:'' };
 const EMPTY_MT   = { idMembre:'', nombreParts:'1', dateAdhesion: new Date().toISOString().split('T')[0], idAvaliste:'' };
 
 export default function Tontines() {
@@ -121,7 +121,7 @@ export default function Tontines() {
   );
   const caissesMap = Object.fromEntries((caisses || []).map((c) => [c.id, c]));
   const caissesTontine = (caisses || []).filter((c) =>
-    ['tontine', 'autre'].includes(String(c?.type || '').toLowerCase()) && c.statut !== 'inactive'
+    String(c?.type || '').toLowerCase() === 'tontine' && c.statut !== 'inactive'
   );
   const aucuneCaisseDisponible = (caisses || []).length > 0 && caissesTontine.length === 0;
 
@@ -139,7 +139,7 @@ export default function Tontines() {
     if (!form.nom.trim() || !form.idCaisse) return;
     if (!form.cotisation || Number(form.cotisation) <= 0) return;
     if (form.typeAttribution === 'enchere' && (!form.miseMinEnchere || Number(form.miseMinEnchere) <= 0)) return;
-    const dateFin = form.dateFin || calcDateFin(form.dateDebut, form.nbTours, form.periode);
+    const dateFin = form.dateFin || calcDateFin(form.dateDebut, form.dureeSeances, form.periode);
     addTontine({ ...form, cotisation: Number(form.cotisation), nbTours: Number(form.nbTours), dateFin });
     setShowAdd(false); setForm(EMPTY_FORM);
   };
@@ -147,7 +147,7 @@ export default function Tontines() {
   const handleEdit = () => {
     if (!form.nom.trim() || !form.idCaisse) return;
     if (!form.cotisation || Number(form.cotisation) <= 0) return;
-    updateTontine({ ...showEdit, ...form, cotisation: Number(form.cotisation), nbTours: Number(form.nbTours) });
+    updateTontine({ ...showEdit, ...form, cotisation: Number(form.cotisation), nbTours: Number(form.nbTours), dureeSeances: Number(form.dureeSeances) });
     setShowEdit(null);
   };
 
@@ -320,7 +320,7 @@ export default function Tontines() {
                     </div>
                   </div>
                 </div>
-                <button onClick={() => { setShowEdit(t); setForm({ nom:t.nom, cotisation:t.cotisation, idCaisse:t.idCaisse||'', periode:t.periode, nbTours:t.nbTours, maxCyclesParReunion:t.maxCyclesParReunion||1, typeAttribution:t.typeAttribution, dateDebut:t.dateDebut||''  , dateFin:t.dateFin||'' }); }}
+                <button onClick={() => { setShowEdit(t); setForm({ nom:t.nom, cotisation:t.cotisation, idCaisse:t.idCaisse||'', periode:t.periode, nbTours:t.nbTours, dureeSeances:t.dureeSeances||t.nbTours, typeAttribution:t.typeAttribution, dateDebut:t.dateDebut||'', dateFin:t.dateFin||'' }); }}
                   className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg">
                   <Pencil size={13}/>
                 </button>
@@ -881,14 +881,14 @@ export default function Tontines() {
           <div className="p-3 bg-gray-50 rounded-xl space-y-3">
             <p className="text-xs font-bold text-gray-500 uppercase">Paramètres</p>
             <div className="grid grid-cols-2 gap-3">
-              <FormField label="Nombre de tours"><F k="nbTours" type="number" min="1" placeholder="12"/></FormField>
-              <FormField label="Tours maximum / séance" hint="1 conserve le fonctionnement classique"><F k="maxCyclesParReunion" type="number" min="1" max="20"/></FormField>
+              <FormField label="Nombre de parts prévues" hint="1 part = 1 tour de gain"><F k="nbTours" type="number" min="1" placeholder="12"/></FormField>
+              <FormField label="Durée cible (séances)"><F k="dureeSeances" type="number" min="1" placeholder="12"/></FormField>
               <FormField label="Date de démarrage"><F k="dateDebut" type="date"/></FormField>
             </div>
-            {form.dateDebut&&form.nbTours&&(
+            {form.dateDebut&&form.dureeSeances&&(
               <div className="p-2.5 bg-primary-50 rounded-xl flex justify-between text-xs">
                 <span className="text-primary-700"> Fin estimée :</span>
-                <span className="font-bold text-primary-800">{fmtDate(calcDateFin(form.dateDebut,form.nbTours,form.periode))}</span>
+                <span className="font-bold text-primary-800">{fmtDate(calcDateFin(form.dateDebut,form.dureeSeances,form.periode))}</span>
               </div>
             )}
           </div>
@@ -897,7 +897,8 @@ export default function Tontines() {
               <p className="text-xs font-bold text-primary-700 mb-2"> Aperçu</p>
               <div className="grid grid-cols-2 gap-2 text-xs">
                 <div className="bg-white rounded-lg p-2 flex justify-between"><span className="text-gray-500">Pot (10 parts)</span><span className="font-bold text-primary-700">{fmt(Number(form.cotisation)*10)}</span></div>
-                <div className="bg-white rounded-lg p-2 flex justify-between"><span className="text-gray-500">Durée</span><span className="font-bold text-gray-700">{form.nbTours} {PERIODE_DUREE[form.periode]}</span></div>
+                <div className="bg-white rounded-lg p-2 flex justify-between"><span className="text-gray-500">Plan</span><span className="font-bold text-gray-700">{form.nbTours} tours / {form.dureeSeances} séances</span></div>
+                <div className="bg-white rounded-lg p-2 flex justify-between col-span-2"><span className="text-gray-500">Maximum calculé</span><span className="font-bold text-gray-700">{Math.ceil(Number(form.nbTours || 1) / Number(form.dureeSeances || 1))} tour(s) / séance</span></div>
               </div>
             </div>
           )}
@@ -923,8 +924,8 @@ export default function Tontines() {
             </S>
           </FormField>
           <div className="grid grid-cols-2 gap-3">
-            <FormField label="Nb tours"><F k="nbTours" type="number" min="1"/></FormField>
-            <FormField label="Tours maximum / séance"><F k="maxCyclesParReunion" type="number" min="1" max="20"/></FormField>
+            <FormField label="Nombre de parts / tours" hint="Calculé sur les parts de la tontine"><F k="nbTours" type="number" min="1"/></FormField>
+            <FormField label="Durée cible (séances)"><F k="dureeSeances" type="number" min="1"/></FormField>
             <FormField label="Type" hint={modeAttributionVerrouillee ? "Verrouillé : au moins un tour a déjà démarré." : undefined}><S k="typeAttribution" disabled={modeAttributionVerrouillee}><option value="rotation"> Rotation</option><option value="tirage"> Tirage</option><option value="enchere"> Enchère</option></S></FormField>
           </div>
           {form.typeAttribution === 'enchere' && (
