@@ -85,7 +85,7 @@ class SeanceTransactionController extends Controller
                 if (!$estRemboursementPret && !empty($data['caisse_id'])) {
                     $caisse = $this->scope->scopeAssociation(Caisse::query())->findOrFail($data['caisse_id']);
                     $this->authorize('update', $caisse);
-                    $libelle = $data['libelle'] ?: "Séance du {$reunion->date_reunion} — {$data['type']}";
+                    $libelle = ($data['libelle'] ?? null) ?: "Séance du {$reunion->date_reunion} — {$data['type']}";
                     $sens = in_array($data['type'], self::TYPES_SORTIE, true) ? 'sortie' : 'entree';
 
                     $this->caisseService->{$sens}($caisse, (float) $data['montant'], $libelle, [
@@ -110,7 +110,7 @@ class SeanceTransactionController extends Controller
         }
     }
 
-    public function destroy(string $reunionId, string $id): JsonResponse
+    public function destroy(Request $request, string $reunionId, string $id): JsonResponse
     {
         $seance = SeanceTransaction::where('reunion_id', $reunionId)
             ->whereHas('reunion', fn ($q) => $this->scope->scopeAssociation($q))
