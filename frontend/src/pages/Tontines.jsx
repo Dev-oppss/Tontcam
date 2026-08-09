@@ -1,6 +1,6 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import {
-  Plus, RefreshCw, Calendar, Users, UserPlus, Trash2, Pencil,
+  Plus, Calendar, Users, UserPlus, Trash2, Pencil,
   BadgeCheck, TrendingUp, Info, Trophy, Shuffle, ChevronRight,
   CheckCircle, Clock, Banknote, Star, X,
   ListOrdered, Gavel, Dices, FileText,
@@ -8,7 +8,8 @@ import {
 import { fmt, fmtDate, typeAttrLabel, periodeLabel } from '../data/mockData';
 import { useApp } from '../context/AppContext';
 import { PageHeader, Badge, Modal, FormField } from '../components/ui/index';
-import { NavLink } from 'react-router-dom';
+import { ModePaiementFields, isModePaiementValid } from '../components/ui/ModePaiement';
+import { NavLink, useSearchParams } from 'react-router-dom';
 import clsx from 'clsx';
 
 const TYPE_CONFIG = {
@@ -53,19 +54,47 @@ function calcDateFin(dateDebut, nbTours, periode) {
   return d.toISOString().split('T')[0];
 }
 
-const EMPTY_FORM = { nom:'', cotisation:'', periode:'mensuel', nbTours:12, typeAttribution:'rotation', dateDebut:'', dateFin:'' };
-const EMPTY_MT   = { idMembre:'', nombreParts:'1', dateAdhesion: new Date().toISOString().split('T')[0] };
+const EMPTY_FORM = { nom:'', cotisation:'', idCaisse:'', periode:'mensuel', nbTours:12, dureeSeances:12, typeAttribution:'rotation', dateDebut:'', dateFin:'' };
+const EMPTY_MT   = { idMembre:'', nombreParts:'1', dateAdhesion: new Date().toISOString().split('T')[0], idAvaliste:'' };
 
 export default function Tontines() {
   const {
-    tontines, addTontine, updateTontine,
-    membres, membresParTontine, addMembreTontine, updateMembreTontine, removeMembreTontine,
-    planningTours, addTourPlanning, marquerTourEncaisse, retirerTourPlanning, tirerAuSort,
+    tontines, caisses, addTontine, updateTontine,
+    membres, membresParTontine, addMembreTontine, removeMembreTontine,
+    planningTours, addTourPlanning, marquerTourEncaisse, retirerTourPlanning, chargerPlanningTours,
     encheres, rotations, attribuerTour,
-    genererBulletin, ouvrirBulletinPdf,
+    genererBulletin, ouvrirBulletinPdf, cyclesTontine, chargerCycles,
+    reunions,
+    enregistrerBeneficiaireSeance, showToast,
   } = useApp();
 
-  const [activeTab,       setActiveTab]       = useState('toutes');
+  // Le planning des tours n'est pas inclus dans le chargement initial global de
+  // l'application : sans cet appel, `planningTours` reste vide après chaque
+  // rechargement de page et l'ordre de rotation semblait "disparaître".
+  useEffect(() => {
+    tontines.filter(t => t.typeAttribution === 'rotation').forEach(t => chargerPlanningTours(t.id));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tontines.map(t => t.id).join(',')]);
+
+  const [searchParams] = useSearchParams();
+  const initialTab = ['toutes', 'rotation', 'tirage', 'enchere'].includes(searchParams.get('type'))
+    ? searchParams.get('type')
+    : 'toutes';
+  const [activeTab,       setActiveTab]       = useState(initialTab);
+
+  // useState(initialTab) ne lit l'URL qu'au tout premier montage. Comme /tontines?type=rotation
+  // et /tontines?type=enchere sont la MÊME route (React Router ne démonte pas le composant),
+  // cliquer sur un autre type de tontine dans la sidebar après le premier clic ne changeait
+  // jamais activeTab : le filtre restait bloqué sur sa valeur initiale.
+  // Le lien "Tontines actives" pointe vers /tontines SANS paramètre ?type= du tout : il faut
+  // traiter cette absence de paramètre comme 'toutes', sinon revenir dessus après avoir cliqué
+  // un type ne fait plus rien non plus (le filtre reste bloqué sur le dernier type choisi).
+  useEffect(() => {
+    const type = searchParams.get('type');
+    const cible = ['rotation', 'tirage', 'enchere'].includes(type) ? type : 'toutes';
+    setActiveTab(cible);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams.get('type')]);
   const [showAdd,         setShowAdd]         = useState(false);
   const [showEdit,        setShowEdit]        = useState(null);
   const [showMembres,     setShowMembres]     = useState(null);
@@ -82,65 +111,139 @@ export default function Tontines() {
   const [rankingDateBase, setRankingDateBase] = useState('');
   const [dragIdx,         setDragIdx]         = useState(null);
   const [showBulletin,    setShowBulletin]    = useState(null);
-  const [bulletinForm,    setBulletinForm]    = useState({ idMembre:'', numeroCycle:1, retenueLibelle:'', retenueMontant:0 });
+  const [bulletinForm,    setBulletinForm]    = useState({ idCycle:'' });
+  const [encaisseModal,   setEncaisseModal]   = useState(null); // tour planning à encaisser
+  const [encModePaiement, setEncModePaiement] = useState('especes');
+  const [encDetails,      setEncDetails]      = useState('');
 
   const filteredTontines = tontines.filter(t =>
     activeTab === 'toutes' ? true : t.typeAttribution === activeTab
   );
+  const caissesMap = Object.fromEntries((caisses || []).map((c) => [c.id, c]));
+  const caissesTontine = (caisses || []).filter((c) =>
+    String(c?.type || '').toLowerCase() === 'tontine' && c.statut !== 'inactive'
+  );
+  const aucuneCaisseDisponible = (caisses || []).length > 0 && caissesTontine.length === 0;
 
   const getTourPlanning   = (id) => (planningTours || []).filter(p => p.idTontine === id).sort((a,b) => a.numeroTour - b.numeroTour);
-  const getMembresActifs  = (id) => membresParTontine.filter(mt => mt.idTontine === id && mt.statut === 'actif');
+  const potTontine = (t) => Number(t?.cotisation || 0) * Number(t?.totalParts || 0);
+  const getMembresActifs  = (id) => {
+    const vus = new Set();
+    return membresParTontine.filter(mt => mt.idTontine === id && mt.statut === 'actif' && !vus.has(mt.idMembre) && vus.add(mt.idMembre));
+  };
   const getNbEncaisses    = (id) => (planningTours || []).filter(p => p.idTontine === id && p.statut === 'encaisse').length;
   const getProchainTour   = (id, nb) => Math.min(getNbEncaisses(id) + 1, nb);
+  const modeAttributionVerrouillee = !!showEdit && (cyclesTontine || []).some((cycle) => cycle.idTontine === showEdit.id);
 
   const handleAdd = () => {
-    if (!form.nom.trim() || !form.cotisation) return;
-    const dateFin = form.dateFin || calcDateFin(form.dateDebut, form.nbTours, form.periode);
+    if (!form.nom.trim() || !form.idCaisse) return;
+    if (!form.cotisation || Number(form.cotisation) <= 0) return;
+    if (form.typeAttribution === 'enchere' && (!form.miseMinEnchere || Number(form.miseMinEnchere) <= 0)) return;
+    const dateFin = form.dateFin || calcDateFin(form.dateDebut, form.dureeSeances, form.periode);
     addTontine({ ...form, cotisation: Number(form.cotisation), nbTours: Number(form.nbTours), dateFin });
     setShowAdd(false); setForm(EMPTY_FORM);
   };
 
   const handleEdit = () => {
-    if (!form.nom.trim() || !form.cotisation) return;
-    updateTontine({ ...showEdit, ...form, cotisation: Number(form.cotisation), nbTours: Number(form.nbTours) });
+    if (!form.nom.trim() || !form.idCaisse) return;
+    if (!form.cotisation || Number(form.cotisation) <= 0) return;
+    updateTontine({ ...showEdit, ...form, cotisation: Number(form.cotisation), nbTours: Number(form.nbTours), dureeSeances: Number(form.dureeSeances) });
     setShowEdit(null);
   };
 
-  const handleAddMembre = () => {
+  const nextNumeroPart = (idTontine) => {
+    const existants = membresParTontine.filter(mt => mt.idTontine === idTontine);
+    return existants.length ? Math.max(...existants.map(mt => mt.numeroPart || 0)) + 1 : 1;
+  };
+
+  const handleAddMembre = async () => {
     if (!formMT.idMembre || !showMembres) return;
-    addMembreTontine({ idTontine: showMembres.id, idMembre: Number(formMT.idMembre), nombreParts: Number(formMT.nombreParts) || 1, dateAdhesion: formMT.dateAdhesion });
+    const idTontine = showMembres.id;
+    const nb = Math.max(1, Number(formMT.nombreParts) || 1);
+    let numero = nextNumeroPart(idTontine);
+    // Chaque part est un enregistrement indépendant avec son propre numéro
+    // (RG-TON — parts multiples, cahier des charges 4.3) : la contrainte d'unicité
+    // côté serveur exige un numero_part distinct par part, jamais envoyé auparavant.
+    try {
+      for (let i = 0; i < nb; i += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        await addMembreTontine({
+          idTontine, idMembre: formMT.idMembre, numeroPart: numero,
+          dateAdhesion: formMT.dateAdhesion, idAvaliste: formMT.idAvaliste || null,
+        });
+        numero += 1;
+      }
+    } catch {
+      return; // le toast d'erreur est déjà affiché par handleError
+    }
     setShowAddMembre(false); setFormMT(EMPTY_MT);
   };
 
   const handleAddTour = (idTontine, nbTours) => {
     if (!formTour.idMembre) return;
     const t = tontines.find(x => x.id === idTontine);
-    const m = membres.find(x => x.id === Number(formTour.idMembre));
+    const m = membres.find(x => x.id === formTour.idMembre);
     const numeroTour = getProchainTour(idTontine, nbTours);
     addTourPlanning({
-      idTontine, idMembre: Number(formTour.idMembre),
+      idTontine, idMembre: formTour.idMembre,
       nomMembre: `${m?.nom} ${m?.prenom}`, numeroTour,
       datePrevue: formTour.datePrevue, note: formTour.note,
-      montantPot: t ? t.cotisation * t.totalParts : 0,
+      montantPot: t ? potTontine(t) : 0,
     });
     setFormTour({ idMembre:'', datePrevue:'', note:'' }); setAddTourMode(false);
   };
 
-  const handleTirage = (idTontine, nbTours) => {
+  const handleTirage = async (idTontine, nbTours) => {
     const numeroTour = getProchainTour(idTontine, nbTours);
-    const result = tirerAuSort(idTontine, numeroTour, formTour.datePrevue);
-    if (result) setShowTirage(result);
+    const reunionOuverte = reunions.find(r => r.statutReunion === 'en_cours');
+    if (!reunionOuverte) { showToast?.('Ouvrez une réunion avant de désigner un bénéficiaire.', 'error'); return; }
+    const t = tontines.find(x => x.id === idTontine);
+    const cycle = await enregistrerBeneficiaireSeance(reunionOuverte.id, {
+      idTontine, nomTontine: t?.nom, typeAttribution: 'tirage', numeroTour, modeDesignation: 'tirage_au_sort',
+    });
+    if (cycle?.gagnant?.membre) {
+      setShowTirage({
+        numeroTour,
+        nomMembre: `${cycle.gagnant.membre.nom} ${cycle.gagnant.membre.prenom}`,
+        montantPot: Number(cycle.bulletin?.montant_brut || 0),
+      });
+    }
   };
 
-  const membresDeTontine  = (id) => membresParTontine.filter(mt => mt.idTontine === id).map(mt => ({ ...mt, ...membres.find(m => m.id === mt.idMembre) }));
+  // Chaque `mt` est une part (une ligne = une part côté serveur). On y ajoute les
+  // champs du membre SANS écraser l'id de la part (bug corrigé : `{...mt, ...membre}`
+  // remplaçait `mt.id` par l'id du membre, ce qui corrompait `partIds` utilisé pour
+  // la suppression et faisait apparaître des clés React dupliquées).
+  const partsDeTontine    = (id) => membresParTontine.filter(mt => mt.idTontine === id).map(mt => ({ ...membres.find(m => m.id === mt.idMembre), ...mt }));
+  // Le backend modélise chaque part individuellement (une ligne = une part) ; on
+  // regroupe ici par membre pour l'affichage (CDC 4.3 — parts multiples).
+  const membresDeTontine  = (id) => {
+    const parts = partsDeTontine(id);
+    const groupes = new Map();
+    const vues = new Set(); // garde-fou anti-doublon sur l'id réel de la part
+    parts.forEach((p) => {
+      if (vues.has(p.id)) return;
+      vues.add(p.id);
+      if (!groupes.has(p.idMembre)) {
+        groupes.set(p.idMembre, { ...p, partIds: [p.id], nombreParts: 1 });
+      } else {
+        const g = groupes.get(p.idMembre);
+        g.partIds.push(p.id);
+        g.nombreParts += 1;
+        if (p.statut === 'actif') g.statut = 'actif';
+      }
+    });
+    return Array.from(groupes.values());
+  };
   const membresDisponibles = (id) => membres.filter(m => !membresParTontine.some(mt => mt.idTontine === id && mt.idMembre === m.id));
   const getEncheresDuTour = (id) => {
     const rotation = rotations.find(r => r.idTontine === id && !r.dateAttribution);
     return rotation ? { rotation, bids: encheres.filter(e => e.idRotation === rotation.id) } : null;
   };
 
-  const F = ({ k, ...p }) => <input className="input" value={form[k]||''} onChange={e=>setForm(f=>({...f,[k]:e.target.value}))} {...p}/>;
-  const S = ({ k, children }) => <select className="select" value={form[k]||''} onChange={e=>setForm(f=>({...f,[k]:e.target.value}))}>{children}</select>;
+  const formRef = useRef(form); formRef.current = form;
+  const F = useRef(({ k, ...p }) => <input className="input" value={formRef.current[k]||''} onChange={e=>setForm(f=>({...f,[k]:e.target.value}))} {...p}/>).current;
+  const S = useRef(({ k, children, ...p }) => <select className="select" value={formRef.current[k]||''} onChange={e=>setForm(f=>({...f,[k]:e.target.value}))} {...p}>{children}</select>).current;
 
   const tabs = [
     { id:'toutes',   label:'Toutes',       count: tontines.length },
@@ -154,16 +257,16 @@ export default function Tontines() {
       <PageHeader
         title="Tontines"
         subtitle={`${tontines.filter(t=>t.statut==='active').length} tontine(s) active(s)`}
-        action={<button onClick={() => { setForm(EMPTY_FORM); setShowAdd(true); }} className="btn-primary"><Plus size={15}/> Nouvelle tontine</button>}
+        action={<button onClick={() => { setForm({ ...EMPTY_FORM, typeAttribution: activeTab !== 'toutes' ? activeTab : 'rotation' }); setShowAdd(true); }} className="btn-primary"><Plus size={15}/> Nouvelle tontine</button>}
       />
 
       {/* Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
-          { l:'Pot total cumulé',  v: fmt(tontines.reduce((s,t)=>s+t.cotisation*t.totalParts,0)), c:'text-primary-600', bg:'bg-primary-50', icon:'' },
-          { l:'Membres inscrits',  v: membresParTontine.filter(mt=>mt.statut==='actif').length,   c:'text-blue-600',   bg:'bg-blue-50',   icon:'' },
+          { l:'Pot total cumulé',  v: fmt(tontines.reduce((s,t)=>s+potTontine(t),0)), c:'text-primary-600', bg:'bg-primary-50', icon:'' },
+          { l:'Membres inscrits',  v: new Set(membresParTontine.filter(mt=>mt.statut==='actif').map(mt=>mt.idMembre)).size,   c:'text-blue-600',   bg:'bg-blue-50',   icon:'' },
           { l:'Tours encaissés',   v: (planningTours||[]).filter(p=>p.statut==='encaisse').length, c:'text-amber-600',  bg:'bg-amber-50',  icon:'' },
-          { l:'Parts totales',     v: tontines.reduce((s,t)=>s+t.totalParts,0),                    c:'text-purple-600', bg:'bg-purple-50', icon:'' },
+          { l:'Parts totales',     v: tontines.reduce((s,t)=>s+Number(t.totalParts||0),0),                    c:'text-purple-600', bg:'bg-purple-50', icon:'' },
         ].map(s => (
           <div key={s.l} className={`p-3 rounded-2xl ${s.bg} text-center border-0`}>
             <div className="text-2xl mb-1">{s.icon}</div>
@@ -199,7 +302,7 @@ export default function Tontines() {
           const encaisses = getNbEncaisses(t.id);
           const prochain  = getProchainTour(t.id, t.nbTours);
           const progress  = Math.round((encaisses / Math.max(t.nbTours, 1)) * 100);
-          const potTour   = t.cotisation * t.totalParts;
+          const potTour   = potTontine(t);
           const prochainTour = planning.find(p => p.statut === 'planifie');
           const enCoursEnch  = getEncheresDuTour(t.id);
 
@@ -213,10 +316,11 @@ export default function Tontines() {
                     <div className="flex items-center gap-2 mt-0.5">
                       <Badge variant={cfg.badge}>{cfg.label}</Badge>
                       <span className="text-xs text-gray-400">{periodeLabel[t.periode]}</span>
+                      <span className="text-xs text-gray-400">· {caissesMap[t.idCaisse]?.nom || 'Caisse non liée'}</span>
                     </div>
                   </div>
                 </div>
-                <button onClick={() => { setShowEdit(t); setForm({ nom:t.nom, cotisation:t.cotisation, periode:t.periode, nbTours:t.nbTours, typeAttribution:t.typeAttribution, dateDebut:t.dateDebut||''  , dateFin:t.dateFin||'' }); }}
+                <button onClick={() => { setShowEdit(t); setForm({ nom:t.nom, cotisation:t.cotisation, idCaisse:t.idCaisse||'', periode:t.periode, nbTours:t.nbTours, dureeSeances:t.dureeSeances||t.nbTours, typeAttribution:t.typeAttribution, dateDebut:t.dateDebut||'', dateFin:t.dateFin||'' }); }}
                   className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg">
                   <Pencil size={13}/>
                 </button>
@@ -280,14 +384,14 @@ export default function Tontines() {
                 <button onClick={() => { setShowMembres(t); setShowAddMembre(false); }} className="btn-secondary text-xs py-1.5 justify-center">
                   <Users size={12}/> Membres ({nbActifs})
                 </button>
-                <button onClick={() => { setShowBenef(t); setAddTourMode(false); setFormTour({ idMembre:'', datePrevue:'', note:'' }); }}
+                <button onClick={() => { setShowBenef(t); setAddTourMode(false); setFormTour({ idMembre:'', datePrevue:'', note:'' }); chargerPlanningTours(t.id); }}
                   className="btn-secondary text-xs py-1.5 justify-center">
                   <cfg.ActionIcon size={12}/> Tours
                 </button>
                 <NavLink to={t.typeAttribution === 'enchere' ? '/encheres' : '/rotations'} className="btn-secondary text-xs py-1.5 justify-center">
                   <Trophy size={12}/> Historique
                 </NavLink>
-                <button onClick={() => { setShowBulletin(t); setBulletinForm({ idMembre:'', numeroCycle:prochain, retenueLibelle:'', retenueMontant:0 }); }} className="btn-secondary text-xs py-1.5 justify-center">
+                <button onClick={() => { setShowBulletin(t); setBulletinForm({ idCycle:'' }); chargerCycles(t.id); }} className="btn-secondary text-xs py-1.5 justify-center">
                   <FileText size={12}/> Bulletin
                 </button>
               </div>
@@ -311,8 +415,10 @@ export default function Tontines() {
         const planning  = getTourPlanning(t.id);
         const encaisses = getNbEncaisses(t.id);
         const prochain  = getProchainTour(t.id, t.nbTours);
+        const partsActives = partsDeTontine(t.id).filter(p => p.statut === 'actif' || p.statut === 'disponible' || p.statut === 'reservee');
         const membresActifs = getMembresActifs(t.id).map(mt=>{const m=membres.find(x=>x.id===mt.idMembre);return m?{...m,parts:mt.nombreParts}:null;}).filter(Boolean);
         const dejaBenef = new Set(planning.filter(p=>p.statut!=='saute').map(p=>p.idMembre));
+        const dejaBenefPart = new Set(planning.filter(p=>p.statut!=='saute').map(p=>p.idPart));
         const enCoursEnch = getEncheresDuTour(t.id);
 
         return (
@@ -322,6 +428,9 @@ export default function Tontines() {
               <div className={`p-3 rounded-xl border text-sm ${cfg.bg} ${cfg.border}`}>
                 <p className="font-bold text-gray-800 mb-1">{cfg.icon} Mode : {cfg.label}</p>
                 <p className="text-xs text-gray-600">{cfg.tip}</p>
+              </div>
+              <div className="p-2.5 rounded-xl bg-indigo-50 border border-indigo-100 text-xs text-indigo-700">
+                Cet écran planifie l'ordre de passage. La collecte des cotisations et la désignation du gagnant se font depuis <strong>Réunions</strong>, dans l'onglet « Feuille Cotisation » d'une séance ouverte.
               </div>
 
                 <div className="grid grid-cols-3 gap-2 text-center">
@@ -338,16 +447,13 @@ export default function Tontines() {
                       <div className={clsx('w-8 h-8 rounded-lg flex items-center justify-center text-sm font-bold shrink-0',
                         p.statut==='encaisse'?'bg-primary-500 text-white':p.statut==='planifie'?'bg-blue-500 text-white':'bg-gray-300 text-gray-600')}>{p.numeroTour}</div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-gray-800">{p.nomMembre}</p>
+                        <p className="text-sm font-semibold text-gray-800">{p.nomMembre}{p.numeroPart ? ` · part n°${p.numeroPart}` : ''}</p>
                         <p className="text-xs text-gray-400">{p.datePrevue?fmtDate(p.datePrevue):'Date non définie'}{p.note&&` · ${p.note}`}</p>
                       </div>
-                      <span className="text-xs font-bold text-gray-700 shrink-0">{fmt(p.montantPot)}</span>
+                      <span className="text-xs font-bold text-gray-700 shrink-0">{fmt(p.statut === 'encaisse' ? p.montantPot : potTontine(t))}</span>
                       <div className="flex flex-col gap-0.5 shrink-0">
-                        {p.statut==='planifie'&&(
-                          <button onClick={()=>marquerTourEncaisse(p.id,'','')} title="Marquer encaissé" className="p-1 hover:bg-primary-100 rounded text-primary-600"><CheckCircle size={13}/></button>
-                        )}
                         {p.statut!=='encaisse'&&(
-                          <button onClick={()=>retirerTourPlanning(p.id)} title="Retirer" className="p-1 hover:bg-red-100 rounded text-red-400"><X size={12}/></button>
+                          <button onClick={()=>retirerTourPlanning(t.id, p.id)} title="Retirer" className="p-1 hover:bg-red-100 rounded text-red-400"><X size={12}/></button>
                         )}
                       </div>
                     </div>
@@ -362,16 +468,20 @@ export default function Tontines() {
                     <p className="text-xs font-bold text-gray-600 flex items-center gap-1.5"><ListOrdered size={13}/> Ordre de rotation</p>
                     {encaisses < t.nbTours && !rankingMode && (
                       <button onClick={() => {
-                        // Initialiser le ranking : membres déjà planifiés en tête (dans l'ordre), puis les non planifiés
-                        const planifies = planning.filter(p => p.statut !== 'saute').sort((a,b) => a.numeroTour - b.numeroTour);
-                        const idsPlanifies = new Set(planifies.map(p => p.idMembre));
-                        const nonPlanifies = membresActifs.filter(m => !idsPlanifies.has(m.id));
+                        // Initialiser le ranking par PART (RG-TON : chaque part a son propre
+                        // cycle de gain — un membre avec plusieurs parts occupe plusieurs
+                        // positions distinctes, jamais regroupées sur un seul tour).
+                        const planifies = planning.filter(p => p.statut !== 'saute' && p.idPart).sort((a,b) => a.numeroTour - b.numeroTour);
+                        const idsPartsPlanifiees = new Set(planifies.map(p => p.idPart));
+                        const partsNonPlanifiees = partsActives.filter(p => !idsPartsPlanifiees.has(p.id));
+
                         const initOrder = [
                           ...planifies.map(p => {
                             const m = membres.find(x => x.id === p.idMembre);
-                            return { idMembre: p.idMembre, nom: `${m?.nom||''} ${m?.prenom||''}`.trim(), parts: m ? membresParTontine.find(mt=>mt.idMembre===m.id&&mt.idTontine===t.id)?.nombreParts||1 : 1, encaisse: p.statut==='encaisse', tourNum: p.numeroTour };
+                            const part = partsActives.find(x => x.id === p.idPart);
+                            return { idPart: p.idPart, idMembre: p.idMembre, nom: `${m?.nom||p.nomMembre||''} ${m?.prenom||''}`.trim(), numeroPart: part?.numeroPart, encaisse: p.statut==='encaisse', tourNum: p.numeroTour };
                           }),
-                          ...nonPlanifies.map(m => ({ idMembre: m.id, nom: `${m.nom} ${m.prenom}`, parts: m.parts||1, encaisse: false, tourNum: null }))
+                          ...partsNonPlanifiees.map(p => ({ idPart: p.id, idMembre: p.idMembre, nom: `${p.nom||''} ${p.prenom||''}`.trim(), numeroPart: p.numeroPart, encaisse: false, tourNum: null }))
                         ];
                         setRankingOrder(initOrder);
                         setRankingMode(true);
@@ -399,7 +509,7 @@ export default function Tontines() {
 
                       <div className="space-y-1.5">
                         {rankingOrder.map((item, idx) => (
-                          <div key={item.idMembre}
+                          <div key={item.idPart}
                             draggable={!item.encaisse}
                             onDragStart={() => setDragIdx(idx)}
                             onDragOver={e => { e.preventDefault(); }}
@@ -427,7 +537,7 @@ export default function Tontines() {
                                 {item.nom}
                                 {item.encaisse && <span className="ml-2 text-xs text-primary-600 font-normal">OK Encaissé</span>}
                               </p>
-                              <p className="text-xs text-gray-400">{item.parts} part{item.parts>1?'s':''} · {fmt(t.cotisation * item.parts)} / tour</p>
+                              <p className="text-xs text-gray-400">Part n°{item.numeroPart ?? '?'} · {fmt(t.cotisation)} / tour</p>
                             </div>
                             {/* Flèches déplacement */}
                             {!item.encaisse && (
@@ -461,11 +571,10 @@ export default function Tontines() {
 
                       <button onClick={() => {
                         // Enregistrer tous les tours non encore planifiés dans l'ordre défini
-                        const dejaEncaisses = new Set(planning.filter(p=>p.statut==='encaisse').map(p=>p.idMembre));
-                        const dejaPlanifies = new Set(planning.filter(p=>p.statut==='planifie').map(p=>p.idMembre));
+                        const dejaEncaissesPart = new Set(planning.filter(p=>p.statut==='encaisse').map(p=>p.idPart));
                         let tourNum = encaisses; // commencer après les encaissés
                         rankingOrder.forEach((item) => {
-                          if (dejaEncaisses.has(item.idMembre)) return; // déjà encaissé, skip
+                          if (dejaEncaissesPart.has(item.idPart)) return; // cette part est déjà encaissée, skip
                           tourNum++;
                           // Calculer date prévue en fonction de la périodicité
                           let datePrevue = '';
@@ -483,11 +592,14 @@ export default function Tontines() {
                           }
                           addTourPlanning({
                             idTontine: t.id,
+                            idPart: item.idPart,
                             idMembre: item.idMembre,
                             nomMembre: item.nom,
                             numeroTour: tourNum,
                             datePrevue,
-                            montantPot: t.cotisation * t.totalParts,
+                            // RG-TON : le pot d'un tour = cotisation × parts actives de la tontine
+                            // (tout le monde cotise à chaque tour), pas le nombre de parts du bénéficiaire.
+                            montantPot: potTontine(t),
                             statut: 'planifie',
                             note: `Rotation — position ${tourNum}`,
                           });
@@ -602,14 +714,14 @@ export default function Tontines() {
         const t   = tontines.find(x=>x.id===showMembres.id)||showMembres;
         const cfg = TYPE_CONFIG[t.typeAttribution]||TYPE_CONFIG.rotation;
         const mtList = membresDeTontine(t.id);
-        const pot = t.cotisation * t.totalParts;
+        const pot = potTontine(t);
         return (
           <Modal open={true} onClose={()=>{setShowMembres(null);setShowAddMembre(false);}} title={`${cfg.icon} Membres — ${t.nom}`}
             footer={<div className="flex gap-2 w-full"><button onClick={()=>setShowAddMembre(true)} className="btn-primary"><UserPlus size={14}/> Inscrire</button><button onClick={()=>setShowMembres(null)} className="btn-secondary ml-auto">Fermer</button></div>}>
             <div className="space-y-4">
               <div className="grid grid-cols-3 gap-2 text-center">
                 <div className="p-2.5 bg-gray-50 rounded-xl"><p className="text-sm font-bold text-primary-600">{fmt(pot)}</p><p className="text-xs text-gray-400">Pot/tour</p></div>
-                <div className="p-2.5 bg-gray-50 rounded-xl"><p className="text-sm font-bold text-gray-800">{t.totalParts}</p><p className="text-xs text-gray-400">Parts</p></div>
+                <div className="p-2.5 bg-gray-50 rounded-xl"><p className="text-sm font-bold text-gray-800">{Number(t.totalParts || 0)}</p><p className="text-xs text-gray-400">Parts</p></div>
                 <div className="p-2.5 bg-gray-50 rounded-xl"><p className="text-sm font-bold text-blue-600">{mtList.filter(m=>m.statut==='actif').length}</p><p className="text-xs text-gray-400">Actifs</p></div>
               </div>
               {mtList.length===0 ? (
@@ -621,12 +733,12 @@ export default function Tontines() {
                       <div className="w-9 h-9 rounded-xl gradient-primary flex items-center justify-center text-white text-sm font-bold shrink-0">{mt.nom?.[0]}{mt.prenom?.[0]}</div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-semibold text-gray-800">{mt.nom} {mt.prenom}</p>
-                        <p className="text-xs text-gray-400">{mt.nombreParts} part(s) · {fmt(t.cotisation * mt.nombreParts)}/tour</p>
+                        <p className="text-xs text-gray-400">{mt.nombreParts} part(s) · {fmt(Number(t.cotisation||0) * Number(mt.nombreParts||0))}/tour</p>
                       </div>
                       <Badge variant={mt.statut==='actif'?'green':'gray'}>{mt.statut==='actif'?'Actif':'Suspendu'}</Badge>
                       <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button onClick={()=>{setShowEditMT(mt);setFormMT({idMembre:mt.idMembre,nombreParts:mt.nombreParts});}} className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg"><Pencil size={12}/></button>
-                        <button onClick={()=>removeMembreTontine(mt.id)} className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg"><Trash2 size={12}/></button>
+                        <button onClick={()=>{if(confirm(`Retirer ${mt.nom} ${mt.prenom} de la tontine (${mt.nombreParts} part(s)) ?`)) (mt.partIds||[mt.id]).forEach(pid=>removeMembreTontine(pid, t.id));}} className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg"><Trash2 size={12}/></button>
                       </div>
                     </div>
                   ))}
@@ -639,7 +751,7 @@ export default function Tontines() {
                     {mtList.map(mt=>(
                       <div key={mt.id} className="flex justify-between text-xs">
                         <span className="text-gray-600">{mt.nom} {mt.prenom} (x{mt.nombreParts})</span>
-                        <span className="font-bold text-amber-700">{fmt(t.cotisation*mt.nombreParts)}</span>
+                        <span className="font-bold text-amber-700">{fmt(Number(t.cotisation||0) * Number(mt.nombreParts||0))}</span>
                       </div>
                     ))}
                   </div>
@@ -673,13 +785,44 @@ export default function Tontines() {
                   <span className="font-bold text-primary-700">{fmt(Number(showMembres.cotisation)*Number(formMT.nombreParts))}</span>
                 </div>
               )}
+              {showMembres?.avalisteRequis && (
+                <FormField label="Avaliste" required hint="Requis par cette tontine — aucun gain ne peut être versé sans avaliste valide (RG-TON-006/011)">
+                  <select className="select" value={formMT.idAvaliste} onChange={e=>setFormMT(f=>({...f,idAvaliste:e.target.value}))}>
+                    <option value="">— Sélectionner —</option>
+                    {membres.filter(m=>m.id!==formMT.idMembre&&m.statut==='actif').map(m=><option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
+                  </select>
+                </FormField>
+              )}
             </>
           )}
         </div>
       </Modal>
 
       <Modal open={!!showEditMT} onClose={()=>setShowEditMT(null)} title="Modifier les parts"
-        footer={<><button onClick={()=>setShowEditMT(null)} className="btn-secondary">Annuler</button><button onClick={()=>{updateMembreTontine({...showEditMT,nombreParts:Number(formMT.nombreParts)});setShowEditMT(null);}} className="btn-primary"><Pencil size={14}/>Enregistrer</button></>}>
+        footer={<><button onClick={()=>setShowEditMT(null)} className="btn-secondary">Annuler</button><button onClick={async()=>{
+          const cible = Math.max(1, Number(formMT.nombreParts) || 1);
+          const actuel = showEditMT.nombreParts || 1;
+          const idTontine = showMembres?.id || showEditMT.idTontine;
+          try {
+            if (cible > actuel) {
+              let numero = nextNumeroPart(idTontine);
+              for (let i = 0; i < cible - actuel; i += 1) {
+                // eslint-disable-next-line no-await-in-loop
+                await addMembreTontine({ idTontine, idMembre: showEditMT.idMembre, numeroPart: numero, dateAdhesion: new Date().toISOString().split('T')[0], idAvaliste: showEditMT.idAvaliste || null });
+                numero += 1;
+              }
+            } else if (cible < actuel) {
+              const aRetirer = (showEditMT.partIds || []).slice(cible);
+              for (const pid of aRetirer) {
+                // eslint-disable-next-line no-await-in-loop
+                await removeMembreTontine(pid, idTontine);
+              }
+            }
+          } catch {
+            return;
+          }
+          setShowEditMT(null);
+        }} className="btn-primary"><Pencil size={14}/>Enregistrer</button></>}>
         <div className="space-y-4">
           <p className="text-sm text-gray-600">Parts de <strong>{showEditMT?.nom} {showEditMT?.prenom}</strong></p>
           <FormField label="Nombre de parts"><input className="input" type="number" min="1" max="20" value={formMT.nombreParts} onChange={e=>setFormMT(f=>({...f,nombreParts:e.target.value}))}/></FormField>
@@ -687,25 +830,19 @@ export default function Tontines() {
       </Modal>
 
       <Modal open={!!showBulletin} onClose={()=>setShowBulletin(null)} title={`Bulletin de gain — ${showBulletin?.nom || ''}`}
-        footer={<><button onClick={()=>setShowBulletin(null)} className="btn-secondary">Annuler</button><button onClick={async()=>{const retenues=bulletinForm.retenueMontant>0?[{libelle:bulletinForm.retenueLibelle||'Retenue',montant:Number(bulletinForm.retenueMontant)}]:[];const b=await genererBulletin({idTontine:showBulletin.id,idMembre:Number(bulletinForm.idMembre),numeroCycle:Number(bulletinForm.numeroCycle),retenues});if(b){ouvrirBulletinPdf(b.id);setShowBulletin(null);}}} className="btn-primary"><FileText size={14}/> Générer PDF</button></>}>
+        footer={<><button onClick={()=>setShowBulletin(null)} className="btn-secondary">Annuler</button><button disabled={!bulletinForm.idCycle} onClick={async()=>{const b=await genererBulletin(bulletinForm.idCycle);if(b){ouvrirBulletinPdf(b.id);setShowBulletin(null);}}} className="btn-primary"><FileText size={14}/> Télécharger le PDF</button></>}>
         <div className="space-y-4">
-          <FormField label="Bénéficiaire" required>
-            <select className="select" value={bulletinForm.idMembre} onChange={e=>setBulletinForm(f=>({...f,idMembre:e.target.value}))}>
+          <FormField label="Cycle clôturé" required hint="Le bulletin (montant, retenues) est calculé automatiquement à la clôture du cycle.">
+            <select className="select" value={bulletinForm.idCycle} onChange={e=>setBulletinForm(f=>({...f,idCycle:e.target.value}))}>
               <option value="">Sélectionner…</option>
-              {showBulletin && membresDeTontine(showBulletin.id).map(m=><option key={m.idMembre} value={m.idMembre}>{m.nom} {m.prenom}</option>)}
+              {showBulletin && cyclesTontine.filter(c=>c.idTontine===showBulletin.id && c.statut==='clos').map(c=>
+                <option key={c.id} value={c.id}>Cycle n°{c.numeroCycle} — {c.gagnantNom || 'gagnant inconnu'}</option>
+              )}
             </select>
           </FormField>
-          <FormField label="Cycle">
-            <input type="number" min="1" className="input" value={bulletinForm.numeroCycle} onChange={e=>setBulletinForm(f=>({...f,numeroCycle:e.target.value}))}/>
-          </FormField>
-          <div className="grid grid-cols-2 gap-3">
-            <FormField label="Retenue">
-              <input className="input" placeholder="Ex : sanction" value={bulletinForm.retenueLibelle} onChange={e=>setBulletinForm(f=>({...f,retenueLibelle:e.target.value}))}/>
-            </FormField>
-            <FormField label="Montant retenue">
-              <input type="number" min="0" className="input" value={bulletinForm.retenueMontant} onChange={e=>setBulletinForm(f=>({...f,retenueMontant:e.target.value}))}/>
-            </FormField>
-          </div>
+          {showBulletin && cyclesTontine.filter(c=>c.idTontine===showBulletin.id && c.statut==='clos').length===0 && (
+            <p className="text-xs text-gray-500">Aucun cycle clôturé pour cette tontine — le bulletin n'est disponible qu'une fois un cycle terminé (gagnant désigné puis clôturé).</p>
+          )}
         </div>
       </Modal>
 
@@ -720,6 +857,13 @@ export default function Tontines() {
               <FormField label="Cotisation / part (FCFA)" required><F k="cotisation" type="number" placeholder="50 000"/></FormField>
               <FormField label="Périodicité"><S k="periode"><option value="hebdomadaire">Hebdomadaire</option><option value="mensuel">Mensuelle</option><option value="bimestriel">Bimestrielle</option><option value="trimestriel">Trimestrielle</option></S></FormField>
             </div>
+            <FormField label="Caisse liée" required
+              hint={aucuneCaisseDisponible ? "Aucune caisse éligible : vérifiez qu'au moins une caisse existante n'est pas de type Mutuelle/Scolaire/Événement/Annuelle/Banque, ou créez-en une nouvelle dans Caisses." : undefined}>
+              <S k="idCaisse">
+                <option value="">Sélectionner une caisse…</option>
+                {caissesTontine.map((c) => <option key={c.id} value={c.id}>{c.nom}</option>)}
+              </S>
+            </FormField>
           </div>
           <div className="p-3 bg-gray-50 rounded-xl space-y-3">
             <p className="text-xs font-bold text-gray-500 uppercase">Mode d'attribution</p>
@@ -737,13 +881,14 @@ export default function Tontines() {
           <div className="p-3 bg-gray-50 rounded-xl space-y-3">
             <p className="text-xs font-bold text-gray-500 uppercase">Paramètres</p>
             <div className="grid grid-cols-2 gap-3">
-              <FormField label="Nombre de tours"><F k="nbTours" type="number" min="1" placeholder="12"/></FormField>
+              <FormField label="Nombre de parts prévues" hint="1 part = 1 tour de gain"><F k="nbTours" type="number" min="1" placeholder="12"/></FormField>
+              <FormField label="Durée cible (séances)"><F k="dureeSeances" type="number" min="1" placeholder="12"/></FormField>
               <FormField label="Date de démarrage"><F k="dateDebut" type="date"/></FormField>
             </div>
-            {form.dateDebut&&form.nbTours&&(
+            {form.dateDebut&&form.dureeSeances&&(
               <div className="p-2.5 bg-primary-50 rounded-xl flex justify-between text-xs">
                 <span className="text-primary-700"> Fin estimée :</span>
-                <span className="font-bold text-primary-800">{fmtDate(calcDateFin(form.dateDebut,form.nbTours,form.periode))}</span>
+                <span className="font-bold text-primary-800">{fmtDate(calcDateFin(form.dateDebut,form.dureeSeances,form.periode))}</span>
               </div>
             )}
           </div>
@@ -752,7 +897,8 @@ export default function Tontines() {
               <p className="text-xs font-bold text-primary-700 mb-2"> Aperçu</p>
               <div className="grid grid-cols-2 gap-2 text-xs">
                 <div className="bg-white rounded-lg p-2 flex justify-between"><span className="text-gray-500">Pot (10 parts)</span><span className="font-bold text-primary-700">{fmt(Number(form.cotisation)*10)}</span></div>
-                <div className="bg-white rounded-lg p-2 flex justify-between"><span className="text-gray-500">Durée</span><span className="font-bold text-gray-700">{form.nbTours} {PERIODE_DUREE[form.periode]}</span></div>
+                <div className="bg-white rounded-lg p-2 flex justify-between"><span className="text-gray-500">Plan</span><span className="font-bold text-gray-700">{form.nbTours} tours / {form.dureeSeances} séances</span></div>
+                <div className="bg-white rounded-lg p-2 flex justify-between col-span-2"><span className="text-gray-500">Maximum calculé</span><span className="font-bold text-gray-700">{Math.ceil(Number(form.nbTours || 1) / Number(form.dureeSeances || 1))} tour(s) / séance</span></div>
               </div>
             </div>
           )}
@@ -765,14 +911,55 @@ export default function Tontines() {
         <div className="space-y-4">
           <FormField label="Nom" required><F k="nom"/></FormField>
           <div className="grid grid-cols-2 gap-3">
-            <FormField label="Cotisation (FCFA)" required><F k="cotisation" type="number"/></FormField>
+            <FormField label="Cotisation (FCFA)" required hint={showEdit && getNbEncaisses(showEdit.id) > 0 ? "Immuable : au moins un cycle a déjà été encaissé (RG-TON-002)" : undefined}>
+              <F k="cotisation" type="number" disabled={showEdit && getNbEncaisses(showEdit.id) > 0}/>
+            </FormField>
             <FormField label="Périodicité"><S k="periode"><option value="hebdomadaire">Hebdomadaire</option><option value="mensuel">Mensuelle</option><option value="bimestriel">Bimestrielle</option><option value="trimestriel">Trimestrielle</option></S></FormField>
           </div>
+          <FormField label="Caisse liée" required
+            hint={aucuneCaisseDisponible ? "Aucune caisse éligible : vérifiez qu'au moins une caisse existante n'est pas de type Mutuelle/Scolaire/Événement/Annuelle/Banque, ou créez-en une nouvelle dans Caisses." : undefined}>
+            <S k="idCaisse">
+              <option value="">Sélectionner une caisse…</option>
+              {caissesTontine.map((c) => <option key={c.id} value={c.id}>{c.nom}</option>)}
+            </S>
+          </FormField>
           <div className="grid grid-cols-2 gap-3">
-            <FormField label="Nb tours"><F k="nbTours" type="number" min="1"/></FormField>
-            <FormField label="Type"><S k="typeAttribution"><option value="rotation"> Rotation</option><option value="tirage"> Tirage</option><option value="enchere"> Enchère</option></S></FormField>
+            <FormField label="Nombre de parts / tours" hint="Calculé sur les parts de la tontine"><F k="nbTours" type="number" min="1"/></FormField>
+            <FormField label="Durée cible (séances)"><F k="dureeSeances" type="number" min="1"/></FormField>
+            <FormField label="Type" hint={modeAttributionVerrouillee ? "Verrouillé : au moins un tour a déjà démarré." : undefined}><S k="typeAttribution" disabled={modeAttributionVerrouillee}><option value="rotation"> Rotation</option><option value="tirage"> Tirage</option><option value="enchere"> Enchère</option></S></FormField>
           </div>
+          {form.typeAttribution === 'enchere' && (
+            <FormField label="Mise minimum (FCFA)" required hint="Obligatoire pour une tontine à enchère.">
+              <F k="miseMinEnchere" type="number" min="0"/>
+            </FormField>
+          )}
         </div>
+      </Modal>
+
+      {/* Encaissement d'un tour — mode de paiement obligatoire (RG-TON-039) */}
+      <Modal open={!!encaisseModal} onClose={()=>setEncaisseModal(null)} title="Marquer le tour comme encaissé"
+        footer={<>
+          <button onClick={()=>setEncaisseModal(null)} className="btn-secondary">Annuler</button>
+          <button
+            onClick={()=>{ marquerTourEncaisse(encaisseModal.idTontine, encaisseModal.id); setEncaisseModal(null); }}
+            disabled={!isModePaiementValid(encModePaiement, encDetails)}
+            className={clsx('btn-primary', !isModePaiementValid(encModePaiement, encDetails) && 'opacity-40 cursor-not-allowed')}
+          ><CheckCircle size={14}/>Confirmer l'encaissement</button>
+        </>}>
+        {encaisseModal && (
+          <div className="space-y-4">
+            <div className="p-3 bg-primary-50 rounded-xl border border-primary-100">
+              <p className="text-sm font-semibold text-primary-800">{encaisseModal.nomMembre}</p>
+              <p className="text-xs text-primary-600 mt-0.5">Tour N°{encaisseModal.numeroTour} — <strong>{fmt(encaisseModal.montantPot)}</strong></p>
+            </div>
+            <ModePaiementFields
+              modePaiement={encModePaiement}
+              detailsPaiement={encDetails}
+              onModeChange={(v)=>{setEncModePaiement(v);setEncDetails('');}}
+              onDetailsChange={setEncDetails}
+            />
+          </div>
+        )}
       </Modal>
     </div>
   );

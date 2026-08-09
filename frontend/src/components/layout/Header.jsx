@@ -1,45 +1,74 @@
 import { useLocation } from 'react-router-dom';
+import { CalendarDays, Search } from 'lucide-react';
+import { useApp } from '../../context/AppContext';
+import { roleLabel } from '../../data/mockData';
 
 const names = {
-  '/':              { title: 'Tableau de bord',  sub: 'Vue d\'ensemble de votre tontine' },
-  '/membres':       { title: 'Membres',           sub: 'Gestion des membres actifs' },
-  '/reunions':      { title: 'Réunions',          sub: 'Planification & procès-verbaux' },
-  '/tontines':      { title: 'Tontines actives',  sub: 'Gestion des tontines' },
-  '/rotations':     { title: 'Rotations',         sub: 'Attribution des tours' },
-  '/encheres':      { title: 'Enchères',          sub: 'Système d\'enchères' },
-  '/banques':       { title: 'Banques internes',  sub: 'Comptes & opérations' },
-  '/prets':         { title: 'Prêts & Crédits',   sub: 'Gestion des prêts membres' },
-  '/caisse':        { title: 'Caisse Centrale',   sub: 'Journal & mouvements' },
-  '/sanctions':     { title: 'Sanctions',         sub: 'Pénalités & infractions' },
-  '/rapports':      { title: 'Rapports',          sub: 'Analyses & statistiques' },
-  '/utilisateurs':  { title: 'Utilisateurs',      sub: 'Accès & permissions' },
+  '/':                { title: 'Tableau de bord',   sub: 'Vue globale du système' },
+  '/membres':         { title: 'Organisation',      sub: 'Membres et structure' },
+  '/reunions':        { title: 'Réunions',          sub: 'Planification et procès-verbaux' },
+  '/tontines':        { title: 'Tontines actives',  sub: 'Gestion des cycles et parts' },
+  '/rotations':       { title: 'Rotations',         sub: 'Attribution des tours' },
+  '/encheres':        { title: 'Enchères',          sub: 'Système d\'enchères' },
+  '/caisses':         { title: 'Finance',           sub: 'Caisses et opérations' },
+  '/prets':           { title: 'Prêts & Crédits',   sub: 'Gestion des prêts membres' },
+  '/caisse':          { title: 'Caisse Centrale',   sub: 'Journal et mouvements' },
+  '/caisse-sociale':  { title: 'Caisse sociale',    sub: 'Aides et soutien social' },
+  '/fond-assurance':  { title: 'Fonds assurance',   sub: 'Garanties et assistance' },
+  '/sanctions':       { title: 'Sanctions',         sub: 'Pénalités et infractions' },
+  '/rapports':        { title: 'Rapports',          sub: 'Analyses et statistiques' },
+  '/import-historique': { title: 'Reprise d’historique', sub: 'Import initial et traçable' },
+  '/utilisateurs':    { title: 'Sécurité',          sub: 'Accès et permissions' },
 };
 
 export default function Header() {
   const { pathname } = useLocation();
+  const { user, currentAssociation } = useApp();
   const meta = names[pathname] || { title: 'Page', sub: '' };
   const today = new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 
   return (
-    <header className="h-16 bg-white/90 border-b border-surface-200/80 flex items-center px-5 gap-4 shrink-0 sticky top-0 z-30 backdrop-blur-sm">
+    <header className="no-print min-h-[74px] bg-white/55 border-b border-white/60 flex items-center px-5 py-3 gap-4 shrink-0 sticky top-0 z-30 backdrop-blur-xl backdrop-saturate-150 shadow-[0_8px_24px_-20px_rgba(11,13,18,.3)]">
 
       <div className="flex-1 min-w-0">
-        <h1 className="text-base font-semibold text-ink-900 leading-tight">{meta.title}</h1>
-        <p className="text-sm text-ink-600/70 capitalize mt-0.5 leading-tight">{meta.sub || today}</p>
+        <div className="flex items-center gap-2 mb-1">
+          <span className="hero-chip text-[10px] uppercase tracking-[0.16em]">TONTIX</span>
+          {currentAssociation && (
+            <span className="hero-chip text-[10px] uppercase tracking-[0.16em]">
+              {currentAssociation.abrege}
+            </span>
+          )}
+          <span className="hidden sm:inline-flex hero-chip text-[10px] uppercase tracking-[0.16em]">
+            <CalendarDays size={12} />
+            {today}
+          </span>
+        </div>
+        <h1 className="text-[1.1rem] md:text-[1.35rem] font-display font-semibold text-ink-900 leading-tight">
+          {meta.title}
+        </h1>
+        <p className="text-sm text-ink-600/75 mt-0.5 leading-tight">{meta.sub || 'Vue claire des modules métier'}</p>
+        {currentAssociation && (
+          <p className="text-[11px] text-ink-500 mt-1">
+            Association active: {currentAssociation.nom} · {currentAssociation.ville}, {currentAssociation.pays}
+          </p>
+        )}
       </div>
 
-      <div className="hidden md:flex items-center gap-2 bg-surface-100 border border-surface-200 rounded-full px-4 py-2 w-72 transition-all focus-within:border-primary-300">
+      <div className="hidden lg:flex items-center gap-2 bg-white/70 backdrop-blur border border-white/60 rounded-full px-4 py-2.5 w-[320px] transition-all focus-within:border-indigo-300 focus-within:shadow-glow-indigo">
+        <Search size={16} className="text-ink-500/70 shrink-0" />
         <input
-          placeholder="Rechercher"
+          placeholder="Rechercher un membre, une tontine, un prêt..."
           className="bg-transparent text-sm outline-none text-ink-700 placeholder-ink-500/50 w-full"
         />
       </div>
 
-      <div className="flex items-center gap-3 pl-4 border-l border-surface-200">
-        <div className="avatar-soft">A</div>
+      <div className="flex items-center gap-3 pl-4 border-l border-surface-200/80">
+        <div className="avatar-soft">{(user?.name || 'A')[0].toUpperCase()}</div>
         <div className="hidden sm:block min-w-0">
-          <p className="text-sm font-semibold text-ink-900 truncate">Administration</p>
-          <p className="text-xs text-ink-600/70 truncate">Accès local</p>
+          <p className="text-sm font-semibold text-ink-900 truncate">
+            {user?.name || 'Administration'}
+          </p>
+          <p className="text-xs text-ink-600/70 truncate">{roleLabel[user?.role] || 'Accès administrateur'}</p>
         </div>
       </div>
     </header>

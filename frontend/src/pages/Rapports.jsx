@@ -41,7 +41,7 @@ export default function Rapports() {
     : 0;
 
   const soldeCaisse  = dashboardStats.soldeCaisse;
-  const totalBanques = dashboardStats.totalBanques;
+  const totalCaisses = dashboardStats.totalBanques;
   const COLORS = ['var(--brand)','var(--brand-soft)','var(--brand-pale)','var(--muted)'];
 
   const bancairesData = banques.map((b,i) => ({
@@ -88,7 +88,7 @@ export default function Rapports() {
     <div className="space-y-6">
       <PageHeader title="Rapports & Statistiques" subtitle="Synthèse financière et opérationnelle"
         action={
-          <button onClick={()=>window.print()} className="btn-secondary">
+          <button onClick={()=>window.print()} className="btn-secondary no-print">
             <Printer size={15}/> Imprimer
           </button>
         }/>
@@ -97,7 +97,7 @@ export default function Rapports() {
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         {[
           { label:'Solde caisse',        value: fmt(soldeCaisse),       color: soldeCaisse>=0?'text-primary-600':'text-red-500' },
-          { label:'Total banques',       value: fmt(totalBanques),      color: 'text-blue-600'   },
+          { label:'Total caisses',       value: fmt(totalCaisses),      color: 'text-blue-600'   },
           { label:'Taux présence',       value: `${tauxPresence}%`,     color: 'text-amber-600'  },
           { label:'Taux recouvrement',   value: `${tauxRecouvrement}%`, color: 'text-purple-600' },
         ].map(k=>(
@@ -126,12 +126,12 @@ export default function Rapports() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-        {/* ── Banques ──────────────────────────────────────── */}
+        {/* ── Caisses ──────────────────────────────────────── */}
         <div className="card">
-          <h3 className="font-semibold text-gray-800 mb-4">Répartition banques internes</h3>
+          <h3 className="font-semibold text-gray-800 mb-4">Répartition des caisses internes</h3>
           {bancairesData.every(b=>b.value===0) ? (
             <div className="text-center py-10 text-gray-400">
-              <p className="text-sm">Aucun solde banque enregistré</p>
+              <p className="text-sm">Aucun solde de caisse enregistré</p>
             </div>
           ) : (
             <ResponsiveContainer width="100%" height={180}>
@@ -205,7 +205,7 @@ export default function Rapports() {
                 <th className="th">Présence</th>
                 <th className="th text-right text-green-600">Entrées</th>
                 <th className="th text-right text-red-500">Sorties</th>
-                <th className="th text-right text-blue-600">Banques</th>
+                <th className="th text-right text-blue-600">Caisses</th>
                 <th className="th text-right">Solde séance</th>
                 <th className="th">Statut</th>
               </tr>

@@ -1,4 +1,5 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import {
   CalendarPlus, MapPin, Users, Clock, CheckCircle, PlayCircle,
   Plus, Trash2, Pencil, Lock, FileText, AlertCircle,
@@ -6,18 +7,22 @@ import {
   Landmark, DollarSign, ChevronRight, Printer, Receipt, X,
   ClipboardCheck, ShieldAlert, CheckSquare, XSquare, MinusSquare,
   BadgeDollarSign, TrendingUp, AlertTriangle, Banknote,
-  Trophy, Dices, Gavel, RefreshCw, Star,
+  Trophy, Dices, Gavel, RefreshCw, Star, HeartHandshake, ArrowLeft,
 } from 'lucide-react';
-import { fmtDate, typePointLabel, statutPointLabel, fmt, periodeLabel } from '../data/mockData';
+import { fmtDate, typePointLabel, statutPointLabel, fmt, periodeLabel, ACTEUR_ROLES, acteurRoleLabel, roleLabel, STATUTS_PRESENCE, statutPresenceLabel, MODES_PAIEMENT, modePaiementConfig } from '../data/mockData';
+import { API_BASE, request } from '../lib/api';
 import { useApp, TX_TYPES, TX_LABELS } from '../context/AppContext';
 import { PageHeader, Badge, Modal, FormField } from '../components/ui/index';
+import { ModePaiementFields, isModePaiementValid, ModePaiementBadge } from '../components/ui/ModePaiement';
 import clsx from 'clsx';
 
 // ── Config statuts ────────────────────────────────────────────
 const sCfg = {
-  planifiee: { label:'Planifiée',  v:'blue',  icon: Clock       },
-  en_cours:  { label:'En cours',   v:'amber', icon: PlayCircle  },
-  cloturee:  { label:'Clôturée',   v:'green', icon: CheckCircle },
+  planifiee: { label:'Planifiée',       v:'blue',  icon: Clock       },
+  en_cours:  { label:'En cours',        v:'amber', icon: PlayCircle  },
+  tenue:     { label:'Tenue — à signer',v:'amber', icon: FileText    },
+  cloturee:  { label:'Clôturée',        v:'green', icon: CheckCircle },
+  annulee:   { label:'Annulée',         v:'red',   icon: AlertCircle },
 };
 const typeCfg = {
   administratif:{ v:'blue',  label:'Administratif' },
@@ -34,28 +39,67 @@ const statutPointCfg = {
   annule:   { v:'red',   label:'Annulé'   },
 };
 
+// ── Accès aux onglets de la fiche réunion, par rôle (RG-SEC-002) ──
+// Un acteur ne voit QUE les onglets qui le concernent. Le rôle vient du
+// compte créé dans Utilisateurs (Sécurité), pas d'un choix libre à la
+// connexion. Le Président voit tout en LECTURE SEULE (consultation
+// générale). L'Administrateur (créateur de l'association / super-admin)
+// a accès complet à tout, y compris la saisie — c'est le seul rôle à la
+// fois "voit tout" et "peut tout modifier".
+const TAB_ACCESS = {
+  info:               ['super_admin','president','vice_president','tresorier','secretaire','controleur','membre'],
+  presences:          ['super_admin','president','secretaire','controleur'],
+  feuille_cotisation: ['super_admin','president','tresorier','controleur'],
+  beneficiaire:       ['super_admin','president','tresorier','secretaire','controleur'],
+  remboursement:      ['super_admin','president','tresorier','controleur'],
+  pret:               ['super_admin','president','tresorier','controleur'],
+  sanction:           ['super_admin','president','tresorier','secretaire','controleur'],
+  aide:               ['super_admin','president','tresorier','secretaire','controleur'],
+  banque:             ['super_admin','president','tresorier','controleur'],
+  divers:             ['super_admin','president','tresorier','controleur'],
+  signatures:         ['super_admin','president','vice_president','tresorier','secretaire','controleur'],
+};
+const ROLES_LECTURE_SEULE = ['president','controleur'];
+
 const EMPTY_REUNION   = { date:'', lieu:'', numero:'', observation:'' };
 const EMPTY_OUVERTURE = { heureOuverture:'', presidentSeance:'', secretaireSeance:'', motOuverture:'' };
 const EMPTY_CLOTURE   = { heureCloture:'', presents:'', absents:'', membresAbsents:'', observation:'' };
-const EMPTY_POINT     = { titre:'', type:'administratif', description:'' };
-const EMPTY_TX        = { type:'cotisation', idMembre:'', montant:'', libelle:'', idSanction:'', idPret:'', idBanque:'', sousType:'', note:'' };
+const EMPTY_POINT     = { titre:'', rubriqueId:'', type:'administratif', description:'', acteurRole:'' };
+const EMPTY_TX        = { type:'cotisation', idMembre:'', montant:'', libelle:'', idSanction:'', idPret:'', idBanque:'', sousType:'', note:'', modePaiement:'especes', detailsPaiement:'' };
 
 // ── Feuille de présence / cotisation tontine ─────────────────
 const STATUT_COTIS = { non_defini: null, cotise: 'cotise', defaillant: 'defaillant' };
 
-function FeuillePresenceTontine({ reunion, onClose }) {
+function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
   const {
     tontines, membres, membresParTontine,
     addSeanceTransaction, addSanction, seanceTransactions,
-    planningTours, enregistrerBeneficiaireSeance, tirerAuSort,
-    encheres,
+    planningTours, ouvrirCycle, saisirCotisationCycle, designerGagnantCycle, cloturerCycle,
+    encheres, cyclesTontine, ouvrirBulletinPdf, addEnchere, ajouterRetenueBulletin, payerBulletin, banques,
   } = useApp();
 
-  const locked   = reunion.statutReunion === 'cloturee';
+  const locked   = !!reunion.verrouillee;
   const notOpen  = reunion.statutReunion === 'planifiee';
+  const [bulletinUrl, setBulletinUrl] = useState(null);
+
+  // reunion.beneficiairesSeance n'a jamais existé côté API — dérivé ici de la vraie
+  // source de vérité (cyclesTontine) pour que le bénéficiaire désigné reste visible
+  // même après un changement d'onglet ou de composant.
+  const beneficiairesSeance = useMemo(() => (cyclesTontine || [])
+    .filter(c => c.idReunion === reunion.id && c.statut === 'clos')
+    .map(c => {
+      const t = tontines.find(tt => tt.id === c.idTontine);
+      return {
+        idTontine: c.idTontine, nomTontine: t?.nom || '',
+        typeAttribution: t?.typeAttribution, nomMembre: c.gagnantNom,
+        numeroTour: c.numeroCycle, montantEnchere: c.montantEnchere,
+        montantPot: c.montantCollecteReel, dateAttrib: c.dateCloture, idBulletin: c.idBulletin,
+      };
+    }), [cyclesTontine, tontines, reunion.id]);
 
   const [idTontineSelectee, setIdTontineSelectee] = useState('');
   const [statutParMembre,   setStatutParMembre]   = useState({});
+  const [modeParMembre,     setModeParMembre]     = useState({}); // { [idMembre]: { modePaiement, detailsPaiement } }
   const [sanctionMontant,   setSanctionMontant]   = useState('');
   const [valide,            setValide]            = useState(false);
   // etape: 'choix' - 'cotisation' - 'beneficiaire' - 'recap'
@@ -66,8 +110,21 @@ function FeuillePresenceTontine({ reunion, onClose }) {
   const [enchereIdGagnant,  setEnchereIdGagnant]  = useState('');
   const [miseGagnante,      setMiseGagnante]      = useState('');
   const [tirageEffectue,    setTirageEffectue]    = useState(false);
+  const [cycleActuelId,     setCycleActuelId]     = useState(null); // cycle ouvert à l'étape cotisation, réutilisé à l'étape bénéficiaire
+  const [nouvelleEnchereMembre, setNouvelleEnchereMembre] = useState('');
+  const [nouvelleEnchereMontant, setNouvelleEnchereMontant] = useState('');
+  const [nouvelleEnchereCaisseId, setNouvelleEnchereCaisseId] = useState('');
+  const [miseGagnanteCaisseId, setMiseGagnanteCaisseId] = useState('');
+  const [retenueModal, setRetenueModal] = useState(false);
+  const [retenueLibelle, setRetenueLibelle] = useState('');
+  const [retenueMontant, setRetenueMontant] = useState('');
+  const [retenueCaisseId, setRetenueCaisseId] = useState('');
+  const [versementModal, setVersementModal] = useState(false);
+  const [modeVersement, setModeVersement] = useState('especes');
+  const [referenceVersement, setReferenceVersement] = useState('');
 
-  const tontineSelectee = tontines.find(t => t.id === Number(idTontineSelectee));
+  const tontineSelectee = tontines.find(t => t.id === idTontineSelectee);
+  const cycleActuel = cyclesTontine.find(c => c.id === cycleActuelId);
   const typeAttr = tontineSelectee?.typeAttribution;
   const TYPE_ICONS  = { rotation:'', tirage:'', enchere:'' };
   const TYPE_LABELS = { rotation:'Rotation fixe', tirage:'Tirage au sort', enchere:'Enchère' };
@@ -79,11 +136,22 @@ function FeuillePresenceTontine({ reunion, onClose }) {
 
   const membresDeLatontine = useMemo(() => {
     if (!tontineSelectee) return [];
-    return membresParTontine
-      .filter(mt => mt.idTontine === tontineSelectee.id && mt.statut === 'actif')
-      .map(mt => { const m = membres.find(x => x.id === mt.idMembre); return m ? { ...m, nombreParts: mt.nombreParts, montantDu: tontineSelectee.cotisation * mt.nombreParts } : null; })
-      .filter(Boolean);
+    // Une part gagnée est exclue du prochain tirage, jamais des cotisations.
+    // On regroupe les parts d'un même membre pour ne présenter qu'une ligne par membre.
+    const partsParMembre = new Map();
+    membresParTontine
+      .filter(mt => mt.idTontine === tontineSelectee.id && ['actif', 'gagnee'].includes(mt.statut))
+      .forEach(mt => partsParMembre.set(mt.idMembre, (partsParMembre.get(mt.idMembre) || 0) + mt.nombreParts));
+    return [...partsParMembre.entries()].map(([idMembre, nombreParts]) => {
+      const membre = membres.find(m => m.id === idMembre);
+      return membre ? { ...membre, nombreParts, montantDu: tontineSelectee.cotisation * nombreParts } : null;
+    }).filter(Boolean);
   }, [tontineSelectee, membresParTontine, membres]);
+
+  const membresEligiblesGain = useMemo(() => membresParTontine
+    .filter(mt => mt.idTontine === tontineSelectee?.id && mt.statut === 'actif')
+    .map(mt => membres.find(m => m.id === mt.idMembre)).filter(Boolean),
+  [tontineSelectee, membresParTontine, membres]);
 
   const montantPot     = tontineSelectee ? tontineSelectee.cotisation * tontineSelectee.totalParts : 0;
   const totalAttendu   = membresDeLatontine.reduce((s, m) => s + m.montantDu, 0);
@@ -93,7 +161,9 @@ function FeuillePresenceTontine({ reunion, onClose }) {
   const totalCollecte  = cotises.reduce((s, m) => s + m.montantDu, 0);
 
   // Bénéficiaire déjà enregistré pour cette tontine dans la séance
-  const benefDejaEnregistre = (reunion.beneficiairesSeance||[]).find(b => b.idTontine === Number(idTontineSelectee));
+  const toursDejaTraites = beneficiairesSeance.filter(b => b.idTontine === idTontineSelectee).length;
+  const limiteToursSeance = tontineSelectee?.maxCyclesParReunion || 1;
+  const benefDejaEnregistre = toursDejaTraites >= limiteToursSeance;
 
   // Tour planifié rotation
   const tourPlanifieProchain = useMemo(() => {
@@ -102,24 +172,54 @@ function FeuillePresenceTontine({ reunion, onClose }) {
     return planningTours.find(p => p.idTontine === tontineSelectee.id && p.numeroTour === nbEncaisses + 1 && p.statut !== 'encaisse');
   }, [tontineSelectee, typeAttr, planningTours]);
 
-  // Enchères en attente
+  // Enchères en attente — scopées au cycle courant uniquement, sinon des enchères
+  // saisies pour une autre réunion/cycle de la même tontine (enchère mode) apparaissaient
+  // ici par erreur.
   const encheresEnAttente = useMemo(() => {
-    if (!tontineSelectee || typeAttr !== 'enchere') return [];
-    return encheres.filter(e => e.statut === 'en_attente');
-  }, [tontineSelectee, typeAttr, encheres]);
+    if (!tontineSelectee || typeAttr !== 'enchere' || !cycleActuelId) return [];
+    return encheres.filter(e => !e.estGagnante && e.idRotation === cycleActuelId);
+  }, [tontineSelectee, typeAttr, encheres, cycleActuelId]);
 
-  const setStatut = (idMembre, statut) =>
-    setStatutParMembre(prev => ({ ...prev, [idMembre]: prev[idMembre] === statut ? undefined : statut }));
+  // Le serveur reste la source de vérité pour départager les offres : montant
+  // maximal, puis offre la plus ancienne en cas d'égalité. Ce calcul sert
+  // uniquement à indiquer visuellement l'offre qui sera retenue.
+  const meilleureEnchere = useMemo(() => [...encheresEnAttente].sort((a, b) =>
+    b.montantEnchere - a.montantEnchere || new Date(a.dateEnchere) - new Date(b.dateEnchere)
+  )[0] || null, [encheresEnAttente]);
+
+  // Par défaut, chaque membre est considéré cotisé (RG-TON-030 : toute
+  // cotisation non renseignée est marquée impayée) — l'utilisateur décoche
+  // uniquement les membres qui n'ont pas payé, au lieu de tout cocher un à un.
+  useEffect(() => {
+    if (!tontineSelectee) return;
+    setStatutParMembre(prev => {
+      const next = { ...prev }; let changed = false;
+      membresDeLatontine.forEach(m => { if (next[m.id] === undefined) { next[m.id] = 'cotise'; changed = true; } });
+      return changed ? next : prev;
+    });
+    setModeParMembre(prev => {
+      const next = { ...prev }; let changed = false;
+      membresDeLatontine.forEach(m => { if (!next[m.id]) { next[m.id] = { modePaiement: 'especes', detailsPaiement: '' }; changed = true; } });
+      return changed ? next : prev;
+    });
+  }, [idTontineSelectee, membresDeLatontine, tontineSelectee]);
+
+  const toggleCotise = (idMembre) =>
+    setStatutParMembre(prev => ({ ...prev, [idMembre]: prev[idMembre] === 'defaillant' ? 'cotise' : 'defaillant' }));
+  const setModePaiementMembre = (idMembre, patch) =>
+    setModeParMembre(prev => ({ ...prev, [idMembre]: { ...(prev[idMembre]||{modePaiement:'especes',detailsPaiement:''}), ...patch } }));
 
   // ── Valider la feuille de cotisation ──
-  const handleValiderFeuille = () => {
+  const handleValiderFeuille = async () => {
     if (!tontineSelectee) return;
     cotises.forEach(m => {
+      const mode = modeParMembre[m.id] || { modePaiement:'especes', detailsPaiement:'' };
       addSeanceTransaction(reunion.id, {
         type: 'cotisation', idMembre: m.id, montant: m.montantDu,
         libelle: `Cotisation ${tontineSelectee.nom} — ${m.nombreParts} part(s)`,
-        idTontine: tontineSelectee.id,
-      }, [], membres);
+        idTontine: tontineSelectee.id, idBanque: tontineSelectee.idCaisse,
+        modePaiement: mode.modePaiement, detailsPaiement: mode.detailsPaiement,
+      });
     });
     defaillants.forEach(m => {
       addSanction({
@@ -130,55 +230,117 @@ function FeuillePresenceTontine({ reunion, onClose }) {
         date: reunion.date, reunionId: reunion.id,
       });
     });
+
+    // Ouvre un vrai cycle et y rattache les cotisations réellement saisies ci-dessus —
+    // sans ça, designerGagnant/cloturerCycle ne « voient » aucune cotisation et le
+    // bulletin final sort à montant brut nul, quoi que le secrétaire ait coché.
+    const cycle = await ouvrirCycle(tontineSelectee.id, reunion.id);
+    if (!cycle) return; // ouvrirCycle a déjà affiché l'erreur (ex: plus aucune part disponible)
+    setCycleActuelId(cycle.id);
+
+    for (const m of cotises) {
+      const cotisationsMembre = cycle.cotisations.filter(co => co.idMembre === m.id);
+      if (cotisationsMembre.length === 0) continue;
+      const mode = modeParMembre[m.id] || { modePaiement:'especes', detailsPaiement:'' };
+      for (const cotisation of cotisationsMembre) {
+        await saisirCotisationCycle(cycle.id, cotisation.id, cotisation.montantDu, { modePaiement: mode.modePaiement });
+      }
+    }
+
     setValide(true);
     // Aller directement à la désignation du bénéficiaire
     setEtape('beneficiaire');
   };
 
-  // ── Handlers bénéficiaire ──
-  const handleConfirmerRotation = () => {
-    if (!tourPlanifieProchain) return;
-    enregistrerBeneficiaireSeance(reunion.id, {
-      idTontine: tontineSelectee.id, nomTontine: tontineSelectee.nom,
-      typeAttribution: 'rotation', idMembre: tourPlanifieProchain.idMembre,
-      nomMembre: tourPlanifieProchain.nomMembre, montantPot,
-      numeroTour: tourPlanifieProchain.numeroTour, modeDesignation: 'rotation',
-    });
-    setGagnant({ nomMembre: tourPlanifieProchain.nomMembre, montantPot });
+  // Résout l'id de PART (tontine_parts) d'un membre — c'est ce que désignerGagnantCycle
+  // attend, pas un id de membre. membresParTontine EST directement la liste des parts.
+  const resolvePartId = (idMembre) => membresParTontine
+    .find(mt => mt.idTontine === tontineSelectee?.id && mt.idMembre === idMembre && mt.statut === 'actif')?.id;
+
+  // ── Handlers bénéficiaire — passent tous par le vrai circuit désormais :
+  // désignerGagnantCycle() puis clôturerCycle(), sur le cycle ouvert à l'étape précédente.
+  const handleConfirmerRotation = async () => {
+    if (!tourPlanifieProchain || !cycleActuelId) return;
+    // Le planning est rattaché à une part précise : si un membre possède deux
+    // parts, chaque part conserve donc son tour distinct.
+    const idPart = tourPlanifieProchain.idPart || resolvePartId(tourPlanifieProchain.idMembre);
+    await designerGagnantCycle(cycleActuelId, idPart);
+    const cycleFinal = await cloturerCycle(cycleActuelId);
+    if (!cycleFinal) return;
+    setGagnant({ nomMembre: cycleFinal.gagnantNom, montantPot: cycleFinal.montantCollecteReel, idBulletin: cycleFinal.idBulletin });
     setEtape('recap');
   };
 
-  const handleTirage = () => {
-    const nbEncaisses = planningTours.filter(p => p.idTontine === tontineSelectee.id && p.statut === 'encaisse').length;
-    const result = tirerAuSort(tontineSelectee.id, nbEncaisses + 1, reunion.date);
-    if (result) {
-      enregistrerBeneficiaireSeance(reunion.id, {
-        idTontine: tontineSelectee.id, nomTontine: tontineSelectee.nom,
-        typeAttribution: 'tirage', idMembre: result.idMembre, nomMembre: result.nomMembre,
-        montantPot: result.montantPot, numeroTour: nbEncaisses + 1, modeDesignation: 'tirage_au_sort',
-      });
-      setGagnant({ nomMembre: result.nomMembre, montantPot: result.montantPot });
-      setTirageEffectue(true);
-      setEtape('recap');
-    }
+  const handleTirage = async () => {
+    if (!cycleActuelId) return;
+    const apresDesignation = await designerGagnantCycle(cycleActuelId); // pas de part forcée = tirage aléatoire côté serveur
+    if (!apresDesignation) return;
+    const cycleFinal = await cloturerCycle(cycleActuelId);
+    if (!cycleFinal) return;
+    setGagnant({ nomMembre: cycleFinal.gagnantNom, montantPot: cycleFinal.montantCollecteReel, idBulletin: cycleFinal.idBulletin });
+    setTirageEffectue(true);
+    setEtape('recap');
   };
 
-  const handleConfirmerEnchere = (nomMembre, idMembre, mise) => {
-    enregistrerBeneficiaireSeance(reunion.id, {
-      idTontine: tontineSelectee.id, nomTontine: tontineSelectee.nom,
-      typeAttribution: 'enchere', idMembre, nomMembre,
-      montantPot: montantPot - Number(mise), montantEnchere: Number(mise),
-      numeroTour: planningTours.filter(p => p.idTontine === tontineSelectee.id && p.statut === 'encaisse').length + 1,
-      modeDesignation: 'enchere',
+  const handleAjouterEnchere = async () => {
+    if (!cycleActuelId || !nouvelleEnchereMembre || !nouvelleEnchereMontant || !nouvelleEnchereCaisseId) return;
+    const ok = await addEnchere({
+      idRotation: cycleActuelId,
+      idTontine: tontineSelectee.id,
+      idMembre: nouvelleEnchereMembre,
+      montantEnchere: nouvelleEnchereMontant,
+      idCaisse: nouvelleEnchereCaisseId,
     });
-    setGagnant({ nomMembre, montantPot: montantPot - Number(mise), mise: Number(mise) });
+    if (ok) { setNouvelleEnchereMembre(''); setNouvelleEnchereMontant(''); setNouvelleEnchereCaisseId(''); }
+  };
+
+  const terminerEnchere = async (cycleFinal) => {
+    if (!cycleFinal) return;
+    setGagnant({
+      nomMembre: cycleFinal.gagnantNom,
+      montantPot: cycleFinal.montantCollecteReel - cycleFinal.montantEnchere,
+      mise: cycleFinal.montantEnchere,
+      idBulletin: cycleFinal.idBulletin,
+    });
     setEtape('recap');
+  };
+
+  // Clôture normale : le backend choisit obligatoirement la meilleure offre.
+  const handleCloturerEncheres = async () => {
+    if (!cycleActuelId || !meilleureEnchere) return;
+    const apresDesignation = await designerGagnantCycle(cycleActuelId);
+    if (!apresDesignation) return;
+    await terminerEnchere(await cloturerCycle(cycleActuelId));
+  };
+
+  // Dérogation explicitement manuelle : l'offre sélectionnée est conservée et
+  // enregistrée comme gagnante par le backend avant la clôture.
+  const handleConfirmerEnchere = async (idPart) => {
+    if (!cycleActuelId) return;
+    if (!idPart) return;
+    const apresDesignation = await designerGagnantCycle(cycleActuelId, idPart);
+    if (!apresDesignation) return;
+    await terminerEnchere(await cloturerCycle(cycleActuelId));
+  };
+
+  // La désignation manuelle sans offre crée d'abord une offre réelle, afin que
+  // le montant apparaisse dans l'historique et le bulletin de gain.
+  const handleEnregistrerEtDesignerManuellement = async () => {
+    if (!cycleActuelId || !enchereIdGagnant || !miseGagnante || !miseGagnanteCaisseId) return;
+    const offre = await addEnchere({
+      idRotation: cycleActuelId,
+      idTontine: tontineSelectee.id,
+      idMembre: enchereIdGagnant,
+      montantEnchere: miseGagnante,
+      idCaisse: miseGagnanteCaisseId,
+    });
+    if (offre) await handleConfirmerEnchere(offre.idPart);
   };
 
   const reset = () => {
-    setIdTontineSelectee(''); setEtape('choix'); setStatutParMembre({});
+    setIdTontineSelectee(''); setEtape('choix'); setStatutParMembre({}); setModeParMembre({});
     setValide(false); setSanctionMontant(''); setGagnant(null);
-    setEnchereIdGagnant(''); setMiseGagnante(''); setTirageEffectue(false);
+    setEnchereIdGagnant(''); setMiseGagnante(''); setTirageEffectue(false); setCycleActuelId(null);
   };
 
   // ── Blocage si séance non ouverte ──
@@ -212,8 +374,9 @@ function FeuillePresenceTontine({ reunion, onClose }) {
             {tontines.filter(t => t.statut === 'active').map(t => {
               const nbEncaisses = planningTours.filter(p => p.idTontine === t.id && p.statut === 'encaisse').length;
               const progressPct = t.nbTours > 0 ? Math.round(nbEncaisses / t.nbTours * 100) : 0;
-              const dejaTraite  = (reunion.beneficiairesSeance||[]).some(b => b.idTontine === t.id);
-              const isSelected  = Number(idTontineSelectee) === t.id;
+              const toursTraites = beneficiairesSeance.filter(b => b.idTontine === t.id).length;
+              const dejaTraite  = toursTraites >= (t.maxCyclesParReunion || 1);
+              const isSelected  = idTontineSelectee === t.id;
               const tColor      = TYPE_COLORS[t.typeAttribution] || '';
               return (
                 <button key={t.id} type="button"
@@ -235,7 +398,7 @@ function FeuillePresenceTontine({ reunion, onClose }) {
                       <span className={clsx('text-xs px-2 py-0.5 rounded-full border font-medium', tColor)}>
                         {TYPE_LABELS[t.typeAttribution]}
                       </span>
-                      {dejaTraite && <span className="text-xs text-green-600 font-bold">OK</span>}
+                      <span className="text-xs text-gray-500 font-medium">{toursTraites}/{t.maxCyclesParReunion || 1}</span>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -257,7 +420,7 @@ function FeuillePresenceTontine({ reunion, onClose }) {
           )}
           {idTontineSelectee && benefDejaEnregistre && (
             <div className="p-3 bg-green-50 rounded-xl border border-green-200 flex items-center gap-2 text-sm text-green-700">
-              <Trophy size={15}/> Bénéficiaire déjà désigné pour cette tontine dans cette séance.
+              <Trophy size={15}/> Limite de {limiteToursSeance} tour(s) atteinte pour cette tontine dans cette séance.
             </div>
           )}
         </div>
@@ -297,51 +460,70 @@ function FeuillePresenceTontine({ reunion, onClose }) {
             - Changer de tontine
           </button>
 
-          {/* Sélection rapide */}
-          <div className="flex gap-2">
-            <button onClick={() => { const all = {}; membresDeLatontine.forEach(m => { all[m.id] = 'cotise'; }); setStatutParMembre(all); }}
-              className="btn-secondary text-xs py-1.5 flex-1"><CheckSquare size={12}/> Tous cotisé</button>
-            <button onClick={() => setStatutParMembre({})} className="btn-secondary text-xs py-1.5 flex-1">
-              <MinusSquare size={12}/> Réinitialiser</button>
+          {/* Consigne simple */}
+          <div className="p-2.5 bg-gray-50 rounded-xl text-xs text-gray-500 flex items-start gap-2">
+            <ClipboardCheck size={14} className="mt-0.5 shrink-0 text-primary-500"/>
+            <p>Tout le monde est coché <strong>« a cotisé »</strong> par défaut. Décochez uniquement les membres qui n'ont pas payé.</p>
           </div>
 
-          {/* Liste membres */}
-          <div className="rounded-2xl border border-gray-200 overflow-hidden">
-            <div className="grid grid-cols-[1fr_auto_auto_auto] bg-gray-50 px-3 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wide">
-              <span>Membre</span><span className="pr-2 text-center">Parts</span>
-              <span className="pr-2 text-right">Dû</span><span className="text-center">Statut</span>
+          {/* Sélection rapide */}
+          {!(locked || readOnly) && (
+            <div className="flex gap-2">
+              <button onClick={() => { const all = {}; membresDeLatontine.forEach(m => { all[m.id] = 'cotise'; }); setStatutParMembre(all); }}
+                className="btn-secondary text-xs py-1.5 flex-1"><CheckSquare size={12}/> Tout cocher (tous cotisé)</button>
+              <button onClick={() => { const all = {}; membresDeLatontine.forEach(m => { all[m.id] = 'defaillant'; }); setStatutParMembre(all); }}
+                className="btn-secondary text-xs py-1.5 flex-1">
+                <MinusSquare size={12}/> Tout décocher</button>
             </div>
-            <div className="divide-y divide-gray-100">
-              {membresDeLatontine.map(m => {
-                const isCotise  = statutParMembre[m.id] === 'cotise';
-                const isDefaill = statutParMembre[m.id] === 'defaillant';
-                return (
-                  <div key={m.id} className={clsx('grid grid-cols-[1fr_auto_auto_auto] items-center px-3 py-2.5 transition-colors',
-                    isCotise ? 'bg-green-50' : isDefaill ? 'bg-red-50' : 'bg-white hover:bg-gray-50')}>
-                    <div>
-                      <p className={clsx('font-semibold text-sm', isCotise ? 'text-green-800' : isDefaill ? 'text-red-700' : 'text-gray-800')}>
-                        {m.nom} {m.prenom}
+          )}
+
+          {/* Liste membres — cases à cocher larges + mode de paiement inline */}
+          <div className="rounded-2xl border border-gray-200 overflow-hidden divide-y divide-gray-100">
+            {membresDeLatontine.map(m => {
+              const isCotise = statutParMembre[m.id] !== 'defaillant';
+              const mode = modeParMembre[m.id] || { modePaiement:'especes', detailsPaiement:'' };
+              const modeCfg = modePaiementConfig?.[mode.modePaiement];
+              const dis = locked || readOnly;
+              return (
+                <div key={m.id} className={clsx('px-3 py-3 transition-colors', isCotise ? 'bg-green-50' : 'bg-red-50')}>
+                  <div className="flex items-center gap-3">
+                    {/* Grande case à cocher tactile */}
+                    <button onClick={() => toggleCotise(m.id)} disabled={dis}
+                      aria-label={isCotise ? 'Décocher (n\'a pas cotisé)' : 'Cocher (a cotisé)'}
+                      className={clsx('w-10 h-10 rounded-xl flex items-center justify-center border-2 shrink-0 transition-all',
+                        dis && 'opacity-60 cursor-not-allowed',
+                        isCotise ? 'bg-green-500 border-green-500 text-white' : 'bg-white border-red-300 text-red-400')}>
+                      {isCotise ? <CheckSquare size={20}/> : <XSquare size={20}/>}
+                    </button>
+                    <div className="flex-1 min-w-0">
+                      <p className={clsx('font-semibold text-sm truncate', isCotise ? 'text-green-800' : 'text-red-700')}>
+                        {m.nom} {m.prenom} <span className="text-xs font-normal text-gray-400">x{m.nombreParts} part(s)</span>
                       </p>
-                      <p className="text-xs text-gray-400">{m.profession}</p>
+                      <p className={clsx('text-sm font-bold', isCotise ? 'text-green-700' : 'text-red-600')}>{fmt(m.montantDu)}</p>
                     </div>
-                    <span className="text-xs font-bold bg-gray-100 px-2 py-0.5 rounded-full mx-2">x{m.nombreParts}</span>
-                    <p className={clsx('text-sm font-bold pr-2', isCotise ? 'text-green-700' : isDefaill ? 'text-red-600' : 'text-gray-700')}>{fmt(m.montantDu)}</p>
-                    <div className="flex gap-1.5">
-                      <button onClick={() => setStatut(m.id, 'cotise')}
-                        className={clsx('w-8 h-8 rounded-lg flex items-center justify-center border transition-all',
-                          isCotise ? 'bg-green-500 border-green-500 text-white' : 'border-gray-200 text-gray-300 hover:border-green-300 hover:text-green-500')}>
-                        <CheckSquare size={15}/>
-                      </button>
-                      <button onClick={() => setStatut(m.id, 'defaillant')}
-                        className={clsx('w-8 h-8 rounded-lg flex items-center justify-center border transition-all',
-                          isDefaill ? 'bg-red-500 border-red-500 text-white' : 'border-gray-200 text-gray-300 hover:border-red-300 hover:text-red-500')}>
-                        <XSquare size={15}/>
-                      </button>
-                    </div>
+                    <span className={clsx('text-xs font-bold px-2 py-1 rounded-full shrink-0', isCotise ? 'bg-green-600 text-white' : 'bg-red-500 text-white')}>
+                      {isCotise ? 'A cotisé' : 'Défaillant'}
+                    </span>
                   </div>
-                );
-              })}
-            </div>
+                  {/* Mode de paiement — seulement si a cotisé */}
+                  {isCotise && (
+                    <div className="mt-2 pl-[52px] flex flex-wrap items-center gap-2">
+                      <select className="select text-xs py-1.5 flex-1 min-w-[140px]" disabled={dis}
+                        value={mode.modePaiement}
+                        onChange={e => setModePaiementMembre(m.id, { modePaiement: e.target.value, detailsPaiement: '' })}>
+                        {MODES_PAIEMENT.map(mp => <option key={mp.value} value={mp.value}>{mp.label}</option>)}
+                      </select>
+                      {modeCfg?.detail && (
+                        <input className="input text-xs py-1.5 flex-1 min-w-[140px]" disabled={dis}
+                          placeholder={modeCfg.detailPlaceholder || 'Référence'}
+                          value={mode.detailsPaiement}
+                          onChange={e => setModePaiementMembre(m.id, { detailsPaiement: e.target.value })}/>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
 
           {/* Bilan */}
@@ -376,7 +558,7 @@ function FeuillePresenceTontine({ reunion, onClose }) {
             </div>
           )}
 
-          {!locked && (
+          {!locked && !readOnly && (
             <button onClick={handleValiderFeuille}
               disabled={cotises.length + defaillants.length === 0}
               className={clsx('btn-primary w-full justify-center', cotises.length + defaillants.length === 0 && 'opacity-40 cursor-not-allowed')}>
@@ -457,22 +639,51 @@ function FeuillePresenceTontine({ reunion, onClose }) {
           {/* ENCHÈRE */}
           {typeAttr === 'enchere' && (
             <div className="space-y-3">
+              {/* Saisie en direct — les membres annoncent leur mise en séance,
+                  le secrétaire/trésorier la saisit ici au fur et à mesure. */}
+              <div className="p-3 bg-blue-50 rounded-xl border border-blue-100 space-y-2">
+                <p className="text-xs font-semibold text-blue-700">Enregistrer une enchère en direct</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <select className="select text-sm" value={nouvelleEnchereMembre} onChange={e => setNouvelleEnchereMembre(e.target.value)}>
+                    <option value="">— Membre —</option>
+                    {membresEligiblesGain
+                      .filter(m => !encheresEnAttente.some(e => e.idMembre === m.id))
+                      .map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
+                  </select>
+                  <input type="number" min="0" max={cycleActuel?.montantCollecteReel || cycleActuel?.montantCollectePrevu || undefined} className="input text-sm" placeholder="Montant (FCFA)"
+                    value={nouvelleEnchereMontant} onChange={e => setNouvelleEnchereMontant(e.target.value)}/>
+                </div>
+                <select className="select text-sm" value={nouvelleEnchereCaisseId} onChange={e => setNouvelleEnchereCaisseId(e.target.value)}>
+                  <option value="">— Caisse bénéficiaire de l'enchère —</option>
+                  {banques.filter(c => c.statut !== 'inactive').map(c => <option key={c.id} value={c.id}>{c.nom}</option>)}
+                </select>
+                <button onClick={handleAjouterEnchere} disabled={!nouvelleEnchereMembre || !nouvelleEnchereMontant || !nouvelleEnchereCaisseId}
+                  className="btn-secondary w-full justify-center text-sm">
+                  <Gavel size={14}/> Ajouter cette enchère
+                </button>
+              </div>
+
               {encheresEnAttente.length > 0 ? (
                 <>
-                  <p className="text-xs font-semibold text-gray-600">Enchères enregistrées — sélectionnez le gagnant :</p>
+                  <p className="text-xs font-semibold text-gray-600">Enchères enregistrées — la meilleure offre est proposée automatiquement :</p>
                   {encheresEnAttente.map(e => (
                     <label key={e.id}
                       className={clsx('flex items-center gap-3 p-3 rounded-xl border-2 cursor-pointer transition-all',
-                        Number(enchereIdGagnant) === e.id ? 'border-amber-400 bg-amber-50' : 'border-gray-200 hover:border-amber-300')}>
+                        enchereIdGagnant === e.id ? 'border-amber-400 bg-amber-50' : 'border-gray-200 hover:border-amber-300',
+                        meilleureEnchere?.id === e.id && 'ring-1 ring-amber-300')}>
                       <input type="radio" name="enc_gagnant" value={e.id}
-                        checked={Number(enchereIdGagnant) === e.id}
+                        checked={enchereIdGagnant === e.id}
                         onChange={() => { setEnchereIdGagnant(String(e.id)); setMiseGagnante(String(e.montantEnchere)); }}/>
                       <div className="flex-1">
                         <p className="font-bold text-gray-800">{e.nomMembre}</p>
                         <p className="text-xs text-gray-500">Mise : <strong className="text-amber-600">{fmt(e.montantEnchere)}</strong></p>
                       </div>
+                      {meilleureEnchere?.id === e.id && <Badge variant="amber">Meilleure offre</Badge>}
                     </label>
                   ))}
+                  <button onClick={handleCloturerEncheres} className="btn-primary w-full justify-center">
+                    <Trophy size={15}/> Clôturer les enchères — attribuer au meilleur offrant
+                  </button>
                   {enchereIdGagnant && (
                     <>
                       <div className="grid grid-cols-2 gap-2 text-xs">
@@ -481,10 +692,10 @@ function FeuillePresenceTontine({ reunion, onClose }) {
                         <div className="col-span-2 p-2 bg-green-50 rounded-lg"><span className="text-gray-400">Net versé au gagnant</span><br/><strong className="text-green-600 text-base">{fmt(montantPot - Number(miseGagnante))}</strong></div>
                       </div>
                       <button onClick={() => {
-                        const enc = encheres.find(e => e.id === Number(enchereIdGagnant));
-                        if (enc) handleConfirmerEnchere(enc.nomMembre, enc.idMembre, miseGagnante);
-                      }} className="btn-primary w-full justify-center">
-                        <Trophy size={15}/> Confirmer le gagnant de l'enchère
+                        const enc = encheres.find(e => e.id === enchereIdGagnant);
+                        if (enc) handleConfirmerEnchere(enc.idPart);
+                      }} className="btn-secondary w-full justify-center">
+                        <Trophy size={15}/> Désigner manuellement cette offre
                       </button>
                     </>
                   )}
@@ -492,19 +703,23 @@ function FeuillePresenceTontine({ reunion, onClose }) {
               ) : (
                 // Saisie manuelle
                 <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 space-y-3">
-                  <p className="text-xs font-semibold text-amber-700">Aucune enchère préenregistrée — saisie manuelle</p>
+                  <p className="text-xs font-semibold text-amber-700">Aucune offre saisie — enregistrer puis désigner manuellement une offre (dérogation)</p>
                   <select className="select" value={enchereIdGagnant} onChange={e => setEnchereIdGagnant(e.target.value)}>
                     <option value="">— Sélectionner le gagnant —</option>
-                    {membresDeLatontine.map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
+                    {membresEligiblesGain.map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
                   </select>
                   <input type="number" className="input" placeholder="Montant de la mise gagnante (FCFA)"
                     value={miseGagnante} onChange={e => setMiseGagnante(e.target.value)}/>
+                  <select className="select" value={miseGagnanteCaisseId} onChange={e => setMiseGagnanteCaisseId(e.target.value)}>
+                    <option value="">— Caisse bénéficiaire de l'enchère —</option>
+                    {banques.filter(c => c.statut !== 'inactive').map(c => <option key={c.id} value={c.id}>{c.nom}</option>)}
+                  </select>
                   {enchereIdGagnant && miseGagnante && (() => {
-                    const m = membres.find(x => x.id === Number(enchereIdGagnant));
+                    const m = membres.find(x => x.id === enchereIdGagnant);
                     return m ? (
-                      <button onClick={() => handleConfirmerEnchere(`${m.nom} ${m.prenom}`, m.id, miseGagnante)}
+                      <button onClick={handleEnregistrerEtDesignerManuellement}
                         className="btn-primary w-full justify-center">
-                        <Trophy size={15}/> Confirmer le gagnant
+                        <Trophy size={15}/> Enregistrer l'offre et désigner le gagnant
                       </button>
                     ) : null;
                   })()}
@@ -555,13 +770,29 @@ function FeuillePresenceTontine({ reunion, onClose }) {
             {gagnant && (
               <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 flex items-center gap-3">
                 <Trophy size={20} className="text-amber-500 shrink-0"/>
-                <div>
+                <div className="flex-1 min-w-0">
                   <p className="font-bold text-amber-900 text-sm">{gagnant.nomMembre}</p>
                   <p className="text-xs text-amber-600">
                     {TYPE_ICONS[typeAttr]} {TYPE_LABELS[typeAttr]} ·{' '}
                     {gagnant.mise ? `Mise ${fmt(gagnant.mise)} - Net ${fmt(gagnant.montantPot)}` : fmt(gagnant.montantPot)}
                   </p>
                 </div>
+                {gagnant.idBulletin && (
+                  <div className="shrink-0 flex items-center gap-1.5">
+                    <button onClick={() => { setModeVersement('especes'); setReferenceVersement(''); setVersementModal(true); }}
+                      className="text-xs px-2.5 py-1.5 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700">
+                      Verser le gain
+                    </button>
+                    <button onClick={() => { setRetenueLibelle(''); setRetenueMontant(''); setRetenueCaisseId(''); setRetenueModal(true); }}
+                      className="text-xs px-2.5 py-1.5 bg-white border border-amber-300 text-amber-700 rounded-lg font-medium hover:bg-amber-50">
+                      + Retenue
+                    </button>
+                    <button onClick={async () => { const url = await ouvrirBulletinPdf(gagnant.idBulletin); if (url) setBulletinUrl(url); }}
+                      className="text-xs px-2.5 py-1.5 bg-amber-600 text-white rounded-lg font-medium hover:bg-amber-700 flex items-center gap-1">
+                      <FileText size={12}/> Bulletin
+                    </button>
+                  </div>
+                )}
               </div>
             )}
 
@@ -578,50 +809,138 @@ function FeuillePresenceTontine({ reunion, onClose }) {
           </button>
         </div>
       )}
+
+      <Modal open={!!bulletinUrl} onClose={() => setBulletinUrl(null)} title="Bulletin de gain" size="xl">
+        {bulletinUrl && (
+          <iframe src={bulletinUrl} title="Bulletin de gain" className="w-full rounded-xl border border-gray-200" style={{ height: '75vh' }} />
+        )}
+      </Modal>
+
+      <Modal open={versementModal} onClose={() => setVersementModal(false)} title="Verser le gain au bénéficiaire"
+        footer={<>
+          <button onClick={() => setVersementModal(false)} className="btn-secondary">Annuler</button>
+          <button onClick={async () => {
+            const bulletin = await payerBulletin(gagnant.idBulletin, modeVersement, referenceVersement);
+            if (bulletin) setVersementModal(false);
+          }} disabled={modeVersement !== 'especes' && !referenceVersement.trim()} className="btn-primary">Confirmer le versement</button>
+        </>}>
+        <p className="text-xs text-gray-500 mb-4">Le net sort de la caisse de la tontine et les retenues sont imputées dans le PV.</p>
+        <FormField label="Mode de versement" required>
+          <select className="select" value={modeVersement} onChange={e => setModeVersement(e.target.value)}>
+            <option value="especes">Espèces</option><option value="cheque">Chèque</option><option value="virement">Virement</option><option value="mobile_money">Mobile Money</option><option value="carte_bancaire">Carte bancaire</option>
+          </select>
+        </FormField>
+        {modeVersement !== 'especes' && <FormField label="Référence du paiement" required><input className="input" value={referenceVersement} onChange={e => setReferenceVersement(e.target.value)} /></FormField>}
+      </Modal>
+
+      <Modal open={retenueModal} onClose={() => setRetenueModal(false)} title="Ajouter une retenue manuelle"
+        footer={<>
+          <button onClick={() => setRetenueModal(false)} className="btn-secondary">Annuler</button>
+          <button
+            onClick={async () => {
+              if (!retenueLibelle.trim() || !retenueMontant || Number(retenueMontant) <= 0) return;
+              const b = await ajouterRetenueBulletin(gagnant.idBulletin, retenueLibelle.trim(), retenueMontant, retenueCaisseId);
+              if (b) setRetenueModal(false);
+            }}
+            disabled={!retenueLibelle.trim() || !retenueMontant || Number(retenueMontant) <= 0 || !retenueCaisseId}
+            className={clsx('btn-primary', (!retenueLibelle.trim() || !retenueMontant || Number(retenueMontant) <= 0 || !retenueCaisseId) && 'opacity-40 cursor-not-allowed')}>
+            Ajouter
+          </button>
+        </>}>
+        <p className="text-xs text-gray-500 mb-3">
+          Priorité 5 du cahier des charges — frais d'organisation, décision d'AG, ou toute autre
+          obligation non couverte automatiquement (prêt, sanction, mutuelle, assurance). Possible
+          uniquement avant toute signature du bulletin.
+        </p>
+        <FormField label="Libellé" required>
+          <input className="input" placeholder="Ex : Frais d'organisation réunion (hôte)" value={retenueLibelle} onChange={e => setRetenueLibelle(e.target.value)} autoFocus/>
+        </FormField>
+        <FormField label="Montant (FCFA)" required>
+          <input type="number" className="input" placeholder="10000" value={retenueMontant} onChange={e => setRetenueMontant(e.target.value)}/>
+        </FormField>
+        <FormField label="Caisse de destination" required hint="La retenue sera affectée à cette caisse au moment du versement.">
+          <select className="select" value={retenueCaisseId} onChange={e => setRetenueCaisseId(e.target.value)}>
+            <option value="">— Sélectionner une caisse —</option>
+            {banques.filter(caisse => caisse.statut === 'active').map(caisse => (
+              <option key={caisse.id} value={caisse.id}>{caisse.nom} — solde {fmt(caisse.totalSolde)}</option>
+            ))}
+          </select>
+        </FormField>
+      </Modal>
     </div>
   );
 }
 
 function RapportSeance({ reunion, transactions, membres, onClose }) {
-  const txs = transactions.filter(t => t.reunionId === reunion.id);
+  const { tontines, cyclesTontine, banques } = useApp();
+  const txs = transactions.filter(t => t.idReunion === reunion.id);
 
-  const totalEntrees = txs.filter(t => TX_TYPES.find(tt => tt.value === t.type)?.dir === 'entree')
-    .reduce((s, t) => s + t.montant, 0);
-  const totalSorties = txs.filter(t => TX_TYPES.find(tt => tt.value === t.type)?.dir === 'sortie')
-    .reduce((s, t) => s + t.montant, 0);
-  const totalBanque  = txs.filter(t => t.type === 'depot_banque')
-    .reduce((s, t) => s + t.montant, 0);
-  const soldeSeance  = totalEntrees - totalSorties;
+  // reunion.beneficiairesSeance n'a jamais existé côté API — dérivé ici de la vraie
+  // source de vérité (cyclesTontine), comme dans FeuillePresenceTontine.
+  const beneficiairesSeance = useMemo(() => (cyclesTontine || [])
+    .filter(c => c.idReunion === reunion.id && c.statut === 'clos')
+    .map(c => {
+      const t = tontines.find(tt => tt.id === c.idTontine);
+      return {
+        idTontine: c.idTontine, nomTontine: t?.nom || '',
+        typeAttribution: t?.typeAttribution, nomMembre: c.gagnantNom,
+        numeroTour: c.numeroCycle, montantEnchere: c.montantEnchere,
+        montantPot: c.montantCollecteReel, dateAttrib: c.dateCloture, idBulletin: c.idBulletin,
+      };
+    }), [cyclesTontine, tontines, reunion.id]);
 
-  const txByType = TX_TYPES.reduce((acc, tt) => {
-    const groupe = txs.filter(t => t.type === tt.value);
-    if (groupe.length > 0) acc[tt.value] = { meta: tt, items: groupe };
-    return acc;
-  }, {});
+  // Le PV est un document de contrôle : chaque mouvement doit être rattaché à
+  // sa caisse. Les mouvements sans caisse restent visibles dans un groupe dédié
+  // plutôt que d'être confondus avec une caisse réelle.
+  const transactionsParCaisse = useMemo(() => {
+    const groupes = new Map();
+    txs.forEach((tx) => {
+      const idCaisse = tx.idCaisse || tx.idBanque || null;
+      const caisse = banques.find((b) => b.id === idCaisse);
+      const cle = idCaisse || '__sans_caisse__';
+      if (!groupes.has(cle)) {
+        groupes.set(cle, {
+          idCaisse,
+          nomCaisse: tx.nomCaisse || caisse?.nom || 'Sans caisse affectée',
+          items: [],
+        });
+      }
+      groupes.get(cle).items.push(tx);
+    });
+
+    return [...groupes.values()].map((groupe) => {
+      const totalEntrees = groupe.items
+        .filter((tx) => TX_TYPES.find((type) => type.value === tx.type)?.dir === 'entree' && !tx.note?.includes('Imputation sur gain'))
+        .reduce((somme, tx) => somme + tx.montant, 0);
+      const totalSorties = groupe.items
+        .filter((tx) => TX_TYPES.find((type) => type.value === tx.type)?.dir === 'sortie')
+        .reduce((somme, tx) => somme + tx.montant, 0);
+      const totalBanque = groupe.items
+        .filter((tx) => tx.type === 'depot_banque')
+        .reduce((somme, tx) => somme + tx.montant, 0);
+
+      return { ...groupe, totalEntrees, totalSorties, totalBanque, soldeNet: totalEntrees - totalSorties };
+    });
+  }, [txs, banques]);
 
   const tauxPresence = reunion.cloture && (reunion.cloture.presents + reunion.cloture.absents) > 0
     ? Math.round(reunion.cloture.presents / (reunion.cloture.presents + reunion.cloture.absents) * 100)
     : null;
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-box max-w-3xl w-full" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
-          <div className="flex items-center gap-2">
-            <FileText size={18} className="text-primary-600"/>
-            <h3 className="font-bold text-gray-900">Procès-verbal — Réunion N°{reunion.numero}</h3>
-          </div>
-          <div className="flex gap-2">
-            <button onClick={() => window.print()} className="btn-secondary text-xs py-1.5">
-              <Printer size={13}/> Imprimer
-            </button>
-            <button onClick={onClose} className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100">
-              <X size={16}/>
-            </button>
-          </div>
-        </div>
-
-        <div id="rapport-print" className="overflow-y-auto max-h-[80vh] p-6 space-y-5 text-sm">
+    <Modal open={true} onClose={onClose} size="full"
+      title={<span className="flex items-center gap-2"><FileText size={18} className="text-primary-600"/>Procès-verbal — Réunion N°{reunion.numero}</span>}
+      footer={<>
+        <button onClick={() => {
+          const popup = window.open('', '_blank');
+          request(`/reunions/${reunion.id}/pv-pdf`).then(({ pdf_url: url }) => {
+            const origin = API_BASE.replace(/\/api\/?$/, '');
+            if (popup) popup.location.href = /^https?:\/\//i.test(url) ? url : `${origin}${url.startsWith('/') ? '' : '/'}${url}`;
+          }).catch(() => popup?.close());
+        }} className="btn-secondary"><Printer size={14}/> Générer le PDF</button>
+        <button onClick={onClose} className="btn-primary ml-auto">Fermer</button>
+      </>}>
+        <div id="rapport-print" className="space-y-5 text-sm">
           {/* En-tête officiel */}
           <div className="text-center border-b-2 border-primary-200 pb-4">
             <p className="text-xs text-gray-400 uppercase tracking-widest mb-1">Procès-verbal de séance</p>
@@ -702,71 +1021,62 @@ function RapportSeance({ reunion, transactions, membres, onClose }) {
               ? <p className="text-gray-400 italic text-sm">Aucune transaction enregistrée pour cette séance</p>
               : (
                 <>
-                  {/* Tableau des transactions */}
-                  <div className="overflow-x-auto rounded-xl border border-gray-200">
-                    <table className="w-full text-xs">
-                      <thead className="bg-gray-50">
-                        <tr>
-                          <th className="text-left p-2.5 font-semibold text-gray-600">Heure</th>
-                          <th className="text-left p-2.5 font-semibold text-gray-600">Type</th>
-                          <th className="text-left p-2.5 font-semibold text-gray-600">Membre</th>
-                          <th className="text-left p-2.5 font-semibold text-gray-600">Libellé</th>
-                          <th className="text-right p-2.5 font-semibold text-green-600">Entrée</th>
-                          <th className="text-right p-2.5 font-semibold text-red-500">Sortie</th>
-                          <th className="text-right p-2.5 font-semibold text-blue-600">Banque</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-100">
-                        {txs.map(tx => {
-                          const meta = TX_TYPES.find(t => t.value === tx.type);
-                          const isEntree = meta?.dir === 'entree';
-                          const isSortie = meta?.dir === 'sortie';
-                          const isBanque = tx.type === 'depot_banque';
-                          return (
-                            <tr key={tx.id} className="hover:bg-gray-50">
-                              <td className="p-2.5 text-gray-400 font-mono">{tx.heure}</td>
-                              <td className="p-2.5">
-                                <span className="text-xs">{meta?.icon} {meta?.label || tx.type}</span>
-                              </td>
-                              <td className="p-2.5 font-medium text-gray-700">{tx.nomMembre || '—'}</td>
-                              <td className="p-2.5 text-gray-500 italic truncate max-w-[140px]">{tx.libelle || '—'}</td>
-                              <td className="p-2.5 text-right font-bold text-green-600">{isEntree ? fmt(tx.montant) : '—'}</td>
-                              <td className="p-2.5 text-right font-bold text-red-500">{isSortie ? fmt(tx.montant) : '—'}</td>
-                              <td className="p-2.5 text-right font-bold text-blue-600">{isBanque ? fmt(tx.montant) : '—'}</td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                      <tfoot className="bg-gray-50 border-t-2 border-gray-200 font-bold text-xs">
-                        <tr>
-                          <td colSpan={4} className="p-2.5 text-gray-700">TOTAUX</td>
-                          <td className="p-2.5 text-right text-green-600">{fmt(totalEntrees)}</td>
-                          <td className="p-2.5 text-right text-red-500">{fmt(totalSorties)}</td>
-                          <td className="p-2.5 text-right text-blue-600">{fmt(totalBanque)}</td>
-                        </tr>
-                        <tr className="bg-primary-50">
-                          <td colSpan={4} className="p-2.5 text-primary-700 font-bold">SOLDE NET SÉANCE (entrées − sorties)</td>
-                          <td colSpan={3} className={clsx('p-2.5 text-right text-base font-black', soldeSeance >= 0 ? 'text-primary-700' : 'text-red-600')}>
-                            {soldeSeance >= 0 ? '+' : ''}{fmt(soldeSeance)}
-                          </td>
-                        </tr>
-                      </tfoot>
-                    </table>
-                  </div>
-
-                  {/* Récapitulatif par rubrique */}
-                  <div className="mt-3 grid grid-cols-2 gap-2">
-                    {Object.values(txByType).map(({ meta, items }) => {
-                      const total = items.reduce((s, t) => s + t.montant, 0);
-                      return (
-                        <div key={meta.value} className="flex items-center justify-between p-2 bg-gray-50 rounded-lg">
-                          <span className="text-xs text-gray-600">{meta.icon} {meta.label}</span>
-                          <span className={clsx('text-xs font-bold', meta.dir === 'entree' ? 'text-green-600' : meta.dir === 'sortie' ? 'text-red-500' : 'text-blue-600')}>
-                            {fmt(total)} <span className="text-gray-400 font-normal">({items.length})</span>
-                          </span>
+                  <div className="space-y-4">
+                    {transactionsParCaisse.map((groupe) => (
+                      <div key={groupe.idCaisse || '__sans_caisse__'} className="overflow-x-auto rounded-xl border border-gray-200">
+                        <div className="flex items-center justify-between gap-3 px-3 py-2.5 bg-slate-50 border-b border-gray-200">
+                          <p className="font-bold text-gray-800">Caisse : {groupe.nomCaisse}</p>
+                          <Badge variant={groupe.idCaisse ? 'blue' : 'amber'}>{groupe.items.length} opération(s)</Badge>
                         </div>
-                      );
-                    })}
+                        <table className="w-full text-xs">
+                          <thead className="bg-gray-50">
+                            <tr>
+                              <th className="text-left p-2.5 font-semibold text-gray-600">Heure</th>
+                              <th className="text-left p-2.5 font-semibold text-gray-600">Type</th>
+                              <th className="text-left p-2.5 font-semibold text-gray-600">Membre</th>
+                              <th className="text-left p-2.5 font-semibold text-gray-600">Libellé</th>
+                              <th className="text-right p-2.5 font-semibold text-green-600">Entrée</th>
+                              <th className="text-right p-2.5 font-semibold text-red-500">Sortie</th>
+                              <th className="text-right p-2.5 font-semibold text-blue-600">Banque</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100">
+                            {groupe.items.map((tx) => {
+                              const meta = TX_TYPES.find((type) => type.value === tx.type);
+                              const isEntree = meta?.dir === 'entree';
+                              const isSortie = meta?.dir === 'sortie';
+                              const isBanque = tx.type === 'depot_banque';
+                              const isImputation = tx.note?.includes('Imputation sur gain');
+                              return (
+                                <tr key={tx.id} className="hover:bg-gray-50">
+                                  <td className="p-2.5 text-gray-400 font-mono">{tx.heure}</td>
+                                  <td className="p-2.5"><span>{meta?.icon} {meta?.label || tx.type}{isImputation ? ' (imputation)' : ''}</span></td>
+                                  <td className="p-2.5 font-medium text-gray-700">{tx.nomMembre || '—'}</td>
+                                  <td className="p-2.5 text-gray-500 italic truncate max-w-[140px]">{tx.libelle || '—'}</td>
+                                  <td className="p-2.5 text-right font-bold text-green-600">{isEntree && !isImputation ? fmt(tx.montant) : '—'}</td>
+                                  <td className="p-2.5 text-right font-bold text-red-500">{isSortie ? fmt(tx.montant) : '—'}</td>
+                                  <td className="p-2.5 text-right font-bold text-blue-600">{isBanque ? fmt(tx.montant) : '—'}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                          <tfoot className="bg-gray-50 border-t-2 border-gray-200 font-bold text-xs">
+                            <tr>
+                              <td colSpan={4} className="p-2.5 text-gray-700">TOTAUX — {groupe.nomCaisse}</td>
+                              <td className="p-2.5 text-right text-green-600">{fmt(groupe.totalEntrees)}</td>
+                              <td className="p-2.5 text-right text-red-500">{fmt(groupe.totalSorties)}</td>
+                              <td className="p-2.5 text-right text-blue-600">{fmt(groupe.totalBanque)}</td>
+                            </tr>
+                            <tr className="bg-primary-50">
+                              <td colSpan={4} className="p-2.5 text-primary-700 font-bold">SOLDE NET — {groupe.nomCaisse}</td>
+                              <td colSpan={3} className={clsx('p-2.5 text-right text-base font-black', groupe.soldeNet >= 0 ? 'text-primary-700' : 'text-red-600')}>
+                                {groupe.soldeNet >= 0 ? '+' : ''}{fmt(groupe.soldeNet)}
+                              </td>
+                            </tr>
+                          </tfoot>
+                        </table>
+                      </div>
+                    ))}
                   </div>
                 </>
               )
@@ -774,14 +1084,14 @@ function RapportSeance({ reunion, transactions, membres, onClose }) {
           </div>
 
           {/* Section IV — Bénéficiaires tontine */}
-          {(reunion.beneficiairesSeance || []).length > 0 && (
+          {(beneficiairesSeance || []).length > 0 && (
             <div>
               <h4 className="font-bold text-gray-700 uppercase text-xs tracking-wider mb-3 flex items-center gap-2">
                 <span className="w-5 h-5 rounded-full bg-amber-500 text-white text-xs flex items-center justify-center font-bold">IV</span>
                 Bénéficiaires de la tontine — Séance N°{reunion.numero}
               </h4>
               <div className="space-y-2">
-                {reunion.beneficiairesSeance.map((b, i) => {
+                {beneficiairesSeance.map((b, i) => {
                   const typeIcon = { rotation: '', tirage: '', enchere: '' }[b.typeAttribution] || '';
                   const typeLabel = { rotation: 'Rotation fixe', tirage: 'Tirage au sort', enchere: 'Enchère' }[b.typeAttribution] || b.typeAttribution;
                   return (
@@ -817,29 +1127,38 @@ function RapportSeance({ reunion, transactions, membres, onClose }) {
           {reunion.cloture?.observation && (
             <div className="p-4 bg-amber-50 rounded-xl border border-amber-100">
               <h4 className="font-bold text-gray-700 uppercase text-xs tracking-wider mb-2 flex items-center gap-2">
-                <span className="w-5 h-5 rounded-full bg-primary-600 text-white text-xs flex items-center justify-center font-bold">{(reunion.beneficiairesSeance||[]).length > 0 ? 'V' : 'IV'}</span>
+                <span className="w-5 h-5 rounded-full bg-primary-600 text-white text-xs flex items-center justify-center font-bold">{(beneficiairesSeance||[]).length > 0 ? 'V' : 'IV'}</span>
                 Décisions & observations
               </h4>
               <p className="text-gray-700 italic text-sm">« {reunion.cloture.observation} »</p>
             </div>
           )}
 
-          {/* Signatures */}
+          {/* Signatures du PV */}
           <div className="border-t-2 border-dashed border-gray-200 pt-4 mt-2">
-            <div className="grid grid-cols-2 gap-8 text-center text-xs text-gray-500">
-              <div>
-                <p className="font-semibold mb-8">Le Président de séance</p>
-                <p className="border-t border-gray-300 pt-1">{reunion.ouverture?.presidentSeance || '________________________'}</p>
-              </div>
-              <div>
-                <p className="font-semibold mb-8">Le Secrétaire de séance</p>
-                <p className="border-t border-gray-300 pt-1">{reunion.ouverture?.secretaireSeance || '________________________'}</p>
-              </div>
+            <h4 className="font-bold text-gray-700 uppercase text-xs tracking-wider mb-3 flex items-center gap-2">
+              <Lock size={12} className={reunion.verrouillee ? 'text-green-600' : 'text-amber-500'}/>
+              Signatures {reunion.verrouillee ? '— PV verrouillé définitivement' : '— en attente de signature du Président'}
+            </h4>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center text-xs">
+              {SIGNATAIRES_ATTENDUS.map(slot => {
+                const sig = (reunion.signatures || []).find(s => s.role === slot.role);
+                return (
+                  <div key={slot.role} className={clsx('rounded-xl border p-3', sig ? 'bg-green-50 border-green-200' : 'border-dashed border-gray-200')}>
+                    <p className="text-gray-400 mb-1">{acteurRoleLabel[slot.role] || slot.label}</p>
+                    {sig ? (
+                      <>
+                        <p className="font-semibold text-green-700">{sig.nom}</p>
+                        <p className="text-[10px] text-gray-400 mt-0.5">{new Date(sig.signeLe).toLocaleString('fr-FR')}</p>
+                      </>
+                    ) : <p className="italic text-gray-300">Non signé</p>}
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -912,17 +1231,27 @@ function TypePicker({ onSelect }) {
 // ── Wrapper formulaire intelligent (sans hook conditionnel) ────
 // Tous les états "extra" sont dans form._idTontine pour éviter
 // les hooks conditionnels (violation React)
-function SmartFormWrapper({ type, reunion, membres, banques, prets, sanctions, tontines, membresParTontine, onSubmit, onCancel }) {
+function SmartFormWrapper({ type, reunion, membres, banques, prets, sanctions, tontines, membresParTontine, soldeDisponible = Infinity, onSubmit, onCancel }) {
   const [form, setForm] = useState({
     type, montant: '', libelle: '', idMembre: '', idSanction: '', idPret: '',
     idBanque: '', sousType: 'autre',
+    modePaiement: 'especes', detailsPaiement: '',
     _idTontine: '',   // état partagé pour cotisation + attribution_tour
   });
   const sf = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const meta = TX_TYPES.find(t => t.value === type);
+  const estSortie = meta?.dir === 'sortie' || meta?.dir === 'banque';
+  const depasseSoldeCaisse = estSortie && Number(form.montant || 0) > soldeDisponible;
 
   const handleSubmit = () => {
     if (!form.montant || Number(form.montant) <= 0) return;
+    if (!isModePaiementValid(form.modePaiement, form.detailsPaiement)) return;
+    if (depasseSoldeCaisse) return; // RG-CAI-006 : solde caisse jamais négatif
+    if (type === 'remboursement_pret' && !form.idPret) return; // on ne peut pas rembourser « dans le vide »
+    if (type === 'pret_accorde' && !form.idMembre) return;
+    // Sans caisse choisie, l'argent n'existe nulle part : ni crédité ni débité
+    // réellement, juste une ligne de journal — on ne laisse plus passer ça.
+    if (type !== 'depot_banque' && type !== 'remboursement_pret' && !form.idBanque) return;
     // Nettoyage des champs internes avant envoi
     const { _idTontine, ...cleanForm } = form;
     onSubmit(cleanForm);
@@ -931,9 +1260,14 @@ function SmartFormWrapper({ type, reunion, membres, banques, prets, sanctions, t
   // Validation selon le type
   const isValid = (() => {
     if (!form.montant || Number(form.montant) <= 0) return false;
+    if (!isModePaiementValid(form.modePaiement, form.detailsPaiement)) return false;
+    if (depasseSoldeCaisse) return false;
     if (type === 'depot_banque' && !form.idBanque) return false;
     if (type === 'depot_banque' && !form.idMembre) return false;
     if (type === 'attribution_tour' && !form.idMembre) return false;
+    if (type === 'remboursement_pret' && !form.idPret) return false;
+    if (type === 'pret_accorde' && !form.idMembre) return false;
+    if (type !== 'depot_banque' && type !== 'remboursement_pret' && !form.idBanque) return false;
     return true;
   })();
 
@@ -944,13 +1278,41 @@ function SmartFormWrapper({ type, reunion, membres, banques, prets, sanctions, t
         membres={membres} banques={banques} prets={prets} sanctions={sanctions}
         tontines={tontines} membresParTontine={membresParTontine}
       />
+      {/* Caisse concernée — obligatoire partout sauf dépôt banque (a son propre
+          sélecteur dédié plus riche ci-dessus) et remboursement de prêt (la caisse
+          du prêt lui-même fait foi, imposée côté serveur). Sans ce champ, l'argent
+          affiché dans le PV de séance n'a jamais réellement existé dans aucune
+          caisse — juste une ligne de journal sans contrepartie. */}
+      {type !== 'depot_banque' && type !== 'remboursement_pret' && (
+        <FormField label="Caisse concernée" required>
+          <select className="select" value={form.idBanque} onChange={e => sf('idBanque', e.target.value)}>
+            <option value="">— Sélectionner la caisse —</option>
+            {banques.map(b => <option key={b.id} value={b.id}>{b.nom} — Solde : {fmt(b.totalSolde)}</option>)}
+          </select>
+        </FormField>
+      )}
+      <div className="pt-1 border-t border-gray-100">
+        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2 mt-3">Règlement — toute entrée/sortie de caisse (RG-CAI-011)</p>
+        <ModePaiementFields
+          modePaiement={form.modePaiement}
+          detailsPaiement={form.detailsPaiement}
+          onModeChange={(v) => setForm(f => ({ ...f, modePaiement: v, detailsPaiement: '' }))}
+          onDetailsChange={(v) => sf('detailsPaiement', v)}
+        />
+      </div>
       {form.montant && Number(form.montant) > 0 && (
         <div className={clsx('p-2.5 rounded-xl text-center border',
+          depasseSoldeCaisse ? 'bg-red-50 border-red-300 text-red-700' :
           meta?.dir === 'entree' ? 'bg-green-50 border-green-200 text-green-800' :
           meta?.dir === 'sortie' ? 'bg-red-50 border-red-200 text-red-800' :
           'bg-blue-50 border-blue-200 text-blue-800')}>
           <p className="text-xs">Montant à enregistrer</p>
           <p className="text-lg font-black">{fmt(Number(form.montant))} FCFA</p>
+          {depasseSoldeCaisse && (
+            <p className="text-xs font-semibold mt-1">
+              Solde de caisse insuffisant — disponible : {fmt(soldeDisponible)} FCFA
+            </p>
+          )}
         </div>
       )}
       <div className="flex gap-2 pt-1">
@@ -974,7 +1336,7 @@ function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, san
 
   // ── Pré-calculs (sans hooks conditionnels) ──────────────────
   const tontinesActives   = tontines.filter(t => t.statut === 'active');
-  const tontineChoisie    = tontines.find(t => t.id === Number(form._idTontine));
+  const tontineChoisie    = tontines.find(t => t.id === form._idTontine);
   const pretsActifs       = prets.filter(p => ['en_cours', 'en_retard'].includes(p.statut));
   const sanctionsImpayees = sanctions.filter(s => s.statut === 'impayee');
 
@@ -986,7 +1348,7 @@ function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, san
     : membres;
 
   const membreDansTontine = tontineChoisie && form.idMembre
-    ? membresParTontine.find(mt => mt.idTontine === tontineChoisie.id && mt.idMembre === Number(form.idMembre) && mt.statut === 'actif')
+    ? membresParTontine.find(mt => mt.idTontine === tontineChoisie.id && mt.idMembre === form.idMembre && mt.statut === 'actif')
     : null;
 
   const membresAttrTour = tontineChoisie
@@ -994,8 +1356,8 @@ function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, san
         .map(mt => membres.find(x => x.id === mt.idMembre)).filter(Boolean)
     : [];
 
-  const pretChoisi        = form.idPret    ? prets.find(p => p.id === Number(form.idPret))        : null;
-  const sanctionsMembre   = form.idMembre  ? sanctionsImpayees.filter(s => s.idMembre === Number(form.idMembre)) : sanctionsImpayees;
+  const pretChoisi        = form.idPret    ? prets.find(p => p.id === form.idPret)        : null;
+  const sanctionsMembre   = form.idMembre  ? sanctionsImpayees.filter(s => s.idMembre === form.idMembre) : sanctionsImpayees;
 
   // ── Handlers ────────────────────────────────────────────────
   const onTontineChange = (val) => {
@@ -1003,55 +1365,55 @@ function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, san
   };
   const onMembreCotisChange = (val) => {
     sf('idMembre', val);
-    const t = tontines.find(x => x.id === Number(form._idTontine));
+    const t = tontines.find(x => x.id === form._idTontine);
     if (t && val) {
-      const mt = membresParTontine.find(x => x.idTontine === t.id && x.idMembre === Number(val) && x.statut === 'actif');
-      if (mt) { sf('montant', String(t.cotisation * mt.nombreParts)); sf('libelle', `Cotisation ${t.nom} — ${mt.nombreParts} part(s) — Séance N°${reunion.numero}`); }
+      const mt = membresParTontine.find(x => x.idTontine === t.id && x.idMembre === val && x.statut === 'actif');
+      if (mt) { sf('montant', String(t.cotisation * mt.nombreParts)); sf('libelle', `Cotisation ${t.nom} — ${mt.nombreParts} part(s) — Séance N°${reunion.numero}`); sf('idBanque', t.idCaisse || ''); }
     }
   };
   const onSanctionChange = (val) => {
     sf('idSanction', val);
-    const s = sanctions.find(x => x.id === Number(val));
+    const s = sanctions.find(x => x.id === val);
     if (s) { sf('montant', String(s.montant)); sf('libelle', `Amende — ${s.typeSanction} — ${s.nomMembre}`); sf('idMembre', String(s.idMembre)); }
   };
   const onPretChange = (val) => {
     sf('idPret', val);
-    const p = prets.find(x => x.id === Number(val));
+    const p = prets.find(x => x.id === val);
     if (p) { sf('idMembre', String(p.idMembre)); sf('montant', String(p.resteAPayer)); sf('libelle', `Remboursement prêt — ${p.nomMembre}`); }
   };
   const onTontineAttrChange = (val) => {
     sf('_idTontine', val); sf('idMembre', '');
-    const t = tontines.find(x => x.id === Number(val));
-    if (t) { sf('montant', String(t.cotisation * t.totalParts)); sf('libelle', `Versement pot — ${t.nom} — Séance N°${reunion.numero}`); }
+    const t = tontines.find(x => x.id === val);
+    if (t) { sf('montant', String(t.cotisation * t.totalParts)); sf('libelle', `Versement pot — ${t.nom} — Séance N°${reunion.numero}`); sf('idBanque', t.idCaisse || ''); }
   };
   const onBenefChange = (val) => {
     sf('idMembre', val);
-    const m = membres.find(x => x.id === Number(val));
+    const m = membres.find(x => x.id === val);
     if (m && tontineChoisie) sf('libelle', `Pot ${tontineChoisie.nom} - ${m.nom} ${m.prenom} — Séance N°${reunion.numero}`);
   };
   const onBanqueChange = (val) => {
     sf('idBanque', val);
-    const b = banques.find(x => x.id === Number(val));
-    const m = membres.find(x => x.id === Number(form.idMembre));
+    const b = banques.find(x => x.id === val);
+    const m = membres.find(x => x.id === form.idMembre);
     const depositaire = m ? `${m.nom} ${m.prenom}` : '';
     if (b) sf('libelle', `Dépôt ${b.nom}${depositaire ? ' — ' + depositaire : ''} — Séance N°${reunion.numero}`);
   };
   const onDeposantChange = (val) => {
     sf('idMembre', val);
-    const m = membres.find(x => x.id === Number(val));
-    const b = banques.find(x => x.id === Number(form.idBanque));
+    const m = membres.find(x => x.id === val);
+    const b = banques.find(x => x.id === form.idBanque);
     if (b && m) sf('libelle', `Dépôt ${b.nom} — ${m.nom} ${m.prenom} — Séance N°${reunion.numero}`);
   };
   const onAideEventChange = (val) => {
     sf('sousType', val);
     const def = AIDE_SOCIALE_MONTANTS[val] || 0;
     if (def > 0) sf('montant', String(def));
-    const m = membres.find(x => x.id === Number(form.idMembre));
+    const m = membres.find(x => x.id === form.idMembre);
     if (m) sf('libelle', `Aide sociale — ${AIDE_SOCIALE_LABELS[val]} — ${m.nom} ${m.prenom}`);
   };
   const onMembreAideChange = (val) => {
     sf('idMembre', val);
-    const m = membres.find(x => x.id === Number(val));
+    const m = membres.find(x => x.id === val);
     if (m && form.sousType) sf('libelle', `Aide sociale — ${AIDE_SOCIALE_LABELS[form.sousType] || ''} — ${m.nom} ${m.prenom}`);
   };
 
@@ -1178,7 +1540,7 @@ function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, san
         <div><p className="text-xs font-bold text-orange-800">Octroi de prêt</p><p className="text-xs text-orange-600">Décaissement — pensez à l'enregistrer dans Prêts</p></div>
       </div>
       <FormField label="Membre bénéficiaire" required>
-        <select className="select" value={form.idMembre} onChange={e => { sf('idMembre', e.target.value); const m = membres.find(x => x.id === Number(e.target.value)); if (m) sf('libelle', `Prêt accordé — ${m.nom} ${m.prenom}`); }}>
+        <select className="select" value={form.idMembre} onChange={e => { sf('idMembre', e.target.value); const m = membres.find(x => x.id === e.target.value); if (m) sf('libelle', `Prêt accordé — ${m.nom} ${m.prenom}`); }}>
           <option value="">— Sélectionner un membre —</option>
           {membres.map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
         </select>
@@ -1283,7 +1645,7 @@ function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, san
           {banques.map(b => (
             <button key={b.id} type="button" onClick={() => onBanqueChange(String(b.id))}
               className={clsx('p-3 rounded-xl border-2 text-left transition-all',
-                Number(form.idBanque) === b.id ? 'border-teal-400 bg-teal-50' : 'border-gray-200 bg-white hover:border-teal-200')}>
+                form.idBanque === b.id ? 'border-teal-400 bg-teal-50' : 'border-gray-200 bg-white hover:border-teal-200')}>
               <div className="flex items-center justify-between">
                 <p className="text-sm font-semibold text-gray-800">{b.nom}</p>
                 <p className="text-xs text-teal-600 font-bold">Solde : {fmt(b.totalSolde)}</p>
@@ -1304,7 +1666,7 @@ function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, san
       {form.idMembre && form.idBanque && (
         <div className="p-2.5 bg-teal-50 rounded-xl border border-teal-200 text-xs text-teal-800 flex items-center gap-1.5">
           <CheckCircle size={12}/>
-          Dépôt de <strong>{membres.find(m => m.id === Number(form.idMembre))?.nom} {membres.find(m => m.id === Number(form.idMembre))?.prenom}</strong> dans <strong>{banques.find(b => b.id === Number(form.idBanque))?.nom}</strong>
+          Dépôt de <strong>{membres.find(m => m.id === form.idMembre)?.nom} {membres.find(m => m.id === form.idMembre)?.prenom}</strong> dans <strong>{banques.find(b => b.id === form.idBanque)?.nom}</strong>
         </div>
       )}
     </div>
@@ -1343,120 +1705,39 @@ function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, san
 
 // ── Panneau Bénéficiaire de séance ────────────────────────────
 function BeneficiaireSeancePanel({ reunion }) {
-  const {
-    tontines, membres, membresParTontine, planningTours,
-    encheres, enregistrerBeneficiaireSeance, tirerAuSort,
-  } = useApp();
+  const { tontines, cyclesTontine, ouvrirBulletinPdf, ajouterRetenueBulletin, payerBulletin, annulerCycle, banques } = useApp();
+  const [bulletinUrl, setBulletinUrl] = useState(null);
+  const [retenueModal, setRetenueModal] = useState(null); // idBulletin ciblé
+  const [retenueLibelle, setRetenueLibelle] = useState('');
+  const [retenueMontant, setRetenueMontant] = useState('');
+  const [retenueCaisseId, setRetenueCaisseId] = useState('');
+  const [versementModal, setVersementModal] = useState(null);
+  const [modeVersement, setModeVersement] = useState('especes');
+  const [referenceVersement, setReferenceVersement] = useState('');
 
-  const [idTontine,    setIdTontine]    = useState('');
-  const [etape,        setEtape]        = useState('choix'); // 'choix' | 'designation' | 'confirme'
-  const [gagnant,      setGagnant]      = useState(null);
-  const [miseGagnante, setMiseGagnante] = useState('');
-  const [enchereIdGagnant, setEnchereIdGagnant] = useState('');
+  // Onglet purement informatif : affiche le(s) bénéficiaire(s) déjà désigné(s)
+  // cette séance, quel que soit le mode d'attribution (rotation/tirage/enchère).
+  // La désignation elle-même se fait exclusivement dans l'onglet Feuille
+  // Cotisation — ce panneau ne doit JAMAIS ouvrir ou clôturer de cycle lui-même,
+  // pour éviter tout risque de double-désignation en parallèle du flux principal.
+  const beneficiairesSeance = useMemo(() => (cyclesTontine || [])
+    .filter(c => c.idReunion === reunion.id && c.statut === 'clos')
+    .map(c => {
+      const t = tontines.find(tt => tt.id === c.idTontine);
+      return {
+        idCycle: c.id,
+        idTontine: c.idTontine, nomTontine: t?.nom || '',
+        typeAttribution: t?.typeAttribution, nomMembre: c.gagnantNom,
+        numeroTour: c.numeroCycle, montantEnchere: c.montantEnchere,
+        montantPot: c.montantCollecteReel, dateAttrib: c.dateCloture, idBulletin: c.idBulletin,
+      };
+    }), [cyclesTontine, tontines, reunion.id]);
 
-  const locked = reunion.statutReunion === 'cloturee';
-  const beneficiairesSeance = reunion.beneficiairesSeance || [];
-
-  const tontine = tontines.find(t => t.id === Number(idTontine));
-  const typeAttr = tontine?.typeAttribution;
-  const montantPot = tontine ? tontine.cotisation * tontine.totalParts : 0;
-
-  // Membres actifs de la tontine sélectionnée
-  const membresActifs = useMemo(() => {
-    if (!tontine) return [];
-    return membresParTontine
-      .filter(mt => mt.idTontine === tontine.id && mt.statut === 'actif')
-      .map(mt => {
-        const m = membres.find(x => x.id === mt.idMembre);
-        return m ? { ...m, nombreParts: mt.nombreParts } : null;
-      })
-      .filter(Boolean);
-  }, [tontine, membresParTontine, membres]);
-
-  // Bénéficiaire planifié pour cette tontine (rotation)
-  const tourPlanifieProchain = useMemo(() => {
-    if (!tontine || typeAttr !== 'rotation') return null;
-    const nbEncaisses = planningTours.filter(p => p.idTontine === tontine.id && p.statut === 'encaisse').length;
-    const nextNumero = nbEncaisses + 1;
-    return planningTours.find(p => p.idTontine === tontine.id && p.numeroTour === nextNumero && p.statut !== 'encaisse');
-  }, [tontine, typeAttr, planningTours]);
-
-  // Enchères en attente pour cette tontine
-  const encheresEnAttente = useMemo(() => {
-    if (!tontine || typeAttr !== 'enchere') return [];
-    const nbEncaisses = planningTours.filter(p => p.idTontine === tontine.id && p.statut === 'encaisse').length;
-    return encheres.filter(e => {
-      const rotation = e.idRotation;
-      return rotation !== undefined && e.statut === 'en_attente';
-    });
-  }, [tontine, typeAttr, encheres, planningTours]);
-
-  // Bénéficiaire déjà enregistré pour cette tontine dans la séance
-  const benefDejaEnregistre = beneficiairesSeance.find(b => b.idTontine === Number(idTontine));
-
-  const handleConfirmerRotation = () => {
-    if (!tourPlanifieProchain || !tontine) return;
-    enregistrerBeneficiaireSeance(reunion.id, {
-      idTontine: tontine.id,
-      nomTontine: tontine.nom,
-      typeAttribution: typeAttr,
-      idMembre: tourPlanifieProchain.idMembre,
-      nomMembre: tourPlanifieProchain.nomMembre,
-      montantPot,
-      numeroTour: tourPlanifieProchain.numeroTour,
-      modeDesignation: 'rotation',
-    });
-    setEtape('confirme');
-    setGagnant({ nomMembre: tourPlanifieProchain.nomMembre, montantPot });
-  };
-
-  const handleTirage = () => {
-    if (!tontine) return;
-    const nbEncaisses = planningTours.filter(p => p.idTontine === tontine.id && p.statut === 'encaisse').length;
-    const result = tirerAuSort(tontine.id, nbEncaisses + 1, reunion.date);
-    if (result) {
-      // enregistrerBeneficiaireSeance sera appelé dans tirerAuSort via addTourPlanning + marquerTourEncaisse
-      enregistrerBeneficiaireSeance(reunion.id, {
-        idTontine: tontine.id,
-        nomTontine: tontine.nom,
-        typeAttribution: 'tirage',
-        idMembre: result.idMembre,
-        nomMembre: result.nomMembre,
-        montantPot: result.montantPot,
-        numeroTour: nbEncaisses + 1,
-        modeDesignation: 'tirage_au_sort',
-      });
-      setGagnant({ nomMembre: result.nomMembre, montantPot: result.montantPot });
-      setEtape('confirme');
-    }
-  };
-
-  const handleConfirmerEnchere = () => {
-    if (!enchereIdGagnant || !tontine) return;
-    const enc = encheres.find(e => e.id === Number(enchereIdGagnant));
-    if (!enc) return;
-    const mise = Number(miseGagnante) || enc.montantEnchere;
-    enregistrerBeneficiaireSeance(reunion.id, {
-      idTontine: tontine.id,
-      nomTontine: tontine.nom,
-      typeAttribution: 'enchere',
-      idMembre: enc.idMembre,
-      nomMembre: enc.nomMembre,
-      montantPot: montantPot - mise,
-      montantEnchere: mise,
-      numeroTour: planningTours.filter(p => p.idTontine === tontine.id && p.statut === 'encaisse').length + 1,
-      modeDesignation: 'enchere',
-    });
-    setGagnant({ nomMembre: enc.nomMembre, montantPot: montantPot - mise, mise });
-    setEtape('confirme');
-  };
-
-  const resetForm = () => { setIdTontine(''); setEtape('choix'); setGagnant(null); setEnchereIdGagnant(''); setMiseGagnante(''); };
+  const typeLabel = { rotation: 'Rotation', tirage: 'Tirage au sort', enchere: 'Enchère' };
 
   return (
     <div className="space-y-4">
-      {/* Bénéficiaires déjà enregistrés */}
-      {beneficiairesSeance.length > 0 && (
+      {beneficiairesSeance.length > 0 ? (
         <div className="space-y-2">
           <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">Bénéficiaires désignés cette séance</p>
           {beneficiairesSeance.map((b, i) => (
@@ -1464,245 +1745,135 @@ function BeneficiaireSeancePanel({ reunion }) {
               <Trophy size={18} className="text-amber-500 shrink-0"/>
               <div className="flex-1 min-w-0">
                 <p className="font-bold text-amber-900">{b.nomMembre}</p>
-                <p className="text-xs text-amber-700">{b.nomTontine} — {b.typeAttribution === 'rotation' ? ' Rotation' : b.typeAttribution === 'tirage' ? ' Tirage' : ' Enchère'}</p>
+                <p className="text-xs text-amber-700">{b.nomTontine} — {typeLabel[b.typeAttribution] || b.typeAttribution}</p>
                 {b.montantEnchere > 0 && <p className="text-xs text-amber-600">Mise : {fmt(b.montantEnchere)} | Net reçu : {fmt(b.montantPot)}</p>}
                 {!b.montantEnchere && <p className="text-xs text-amber-600">Montant : {fmt(b.montantPot)}</p>}
               </div>
+              {b.idBulletin && (
+                <div className="shrink-0 flex items-center gap-1.5">
+                  <button onClick={() => { setModeVersement('especes'); setReferenceVersement(''); setVersementModal(b.idBulletin); }}
+                    className="text-xs px-2.5 py-1.5 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700">
+                    Verser le gain
+                  </button>
+                  <button onClick={() => { setRetenueLibelle(''); setRetenueMontant(''); setRetenueCaisseId(''); setRetenueModal(b.idBulletin); }}
+                    className="text-xs px-2.5 py-1.5 bg-white border border-amber-300 text-amber-700 rounded-lg font-medium hover:bg-amber-50">
+                    + Retenue
+                  </button>
+                  <button onClick={async () => { const url = await ouvrirBulletinPdf(b.idBulletin); if (url) setBulletinUrl(url); }}
+                    className="text-xs px-2.5 py-1.5 bg-amber-600 text-white rounded-lg font-medium hover:bg-amber-700 flex items-center gap-1">
+                    <FileText size={12}/> Bulletin
+                  </button>
+                  <button onClick={() => {
+                    if (window.confirm('Annuler ce cycle non versé ? Le bénéficiaire et les cotisations pourront être corrigés.')) annulerCycle(b.idCycle);
+                  }} className="text-xs px-2.5 py-1.5 bg-red-50 text-red-600 rounded-lg font-medium hover:bg-red-100">
+                    Annuler
+                  </button>
+                </div>
+              )}
               <span className="text-xs px-2 py-0.5 bg-amber-200 text-amber-800 rounded-full font-medium">OK Confirmé</span>
             </div>
           ))}
         </div>
-      )}
-
-      {locked ? (
-        <div className="p-3 bg-gray-50 rounded-xl text-center text-xs text-gray-400">
-          <Lock size={14} className="mx-auto mb-1 text-gray-300"/> Séance clôturée
-        </div>
       ) : (
-        <>
-          {/* Étape 1: choix tontine */}
-          {etape === 'choix' && (
-            <div className="space-y-3">
-              <p className="text-sm text-gray-600">Sélectionnez la tontine à attribuer cette séance :</p>
-              <div className="space-y-2">
-                {tontines.filter(t => t.statut === 'active').map(t => {
-                  const dejaFait = beneficiairesSeance.some(b => b.idTontine === t.id);
-                  const typeIcon = { rotation: '', tirage: '', enchere: '' }[t.typeAttribution] || '';
-                  const nbEncaisses = planningTours.filter(p => p.idTontine === t.id && p.statut === 'encaisse').length;
-                  const progressPct = t.nbTours > 0 ? Math.round(nbEncaisses / t.nbTours * 100) : 0;
-                  return (
-                    <button key={t.id} type="button"
-                      onClick={() => { if (!dejaFait) { setIdTontine(String(t.id)); setEtape('designation'); } }}
-                      disabled={dejaFait}
-                      className={clsx('w-full p-3 rounded-xl border-2 text-left transition-all',
-                        dejaFait ? 'border-green-300 bg-green-50 opacity-70 cursor-default' :
-                        Number(idTontine) === t.id ? 'border-primary-500 bg-primary-50' :
-                        'border-gray-200 hover:border-primary-300'
-                      )}>
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="font-semibold text-gray-800">{typeIcon} {t.nom}</p>
-                          <p className="text-xs text-gray-500 mt-0.5">{fmt(t.cotisation)} x {t.totalParts} parts = <strong>{fmt(t.cotisation * t.totalParts)}</strong></p>
-                        </div>
-                        {dejaFait ? <span className="text-xs text-green-600 font-medium">OK Attribué</span> : <span className="text-xs text-primary-600">Tour {nbEncaisses + 1}/{t.nbTours}</span>}
-                      </div>
-                      <div className="mt-2 w-full bg-gray-200 rounded-full h-1">
-                        <div className="h-1 rounded-full bg-primary-500 transition-all" style={{ width: `${progressPct}%` }}/>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* Étape 2: Désignation selon le type */}
-          {etape === 'designation' && tontine && (
-            <div className="space-y-4">
-              <div className="flex items-center gap-2">
-                <button onClick={() => { setEtape('choix'); setIdTontine(''); }} className="text-xs text-primary-600 hover:underline">- Changer</button>
-                <p className="text-sm font-bold text-gray-800">{tontine.nom}</p>
-                <span className="text-xs px-2 py-0.5 bg-primary-100 text-primary-700 rounded-full">{fmt(montantPot)}</span>
-              </div>
-
-              {/* ROTATION */}
-              {typeAttr === 'rotation' && (
-                <div className="space-y-3">
-                  <div className="p-3 bg-primary-50 rounded-xl border border-primary-200 flex items-center gap-2">
-                    <RefreshCw size={14} className="text-primary-600"/>
-                    <p className="text-xs text-primary-700 font-medium">Mode Rotation — bénéficiaire défini par l'ordre prédéfini</p>
-                  </div>
-                  {tourPlanifieProchain ? (
-                    <div className="p-4 bg-white rounded-xl border-2 border-primary-300 text-center">
-                      <Trophy size={28} className="mx-auto text-primary-500 mb-2"/>
-                      <p className="text-lg font-bold text-gray-800">{tourPlanifieProchain.nomMembre}</p>
-                      <p className="text-xs text-gray-500 mt-0.5">Tour N°{tourPlanifieProchain.numeroTour} — {fmt(montantPot)}</p>
-                      <button onClick={handleConfirmerRotation}
-                        className="mt-3 btn-primary w-full text-sm">
-                        <CheckCircle size={14}/> Confirmer ce bénéficiaire
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 text-center">
-                      <AlertCircle size={20} className="mx-auto text-amber-500 mb-2"/>
-                      <p className="text-sm font-medium text-amber-800">Aucun tour planifié trouvé</p>
-                      <p className="text-xs text-amber-600 mt-1">Allez dans l'onglet Tontines pour définir l'ordre de rotation.</p>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* TIRAGE AU SORT */}
-              {typeAttr === 'tirage' && (
-                <div className="space-y-3">
-                  <div className="p-3 bg-blue-50 rounded-xl border border-blue-200 flex items-center gap-2">
-                    <Dices size={14} className="text-blue-600"/>
-                    <p className="text-xs text-blue-700 font-medium">Mode Tirage au sort — désignation aléatoire en séance</p>
-                  </div>
-                  <div className="p-4 bg-white rounded-xl border-2 border-blue-200 text-center">
-                    <Dices size={32} className="mx-auto text-blue-400 mb-3"/>
-                    <p className="text-sm text-gray-600 mb-4">Cliquez pour désigner aléatoirement le bénéficiaire parmi les membres non encore bénéficiaires.</p>
-                    <button onClick={handleTirage} className="btn-primary w-full text-sm">
-                      <Dices size={14}/>  Lancer le tirage au sort
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* ENCHÈRE */}
-              {typeAttr === 'enchere' && (
-                <div className="space-y-3">
-                  <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 flex items-center gap-2">
-                    <Gavel size={14} className="text-amber-600"/>
-                    <p className="text-xs text-amber-700 font-medium">Mode Enchère — le plus offrant remporte le pot</p>
-                  </div>
-                  {encheresEnAttente.length === 0 ? (
-                    <div className="p-4 bg-gray-50 rounded-xl border border-dashed text-center text-xs text-gray-400">
-                      <Gavel size={16} className="mx-auto mb-2 text-gray-300"/>
-                      Aucune enchère en attente. Enregistrez les enchères via le module Enchères.
-                    </div>
-                  ) : (
-                    <>
-                      <div className="space-y-2">
-                        <p className="text-xs font-medium text-gray-600">Enchères reçues — sélectionnez le gagnant :</p>
-                        {encheresEnAttente.map(e => (
-                          <label key={e.id}
-                            className={clsx('flex items-center gap-3 p-3 rounded-xl border-2 cursor-pointer transition-all',
-                              Number(enchereIdGagnant) === e.id ? 'border-amber-400 bg-amber-50' : 'border-gray-200 hover:border-amber-300')}>
-                            <input type="radio" name="enchere_gagnante" value={e.id}
-                              checked={Number(enchereIdGagnant) === e.id}
-                              onChange={() => { setEnchereIdGagnant(String(e.id)); setMiseGagnante(String(e.montantEnchere)); }}/>
-                            <div className="flex-1">
-                              <p className="font-semibold text-gray-800">{e.nomMembre}</p>
-                              <p className="text-xs text-gray-500">Mise proposée : <strong className="text-amber-600">{fmt(e.montantEnchere)}</strong></p>
-                            </div>
-                          </label>
-                        ))}
-                      </div>
-                      {enchereIdGagnant && (
-                        <>
-                          <div className="grid grid-cols-2 gap-2 text-xs">
-                            <div className="p-2 bg-gray-50 rounded-lg">
-                              <span className="text-gray-500">Pot total :</span><br/>
-                              <span className="font-bold">{fmt(montantPot)}</span>
-                            </div>
-                            <div className="p-2 bg-amber-50 rounded-lg">
-                              <span className="text-gray-500">Mise retenue :</span><br/>
-                              <span className="font-bold text-amber-600">{fmt(Number(miseGagnante))}</span>
-                            </div>
-                            <div className="p-2 bg-green-50 rounded-lg col-span-2">
-                              <span className="text-gray-500">Net versé au gagnant :</span><br/>
-                              <span className="font-bold text-green-600">{fmt(montantPot - Number(miseGagnante))}</span>
-                            </div>
-                          </div>
-                          <button onClick={handleConfirmerEnchere} className="btn-primary w-full text-sm">
-                            <Trophy size={14}/> Confirmer le gagnant de l'enchère
-                          </button>
-                        </>
-                      )}
-                    </>
-                  )}
-                  {/* Enchère manuelle si pas d'enchères préenregistrées */}
-                  {encheresEnAttente.length === 0 && (
-                    <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 space-y-2">
-                      <p className="text-xs font-medium text-amber-700">Saisie manuelle du gagnant</p>
-                      <select className="select text-sm"
-                        value={enchereIdGagnant}
-                        onChange={e => setEnchereIdGagnant(e.target.value)}>
-                        <option value="">— Sélectionner le gagnant —</option>
-                        {membresActifs.map(m => <option key={m.id} value={`m${m.id}`}>{m.nom} {m.prenom}</option>)}
-                      </select>
-                      <input type="number" className="input text-sm" placeholder="Montant mise gagnante (FCFA)"
-                        value={miseGagnante} onChange={e => setMiseGagnante(e.target.value)}/>
-                      {enchereIdGagnant && miseGagnante && (
-                        <button
-                          onClick={() => {
-                            const mid = Number(enchereIdGagnant.replace('m', ''));
-                            const m = membres.find(x => x.id === mid);
-                            if (!m) return;
-                            enregistrerBeneficiaireSeance(reunion.id, {
-                              idTontine: tontine.id, nomTontine: tontine.nom, typeAttribution: 'enchere',
-                              idMembre: mid, nomMembre: `${m.nom} ${m.prenom}`,
-                              montantPot: montantPot - Number(miseGagnante), montantEnchere: Number(miseGagnante),
-                              numeroTour: planningTours.filter(p => p.idTontine === tontine.id && p.statut === 'encaisse').length + 1,
-                              modeDesignation: 'enchere',
-                            });
-                            setGagnant({ nomMembre: `${m.nom} ${m.prenom}`, montantPot: montantPot - Number(miseGagnante), mise: Number(miseGagnante) });
-                            setEtape('confirme');
-                          }}
-                          className="btn-primary w-full text-sm">
-                          <Trophy size={14}/> Confirmer le gagnant
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Étape 3: Confirmation */}
-          {etape === 'confirme' && gagnant && (
-            <div className="space-y-4">
-              <div className="p-5 bg-gradient-to-br from-amber-50 to-yellow-50 rounded-2xl border-2 border-amber-300 text-center">
-                <Trophy size={36} className="mx-auto text-amber-500 mb-2"/>
-                <p className="text-xl font-black text-amber-900"> {gagnant.nomMembre}</p>
-                <p className="text-sm text-amber-700 mt-1">{gagnant.mise ? `Mise : ${fmt(gagnant.mise)} — Net reçu :` : 'Montant pot :'} <strong>{fmt(gagnant.montantPot)}</strong></p>
-                <p className="text-xs text-amber-600 mt-2">Bénéficiaire enregistré et planning mis à jour OK</p>
-              </div>
-              <button onClick={resetForm} className="btn-secondary w-full text-sm">
-                <Plus size={13}/> Attribuer une autre tontine
-              </button>
-            </div>
-          )}
-        </>
+        <div className="p-4 bg-gray-50 rounded-xl border border-gray-200 text-center text-sm text-gray-500 space-y-1">
+          <Trophy size={22} className="mx-auto text-gray-300 mb-1"/>
+          <p>Aucun bénéficiaire désigné pour l'instant cette séance.</p>
+          <p className="text-xs text-gray-400">La désignation (rotation, tirage au sort ou enchère) se fait dans l'onglet « Feuille Cotisation ».</p>
+        </div>
       )}
+
+      <Modal open={!!bulletinUrl} onClose={() => setBulletinUrl(null)} title="Bulletin de gain" size="xl">
+        {bulletinUrl && (
+          <iframe src={bulletinUrl} title="Bulletin de gain" className="w-full rounded-xl border border-gray-200" style={{ height: '75vh' }} />
+        )}
+      </Modal>
+
+      <Modal open={!!versementModal} onClose={() => setVersementModal(null)} title="Verser le gain au bénéficiaire"
+        footer={<>
+          <button onClick={() => setVersementModal(null)} className="btn-secondary">Annuler</button>
+          <button onClick={async () => {
+            const bulletin = await payerBulletin(versementModal, modeVersement, referenceVersement);
+            if (bulletin) setVersementModal(null);
+          }} disabled={modeVersement !== 'especes' && !referenceVersement.trim()} className="btn-primary">Confirmer le versement</button>
+        </>}>
+        <p className="text-xs text-gray-500 mb-4">
+          Le net est décaissé de la caisse de la tontine. Les retenues sont imputées et apparaissent dans le PV.
+        </p>
+        <FormField label="Mode de versement" required>
+          <select className="select" value={modeVersement} onChange={e => setModeVersement(e.target.value)}>
+            <option value="especes">Espèces</option>
+            <option value="cheque">Chèque</option>
+            <option value="virement">Virement</option>
+            <option value="mobile_money">Mobile Money</option>
+            <option value="carte_bancaire">Carte bancaire</option>
+          </select>
+        </FormField>
+        {modeVersement !== 'especes' && (
+          <FormField label="Référence du paiement" required>
+            <input className="input" value={referenceVersement} onChange={e => setReferenceVersement(e.target.value)} placeholder="N° de transaction, chèque ou bordereau" />
+          </FormField>
+        )}
+      </Modal>
+
+      <Modal open={!!retenueModal} onClose={() => setRetenueModal(null)} title="Ajouter une retenue manuelle"
+        footer={<>
+          <button onClick={() => setRetenueModal(null)} className="btn-secondary">Annuler</button>
+          <button
+            onClick={async () => {
+              if (!retenueLibelle.trim() || !retenueMontant || Number(retenueMontant) <= 0) return;
+              const b = await ajouterRetenueBulletin(retenueModal, retenueLibelle.trim(), retenueMontant, retenueCaisseId);
+              if (b) setRetenueModal(null);
+            }}
+            disabled={!retenueLibelle.trim() || !retenueMontant || Number(retenueMontant) <= 0 || !retenueCaisseId}
+            className={clsx('btn-primary', (!retenueLibelle.trim() || !retenueMontant || Number(retenueMontant) <= 0 || !retenueCaisseId) && 'opacity-40 cursor-not-allowed')}>
+            Ajouter
+          </button>
+        </>}>
+        <p className="text-xs text-gray-500 mb-3">
+          Priorité 5 du cahier des charges — frais d'organisation, décision d'AG, ou toute autre
+          obligation non couverte automatiquement (prêt, sanction, mutuelle, assurance). Possible
+          uniquement avant toute signature du bulletin.
+        </p>
+        <FormField label="Libellé" required>
+          <input className="input" placeholder="Ex : Frais d'organisation réunion (hôte)" value={retenueLibelle} onChange={e => setRetenueLibelle(e.target.value)} autoFocus/>
+        </FormField>
+        <FormField label="Montant (FCFA)" required>
+          <input type="number" className="input" placeholder="10000" value={retenueMontant} onChange={e => setRetenueMontant(e.target.value)}/>
+        </FormField>
+        <FormField label="Caisse de destination" required hint="La retenue sera affectée à cette caisse au moment du versement.">
+          <select className="select" value={retenueCaisseId} onChange={e => setRetenueCaisseId(e.target.value)}>
+            <option value="">— Sélectionner une caisse —</option>
+            {banques.filter(caisse => caisse.statut === 'active').map(caisse => (
+              <option key={caisse.id} value={caisse.id}>{caisse.nom} — solde {fmt(caisse.totalSolde)}</option>
+            ))}
+          </select>
+        </FormField>
+      </Modal>
     </div>
   );
 }
 
 // ── Panneau transactions séance ───────────────────────────────
-function PanneauTransactions({ reunion, onClose }) {
-  const {
-    membres, banques, prets, sanctions,
-    seanceTransactions, addSeanceTransaction, deleteSeanceTransaction,
-    tontines, membresParTontine,
-  } = useApp();
-
-  const txs     = seanceTransactions.filter(t => t.reunionId === reunion.id);
-  const locked  = reunion.statutReunion === 'cloturee';
+// ── Panneau Présences (RG-REU-016 à 019) ──────────────────────
+function PanneauPresences({ reunion, membres }) {
+  const { presences, setPresenceMembre } = useApp();
+  const locked  = !!reunion.verrouillee;
   const notOpen = reunion.statutReunion === 'planifiee';
 
-  const [selectedType, setSelectedType] = useState(null);
-  // null        - bouton "Enregistrer"
-  // '__picker__'- grille de sélection du type
-  // 'cotisation'- formulaire intelligent du type choisi
+  const presencesReunion = presences.filter(p => p.reunionId === reunion.id);
+  const getPresence = (idMembre) => presencesReunion.find(p => p.idMembre === idMembre);
 
-  const totalEntrees = txs.filter(t => TX_TYPES.find(tt => tt.value === t.type)?.dir === 'entree').reduce((s, t) => s + t.montant, 0);
-  const totalSorties = txs.filter(t => TX_TYPES.find(tt => tt.value === t.type)?.dir === 'sortie').reduce((s, t) => s + t.montant, 0);
-  const totalBanque  = txs.filter(t => t.type === 'depot_banque').reduce((s, t) => s + t.montant, 0);
+  const membresActifs = membres.filter(m => m.statut === 'actif');
+  const nbPresents = presencesReunion.filter(p => p.statut === 'present' || p.statut === 'en_retard').length;
+  const nbAbsentsExcuses = presencesReunion.filter(p => p.statut === 'absent_excuse').length;
+  const nbAbsents = presencesReunion.filter(p => p.statut === 'absent').length;
+  const nbNonPointes = membresActifs.length - presencesReunion.length;
 
-  // ── Garde : séance non ouverte
+  const [motifModal, setMotifModal] = useState(null); // {idMembre}
+  const [motif, setMotif] = useState('');
+  const [heureModal, setHeureModal] = useState(null); // {idMembre}
+  const [heureSaisie, setHeureSaisie] = useState('');
+
   if (notOpen) {
     return (
       <div className="flex flex-col items-center justify-center py-12 text-center space-y-3">
@@ -1710,87 +1881,226 @@ function PanneauTransactions({ reunion, onClose }) {
           <Lock size={28} className="text-amber-500"/>
         </div>
         <p className="font-bold text-gray-700">Séance non ouverte</p>
-        <p className="text-sm text-gray-400 max-w-xs">Aucune transaction ne peut être enregistrée tant que la séance n'est pas officiellement ouverte.</p>
-        <div className="px-4 py-2 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-700 font-medium">
-           Cliquez sur "Ouvrir la séance" pour commencer les opérations
+        <p className="text-sm text-gray-400 max-w-xs">Le pointage des présences ne peut se faire qu'une fois la séance ouverte par le président.</p>
+      </div>
+    );
+  }
+
+  const handleStatut = (idMembre, statut) => {
+    if (statut === 'absent_excuse') {
+      setMotifModal({ idMembre });
+      setMotif('');
+      return;
+    }
+    if (statut === 'present') {
+      // Heure d'arrivée éditable (pré-remplie avec l'heure actuelle) : le pointage
+      // se fait souvent a posteriori, on ne peut pas se fier uniquement à l'heure du clic.
+      const existante = getPresence(idMembre);
+      setHeureModal({ idMembre });
+      setHeureSaisie(existante?.heureArrivee || new Date().toTimeString().slice(0, 5));
+      return;
+    }
+    setPresenceMembre(reunion.id, idMembre, { statut, heureArrivee: '' });
+  };
+
+  const confirmHeure = () => {
+    setPresenceMembre(reunion.id, heureModal.idMembre, { statut: 'present', heureArrivee: heureSaisie });
+    setHeureModal(null);
+    setHeureSaisie('');
+  };
+
+  const confirmMotif = () => {
+    setPresenceMembre(reunion.id, motifModal.idMembre, { statut: 'absent_excuse', motifAbsence: motif });
+    setMotifModal(null);
+    setMotif('');
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-4 gap-2">
+        {[
+          { l:'Présents', v:nbPresents, c:'text-green-600', bg:'bg-green-50 border border-green-100' },
+          { l:'Excusés',  v:nbAbsentsExcuses, c:'text-amber-600', bg:'bg-amber-50 border border-amber-100' },
+          { l:'Absents',  v:nbAbsents, c:'text-red-500', bg:'bg-red-50 border border-red-100' },
+          { l:'Non pointés', v:Math.max(0,nbNonPointes), c:'text-gray-500', bg:'bg-gray-50 border border-gray-100' },
+        ].map(s => (
+          <div key={s.l} className={`p-2.5 rounded-xl text-center ${s.bg}`}>
+            <p className={`text-base font-bold ${s.c}`}>{s.v}</p>
+            <p className="text-[11px] text-gray-500">{s.l}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="space-y-1.5 max-h-96 overflow-y-auto">
+        {membresActifs.map(m => {
+          const p = getPresence(m.id);
+          const statut = p?.statut;
+          return (
+            <div key={m.id} className="flex items-center gap-3 p-2.5 bg-gray-50 rounded-xl">
+              <div className="w-8 h-8 rounded-lg gradient-primary flex items-center justify-center text-white text-xs font-bold shrink-0">
+                {m.nom?.[0]}{m.prenom?.[0]}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-gray-800 truncate">{m.nom} {m.prenom}</p>
+                {statut === 'absent_excuse' && p.motifAbsence && (
+                  <p className="text-[11px] text-amber-600 truncate">Motif : {p.motifAbsence}</p>
+                )}
+                {(statut === 'present' || statut === 'en_retard') && p.heureArrivee && (
+                  <p className="text-[11px] text-gray-400">Arrivée : {p.heureArrivee}</p>
+                )}
+              </div>
+              {statut && (
+                <Badge variant={STATUTS_PRESENCE.find(s => s.value === statut)?.color || 'gray'}>
+                  {statutPresenceLabel[statut] || statut}
+                </Badge>
+              )}
+              {!locked && (
+                <div className="flex gap-1 shrink-0">
+                  <button onClick={() => handleStatut(m.id, 'present')}
+                    className={clsx('p-1.5 rounded-lg border', statut === 'present' ? 'bg-green-500 border-green-500 text-white' : 'border-gray-200 text-gray-400 hover:border-green-300 hover:text-green-500')}>
+                    <CheckSquare size={14}/>
+                  </button>
+                  <button onClick={() => handleStatut(m.id, 'absent_excuse')}
+                    className={clsx('p-1.5 rounded-lg border', statut === 'absent_excuse' ? 'bg-amber-500 border-amber-500 text-white' : 'border-gray-200 text-gray-400 hover:border-amber-300 hover:text-amber-500')}>
+                    <MinusSquare size={14}/>
+                  </button>
+                  <button onClick={() => handleStatut(m.id, 'absent')}
+                    className={clsx('p-1.5 rounded-lg border', statut === 'absent' ? 'bg-red-500 border-red-500 text-white' : 'border-gray-200 text-gray-400 hover:border-red-300 hover:text-red-500')}>
+                    <XSquare size={14}/>
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {membresActifs.length === 0 && (
+          <p className="text-xs text-gray-400 text-center py-6">Aucun membre actif à pointer.</p>
+        )}
+      </div>
+
+      <Modal open={!!motifModal} onClose={() => setMotifModal(null)} title="Motif de l'absence excusée"
+        footer={<><button onClick={() => setMotifModal(null)} className="btn-secondary">Annuler</button><button onClick={confirmMotif} className="btn-primary">Confirmer</button></>}>
+        <FormField label="Motif" required>
+          <input className="input" placeholder="Ex : Maladie, voyage, empêchement professionnel…" value={motif} onChange={e => setMotif(e.target.value)} autoFocus/>
+        </FormField>
+      </Modal>
+
+      <Modal open={!!heureModal} onClose={() => setHeureModal(null)} title="Heure d'arrivée"
+        footer={<><button onClick={() => setHeureModal(null)} className="btn-secondary">Annuler</button><button onClick={confirmHeure} className="btn-primary">Confirmer</button></>}>
+        <FormField label="Heure d'arrivée" required>
+          <input type="time" className="input" value={heureSaisie} onChange={e => setHeureSaisie(e.target.value)} autoFocus/>
+        </FormField>
+        <p className="text-xs text-gray-400 mt-2">Pré-remplie avec l'heure actuelle — corrige-la si le pointage se fait après coup. Le statut (présent / en retard) est recalculé automatiquement selon l'heure de début de la réunion.</p>
+      </Modal>
+    </div>
+  );
+}
+
+
+// ── Panneau rubrique séance (ex-Transactions, éclaté par rubrique) ──
+// Chaque rubrique métier (Remboursement, Prêt, Sanction, Aide sociale,
+// Banque, Divers) a maintenant sa propre interface dédiée au lieu d'un
+// unique onglet "Transactions" fourre-tout avec sélecteur de type.
+function PanneauRubrique({ reunion, types, titre, readOnly = false }) {
+  const {
+    membres, banques, prets, sanctions,
+    seanceTransactions, addSeanceTransaction, deleteSeanceTransaction,
+    tontines, membresParTontine,
+  } = useApp();
+
+  // BUG corrigé : soldeDisponibleCaisse se basait sur caisseJournal, un état qui
+  // n'est JAMAIS peuplé depuis cet écran (chargerJournalCaisse n'est appelé que
+  // depuis la page Banques, pour UNE caisse précise choisie là-bas). Résultat :
+  // caisseJournal restait toujours vide ici, soldeDisponibleCaisse valait donc
+  // toujours 0, et TOUTE transaction sortante (prêt accordé, aide sociale,
+  // attribution du tour, sortie diverse) était bloquée par un faux "solde
+  // insuffisant — disponible : 0 FCFA", peu importe le vrai solde de la caisse.
+  // Le backend vérifie déjà correctement le vrai solde (RG-CAI-006,
+  // CaisseService::sortie(), contrainte DB caisses_solde_positif_ck) avec un
+  // message d'erreur précis — on laisse SmartFormWrapper à son défaut (Infinity,
+  // pas de blocage prématuré côté écran) plutôt que de deviner avec de mauvaises
+  // données.
+
+  const txs     = seanceTransactions.filter(t => t.idReunion === reunion.id && types.includes(t.type));
+  const locked  = !!reunion.verrouillee || readOnly;
+  const notOpen = reunion.statutReunion === 'planifiee';
+
+  // Un seul type -> formulaire direct. Plusieurs types (ex: Divers) -> petit choix parmi eux seulement.
+  const [selectedType, setSelectedType] = useState(types.length === 1 ? types[0] : null);
+
+  const totalEntrees = txs.filter(t => TX_TYPES.find(tt => tt.value === t.type)?.dir === 'entree').reduce((s, t) => s + t.montant, 0);
+  const totalSorties = txs.filter(t => TX_TYPES.find(tt => tt.value === t.type)?.dir === 'sortie').reduce((s, t) => s + t.montant, 0);
+
+  if (notOpen) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12 text-center space-y-3">
+        <div className="w-14 h-14 rounded-2xl bg-amber-100 flex items-center justify-center">
+          <Lock size={28} className="text-amber-500"/>
         </div>
+        <p className="font-bold text-gray-700">Séance non ouverte</p>
+        <p className="text-sm text-gray-400 max-w-xs">Aucune saisie de {titre.toLowerCase()} tant que la séance n'est pas officiellement ouverte.</p>
       </div>
     );
   }
 
   const handleSubmitTx = (form) => {
     if (!form.montant || Number(form.montant) <= 0) return;
+    const m = form.idMembre ? membres.find(x => x.id === form.idMembre) : null;
     addSeanceTransaction(reunion.id, {
       ...form,
-      idMembre:   form.idMembre   ? Number(form.idMembre)   : null,
-      idSanction: form.idSanction ? Number(form.idSanction) : null,
-      idPret:     form.idPret     ? Number(form.idPret)      : null,
-      idBanque:   form.idBanque   ? Number(form.idBanque)    : null,
-    }, banques, membres);
-    setSelectedType(null);
+      idMembre:   form.idMembre   || null,
+      idSanction: form.idSanction || null,
+      idPret:     form.idPret     || null,
+      idBanque:   form.idBanque   || null,
+      nomMembre:  m ? `${m.nom} ${m.prenom}` : (form.nomMembre || ''),
+    });
+    if (types.length > 1) setSelectedType(null); else setSelectedType(types[0]);
   };
 
   return (
     <div className="space-y-4">
-
-      {/* Résumé financier */}
-      <div className="grid grid-cols-3 gap-2">
-        {[
-          { l: 'Entrées caisse', v: totalEntrees, c: 'text-green-600', bg: 'bg-green-50 border border-green-100' },
-          { l: 'Sorties caisse', v: totalSorties, c: 'text-red-500',   bg: 'bg-red-50 border border-red-100'     },
-          { l: 'Dépôts banque',  v: totalBanque,  c: 'text-blue-600',  bg: 'bg-blue-50 border border-blue-100'   },
-        ].map(s => (
-          <div key={s.l} className={`p-2.5 rounded-xl text-center ${s.bg}`}>
-            <p className={`text-base font-bold ${s.c}`}>{fmt(s.v)}</p>
-            <p className="text-xs text-gray-500">{s.l}</p>
+      {/* Résumé financier de la rubrique */}
+      {(totalEntrees > 0 || totalSorties > 0) && (
+        <div className="grid grid-cols-2 gap-2">
+          <div className="p-2.5 rounded-xl text-center bg-green-50 border border-green-100">
+            <p className="text-base font-bold text-green-600">{fmt(totalEntrees)}</p>
+            <p className="text-xs text-gray-500">Entrées</p>
           </div>
-        ))}
-      </div>
+          <div className="p-2.5 rounded-xl text-center bg-red-50 border border-red-100">
+            <p className="text-base font-bold text-red-500">{fmt(totalSorties)}</p>
+            <p className="text-xs text-gray-500">Sorties</p>
+          </div>
+        </div>
+      )}
 
-      {/* Zone formulaire / sélecteur */}
+      {/* Zone formulaire */}
       {!locked && (
         <div>
-          {/* Bouton principal */}
-          {selectedType === null && (
-            <button
-              onClick={() => setSelectedType('__picker__')}
-              className="btn-primary w-full text-sm justify-center"
-            >
-              <Plus size={15}/> Enregistrer une transaction
-            </button>
-          )}
-
-          {/* Sélecteur de type */}
-          {selectedType === '__picker__' && (
-            <div className="p-4 bg-white rounded-xl border border-gray-200 shadow-sm space-y-4">
-              <div className="flex items-center justify-between">
-                <p className="text-sm font-bold text-gray-800">Choisir le type de transaction</p>
-                <button
-                  onClick={() => setSelectedType(null)}
-                  className="p-1 rounded-lg hover:bg-gray-100 text-gray-400"
-                >
-                  <X size={15}/>
-                </button>
-              </div>
-              <TypePicker onSelect={(t) => setSelectedType(t)} />
+          {types.length > 1 && selectedType === null && (
+            <div className="flex gap-2">
+              {types.map(tv => {
+                const meta = TX_TYPES.find(t => t.value === tv);
+                return (
+                  <button key={tv} onClick={() => setSelectedType(tv)} className="btn-secondary flex-1 justify-center text-sm">
+                    {meta?.icon} {meta?.label}
+                  </button>
+                );
+              })}
             </div>
           )}
-
-          {/* Formulaire intelligent selon le type choisi */}
-          {selectedType && selectedType !== '__picker__' && (
+          {selectedType && (
             <div className="p-4 bg-white rounded-xl border border-gray-200 shadow-sm">
-              <div className="flex items-center justify-between mb-3">
-                <p className="text-sm font-bold text-gray-800">
-                  {TX_TYPES.find(t => t.value === selectedType)?.icon}{' '}
-                  {TX_TYPES.find(t => t.value === selectedType)?.label}
-                </p>
-                <button
-                  onClick={() => setSelectedType('__picker__')}
-                  className="text-xs text-primary-600 hover:underline"
-                >
-                  - Changer de type
-                </button>
-              </div>
+              {types.length > 1 && (
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-sm font-bold text-gray-800">
+                    {TX_TYPES.find(t => t.value === selectedType)?.icon}{' '}
+                    {TX_TYPES.find(t => t.value === selectedType)?.label}
+                  </p>
+                  <button onClick={() => setSelectedType(null)} className="text-xs text-primary-600 hover:underline">
+                    - Changer de type
+                  </button>
+                </div>
+              )}
               <SmartFormWrapper
                 type={selectedType}
                 reunion={reunion}
@@ -1801,19 +2111,18 @@ function PanneauTransactions({ reunion, onClose }) {
                 tontines={tontines}
                 membresParTontine={membresParTontine}
                 onSubmit={handleSubmitTx}
-                onCancel={() => setSelectedType(null)}
+                onCancel={() => setSelectedType(types.length > 1 ? null : types[0])}
               />
             </div>
           )}
         </div>
       )}
 
-      {/* Liste des transactions enregistrées */}
+      {/* Liste des opérations de cette rubrique */}
       {txs.length === 0 ? (
         <div className="text-center py-8 text-gray-400">
           <DollarSign size={28} className="mx-auto mb-2 text-gray-200"/>
-          <p className="text-sm">Aucune transaction enregistrée pour cette séance</p>
-          {!locked && <p className="text-xs mt-1">Cliquez sur « Enregistrer une transaction » pour commencer</p>}
+          <p className="text-sm">Aucune opération « {titre} » enregistrée pour cette séance</p>
         </div>
       ) : (
         <div className="space-y-2">
@@ -1822,46 +2131,171 @@ function PanneauTransactions({ reunion, onClose }) {
             const isEntree = meta?.dir === 'entree';
             const isSortie = meta?.dir === 'sortie';
             return (
-              <div key={tx.id}
-                className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl group hover:bg-white hover:shadow-sm transition-all"
-              >
-                <div className={clsx(
-                  'w-9 h-9 rounded-xl flex items-center justify-center text-base shrink-0',
-                  isEntree ? 'bg-green-100' : isSortie ? 'bg-red-100' : 'bg-blue-100'
-                )}>
+              <div key={tx.id} className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl group hover:bg-white hover:shadow-sm transition-all">
+                <div className={clsx('w-9 h-9 rounded-xl flex items-center justify-center text-base shrink-0',
+                  isEntree ? 'bg-green-100' : isSortie ? 'bg-red-100' : 'bg-blue-100')}>
                   {meta?.icon || ''}
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold text-gray-800 truncate">{tx.libelle || meta?.label || tx.type}</p>
                   <p className="text-xs text-gray-400">{tx.nomMembre || '—'} · {tx.heure}</p>
                 </div>
+                <div className="shrink-0">
+                  <ModePaiementBadge modePaiement={tx.modePaiement} detailsPaiement={tx.detailsPaiement} />
+                </div>
                 <div className="text-right shrink-0">
-                  <p className={clsx('text-sm font-bold',
-                    isEntree ? 'text-green-600' : isSortie ? 'text-red-500' : 'text-blue-600'
-                  )}>
+                  <p className={clsx('text-sm font-bold', isEntree ? 'text-green-600' : isSortie ? 'text-red-500' : 'text-blue-600')}>
                     {isEntree ? '+' : isSortie ? '−' : ''} {fmt(tx.montant)}
                   </p>
-                  <p className="text-xs text-gray-400">{meta?.label}</p>
                 </div>
                 {!locked && (
-                  <button
-                    onClick={() => deleteSeanceTransaction(tx.id)}
-                    className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg opacity-0 group-hover:opacity-100 transition-all shrink-0"
-                  >
+                  <button onClick={() => {
+                    if (window.confirm('Annuler cette opération ? Une contre-écriture sera créée pour conserver la traçabilité.')) deleteSeanceTransaction(tx.idReunion, tx.id);
+                  }} title="Annuler l'opération"
+                    className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg opacity-0 group-hover:opacity-100 transition-all shrink-0">
                     <Trash2 size={13}/>
                   </button>
                 )}
               </div>
             );
           })}
-          {/* Total séance */}
-          <div className="flex justify-between items-center p-2.5 bg-gray-100 rounded-xl text-xs font-bold text-gray-700 mt-1">
-            <span>{txs.length} transaction(s)</span>
-            <span className={totalEntrees - totalSorties >= 0 ? 'text-green-700' : 'text-red-600'}>
-              Net : {totalEntrees - totalSorties >= 0 ? '+' : ''}{fmt(totalEntrees - totalSorties)}
-            </span>
-          </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+// Configuration des rubriques individuelles (remplace l'onglet unique Transactions)
+const RUBRIQUES = [
+  { id:'remboursement', label:'Remboursement', icon: Receipt,     types:['remboursement_pret'] },
+  { id:'pret',          label:'Prêt',          icon: Landmark,    types:['pret_accorde']        },
+  { id:'sanction',      label:'Sanctions',     icon: AlertTriangle, types:['amende']             },
+  { id:'aide',          label:'Aide sociale',  icon: HeartHandshake, types:['aide_sociale']      },
+  { id:'banque',        label:'Banque',        icon: Landmark,    types:['depot_banque']         },
+  { id:'divers',        label:'Divers',        icon: DollarSign,  types:['divers_entree','divers_sortie'] },
+];
+
+// ── Panneau Signatures du PV (règle : verrouillage définitif au Président) ──
+// 4 signataires attendus (Président, Secrétaire, Trésorier, 1 membre témoin).
+// Tant que le Président n'a pas signé, la réunion reste modifiable — même
+// si les 3 autres ont déjà signé. La signature du Président verrouille
+// IMMÉDIATEMENT et DÉFINITIVEMENT la réunion.
+const SIGNATAIRES_ATTENDUS = [
+  { role: 'president',  label: 'Président'  },
+  { role: 'secretaire',  label: 'Secrétaire' },
+  { role: 'tresorier',   label: 'Trésorier'  },
+  { role: 'membre',      label: 'Membre témoin' },
+];
+
+const ROLES_PEUVENT_ENREGISTRER_TEMOIN = ['super_admin','president','secretaire','tresorier'];
+
+function PanneauSignatures({ reunion }) {
+  const { user, membres, signerPV } = useApp();
+  const signatures = reunion.signatures || [];
+  const verrouillee = !!reunion.verrouillee;
+  const roleUser = user?.role || 'membre';
+  const [idTemoin, setIdTemoin] = useState('');
+
+  if (reunion.statutReunion !== 'cloturee') {
+    return (
+      <div className="p-4 bg-gray-50 rounded-xl text-sm text-gray-500 flex items-start gap-2">
+        <Lock size={16} className="mt-0.5 shrink-0 text-gray-300"/>
+        <p>La signature du PV n'est possible qu'une fois la séance <strong>clôturée</strong>. Utilisez le bouton « Clôturer la séance » une fois toutes les saisies terminées.</p>
+      </div>
+    );
+  }
+
+  const dejaSigne = signatures.some(s => s.idMembre === (user?.idMembre || user?.id));
+  const monSlot = SIGNATAIRES_ATTENDUS.find(s => s.role === roleUser);
+  const sigTemoin = signatures.find(s => s.role === 'membre');
+  const peutEnregistrerTemoin = ROLES_PEUVENT_ENREGISTRER_TEMOIN.includes(roleUser) && !sigTemoin && !verrouillee;
+
+  const handleSigner = () => {
+    if (!monSlot || dejaSigne || verrouillee) return;
+    const m = membres.find(x => x.id === (user?.idMembre || user?.id));
+    signerPV(reunion.id, {
+      idMembre: user?.idMembre || user?.id || uidLike(),
+      nom: m ? `${m.nom} ${m.prenom}` : (user?.name || monSlot.label),
+      role: roleUser,
+    });
+  };
+  const handleEnregistrerTemoin = () => {
+    if (!idTemoin || verrouillee) return;
+    const m = membres.find(x => x.id === idTemoin);
+    if (!m) return;
+    signerPV(reunion.id, { idMembre: m.id, nom: `${m.nom} ${m.prenom}`, role: 'membre' });
+    setIdTemoin('');
+  };
+  function uidLike(){ return `u-${Date.now()}`; }
+
+  return (
+    <div className="space-y-4">
+      <div className={clsx('p-3 rounded-xl border text-sm flex items-start gap-2',
+        verrouillee ? 'bg-green-50 border-green-200 text-green-700' : 'bg-amber-50 border-amber-200 text-amber-700')}>
+        {verrouillee ? <Lock size={16} className="mt-0.5 shrink-0"/> : <AlertCircle size={16} className="mt-0.5 shrink-0"/>}
+        <p>
+          {verrouillee
+            ? 'Réunion verrouillée définitivement — le Président a signé. Plus aucune modification possible.'
+            : "La réunion reste modifiable tant que le Président n'a pas signé, même si d'autres signataires ont déjà signé."}
+        </p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2.5">
+        {SIGNATAIRES_ATTENDUS.map(slot => {
+          const sig = signatures.find(s => s.role === slot.role);
+          const estPresident = slot.role === 'president';
+          const estTemoin = slot.role === 'membre';
+          return (
+            <div key={slot.role} className={clsx('rounded-xl border-2 p-3 text-center',
+              sig ? (estPresident ? 'bg-green-50 border-green-400' : 'bg-emerald-50 border-emerald-200') : 'border-dashed border-gray-200 bg-white')}>
+              {sig ? (
+                <>
+                  <CheckCircle size={16} className={clsx('mx-auto mb-1', estPresident ? 'text-green-600' : 'text-emerald-600')}/>
+                  <p className="text-xs font-bold text-gray-800 truncate">{sig.nom}</p>
+                  <p className="text-xs text-gray-400">{acteurRoleLabel[slot.role] || slot.label}</p>
+                </>
+              ) : estTemoin && peutEnregistrerTemoin ? (
+                <div className="space-y-1.5">
+                  <p className="text-xs text-gray-400">{slot.label}</p>
+                  <select className="select text-xs py-1" value={idTemoin} onChange={e=>setIdTemoin(e.target.value)}>
+                    <option value="">Choisir le membre…</option>
+                    {membres.map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
+                  </select>
+                  <button onClick={handleEnregistrerTemoin} disabled={!idTemoin}
+                    className={clsx('w-full text-xs py-1 rounded-lg font-semibold', idTemoin ? 'bg-primary-600 text-white' : 'bg-gray-100 text-gray-300')}>
+                    Enregistrer sa signature
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <Lock size={16} className="mx-auto mb-1 text-gray-300"/>
+                  <p className="text-xs text-gray-400 italic">En attente</p>
+                  <p className="text-xs text-gray-400">{acteurRoleLabel[slot.role] || slot.label}</p>
+                </>
+              )}
+              {estPresident && !sig && <p className="text-[10px] text-amber-600 mt-1 font-semibold">Verrouille tout à la signature</p>}
+            </div>
+          );
+        })}
+      </div>
+
+      {peutEnregistrerTemoin && (
+        <p className="text-xs text-gray-400 -mt-1">Le membre témoin n'ayant pas de compte, {roleLabel[roleUser] || roleUser} enregistre sa signature en son nom, une fois signée physiquement sur le PV papier.</p>
+      )}
+
+      {verrouillee ? (
+        <p className="text-xs text-gray-400 text-center py-1">PV définitivement scellé.</p>
+      ) : monSlot ? (
+        dejaSigne ? (
+          <p className="text-xs text-gray-400 text-center py-1">Vous avez déjà signé.</p>
+        ) : (
+          <button onClick={handleSigner} className="btn-primary w-full justify-center">
+            <Pencil size={14}/> Signer en tant que {roleLabel[roleUser] || acteurRoleLabel[roleUser] || monSlot.label}
+            {roleUser==='president' && ' (verrouille définitivement)'}
+          </button>
+        )
+      ) : (
+        <p className="text-xs text-gray-400 text-center py-1">Votre rôle n'est pas prévu comme signataire du PV.</p>
       )}
     </div>
   );
@@ -1869,46 +2303,67 @@ function PanneauTransactions({ reunion, onClose }) {
 
 // ── Page principale ───────────────────────────────────────────
 export function Reunions() {
+  const { id: routeId } = useParams();
+  const navigate = useNavigate();
   const {
-    reunions, membres,
-    addReunion, updateReunion, ouvrirSeance,
-    addPointODJ, updatePointODJ, removePointODJ, cloturerSeance,
-    seanceTransactions,
+    reunions, membres, user, presences,
+    addReunion, updateReunion, chargerReunion, ouvrirSeance,
+    addPointODJ, updatePointODJ, removePointODJ, movePointODJ, cloturerSeance,
+    seanceTransactions, chargerSeanceTransactions, showToast, cyclesTontine,
+    rubriquesODJ, creerRubriqueODJ,
   } = useApp();
 
+  // La liste (index()) ne charge jamais l'ordre du jour / les présences / les
+  // signatures (trop coûteux pour un listing) : sans ce fetch dédié, ouvrir le
+  // détail d'une réunion depuis la liste affichait un ordre du jour vide tant
+  // qu'aucune action (ouvrir/modifier/clôturer) n'avait déjà rafraîchi l'objet.
+  // Idem pour les transactions de séance (Prêt/Sanctions/Aide sociale/Banque/
+  // Divers + condition d'affichage du bouton "Rapport PV") : sans cet appel,
+  // seanceTransactions restait à [] après un rafraîchissement de page tant
+  // qu'aucune transaction n'avait été ajoutée en direct dans CETTE session.
+  useEffect(() => {
+    if (routeId) { chargerReunion(routeId); chargerSeanceTransactions(routeId); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeId]);
+
   const [showAdd,        setShowAdd]        = useState(false);
-  const [showDetail,     setShowDetail]     = useState(null);
   const [showEdit,       setShowEdit]       = useState(null);
   const [showOuverture,  setShowOuverture]  = useState(null);
   const [showCloture,    setShowCloture]    = useState(null);
   const [showAddPoint,   setShowAddPoint]   = useState(null);
   const [showEditPoint,  setShowEditPoint]  = useState(null);
   const [showRapport,    setShowRapport]    = useState(null);
-  const [detailTab,      setDetailTab]      = useState('info'); // 'info' | 'transactions' | 'rapport'
+  const [detailTab,      setDetailTab]      = useState('info'); // onglet actif de la fiche réunion
 
   const [formReunion,  setFormReunion]  = useState(EMPTY_REUNION);
   const [formOuv,      setFormOuv]      = useState(EMPTY_OUVERTURE);
   const [formCloture,  setFormCloture]  = useState(EMPTY_CLOTURE);
   const [formPoint,    setFormPoint]    = useState(EMPTY_POINT);
+  const [enregistrerPointCommeRubrique, setEnregistrerPointCommeRubrique] = useState(false);
 
   const membresNoms = membres.map(m => `${m.nom} ${m.prenom}`);
 
+  const dateMinReunion = new Date(Date.now() + 24 * 3600 * 1000).toISOString().split('T')[0]; // RG-REU-002 : J+1 minimum
+
   const handleAddReunion = () => {
     if (!formReunion.date || !formReunion.lieu) return;
+    if (formReunion.date < dateMinReunion) { showToast?.("La date doit être au moins 24h après aujourd'hui.", "error"); return; }
+    if (reunions.some(r => r.date === formReunion.date)) { showToast?.("Une réunion est déjà planifiée ce jour-là.", "error"); return; } // RG-REU-005
     addReunion({ ...formReunion });
     setShowAdd(false); setFormReunion(EMPTY_REUNION);
   };
 
   const handleEditReunion = () => {
     if (!formReunion.date || !formReunion.lieu) return;
+    if (reunions.some(r => r.date === formReunion.date && r.id !== showEdit.id)) { showToast?.("Une réunion est déjà planifiée ce jour-là.", "error"); return; }
     updateReunion({ ...showEdit, ...formReunion });
     setShowEdit(null);
   };
 
   const handleOuverture = () => {
     if (!formOuv.heureOuverture || !formOuv.presidentSeance) return;
-    ouvrirSeance(showOuverture.id, formOuv);
-    setShowOuverture(null); setFormOuv(EMPTY_OUVERTURE);
+    const ok = ouvrirSeance(showOuverture.id, formOuv);
+    if (ok !== false) { setShowOuverture(null); setFormOuv(EMPTY_OUVERTURE); }
   };
 
   const handleCloture = () => {
@@ -1917,10 +2372,20 @@ export function Reunions() {
     setShowCloture(null); setFormCloture(EMPTY_CLOTURE);
   };
 
-  const handleAddPoint = () => {
+  const handleAddPoint = async () => {
     if (!formPoint.titre.trim()) return;
-    addPointODJ(showAddPoint, formPoint);
-    setShowAddPoint(null); setFormPoint(EMPTY_POINT);
+    let point = { ...formPoint };
+    if (enregistrerPointCommeRubrique && !point.rubriqueId) {
+      const rubrique = await creerRubriqueODJ(point.titre.trim());
+      if (!rubrique) return;
+      point = { ...point, rubriqueId: rubrique.id, titre: rubrique.libelle };
+    }
+    const ajoute = await addPointODJ(showAddPoint, point);
+    if (ajoute) {
+      setShowAddPoint(null);
+      setFormPoint(EMPTY_POINT);
+      setEnregistrerPointCommeRubrique(false);
+    }
   };
 
   const handleEditPoint = () => {
@@ -1948,6 +2413,7 @@ export function Reunions() {
 
   return (
     <div className="space-y-6">
+      {!routeId && (<>
       <PageHeader title="Réunions" subtitle={`${reunions.length} réunions au total`}
         action={<button onClick={()=>{ setFormReunion({ ...EMPTY_REUNION, numero: reunions.length + 1, date: new Date().toISOString().split('T')[0] }); setShowAdd(true); }} className="btn-primary">
           <CalendarPlus size={15}/> Planifier une réunion
@@ -1975,10 +2441,10 @@ export function Reunions() {
               {r.ouverture && <p className="text-xs text-amber-700 mt-0.5">Ouverte à {r.ouverture.heureOuverture} par {r.ouverture.presidentSeance}</p>}
             </div>
             <div className="flex gap-2">
-              <button onClick={()=>{ setShowDetail(r); setDetailTab('transactions'); }} className="btn-secondary text-xs">
-                <Receipt size={13}/> Transactions
+              <button onClick={()=>{ navigate(`/reunions/${r.id}`); setDetailTab('feuille_cotisation'); }} className="btn-secondary text-xs">
+                <ClipboardCheck size={13}/> Cotisation
               </button>
-              <button onClick={()=>{ setShowDetail(r); setDetailTab('info'); }} className="btn-secondary text-xs">
+              <button onClick={()=>{ navigate(`/reunions/${r.id}`); setDetailTab('info'); }} className="btn-secondary text-xs">
                 <FileText size={13}/> Gérer
               </button>
               <button onClick={()=>{ setShowCloture(r); setFormCloture(EMPTY_CLOTURE); }} className="btn-primary text-xs">
@@ -2015,9 +2481,9 @@ export function Reunions() {
           const cfg = sCfg[r.statutReunion];
           const Icon = cfg.icon;
           const cloture = r.cloture;
-          const txCount = seanceTransactions.filter(t => t.reunionId === r.id).length;
+          const txCount = seanceTransactions.filter(t => t.idReunion === r.id).length;
           return (
-            <div key={r.id} onClick={()=>{ setShowDetail(r); setDetailTab('info'); }}
+            <div key={r.id} onClick={()=>{ navigate(`/reunions/${r.id}`); setDetailTab('info'); }}
               className="card cursor-pointer hover:shadow-md transition-all border border-gray-100 hover:border-primary-200">
               <div className="flex items-start justify-between mb-3">
                 <div className="w-11 h-11 rounded-xl gradient-primary flex flex-col items-center justify-center text-white shrink-0">
@@ -2046,79 +2512,131 @@ export function Reunions() {
                   {cloture.absents>0 && <span className="text-red-500">{cloture.absents} absent(s)</span>}
                 </div>
               )}
-              {r.statutReunion==='cloturee' && (
+              {r.verrouillee && (
                 <div className="flex items-center gap-1 text-xs text-gray-300 mt-2 pt-2 border-t border-gray-100">
-                  <Lock size={10}/><span>Séance verrouillée</span>
+                  <Lock size={10}/><span>Séance verrouillée (signée par le Président)</span>
+                </div>
+              )}
+              {r.statutReunion==='tenue' && !r.verrouillee && (
+                <div className="flex items-center gap-1 text-xs text-amber-500 mt-2 pt-2 border-t border-gray-100">
+                  <AlertCircle size={10}/><span>En attente des signatures (Président, Secrétaire, membre élu)</span>
                 </div>
               )}
             </div>
           );
         })}
       </div>
+      </>)}
 
-      {/* ══ MODAL DÉTAIL ═══════════════════════════════════ */}
-      {showDetail && (() => {
-        const r = reunions.find(x=>x.id===showDetail.id) || showDetail;
+      {/* ══ PAGE DÉTAIL RÉUNION (route /reunions/:id) ═══════ */}
+      {routeId && (() => {
+        const r = reunions.find(x=>x.id===routeId);
+        if (!r) {
+          return (
+            <div className="card text-center py-16">
+              <p className="text-gray-400">Réunion introuvable.</p>
+              <button onClick={()=>navigate('/reunions')} className="btn-secondary mt-4">
+                <ArrowLeft size={14}/> Retour aux réunions
+              </button>
+            </div>
+          );
+        }
         const cfg = sCfg[r.statutReunion];
-        const locked = r.statutReunion === 'cloturee';
-        const tabs = [
+        const locked = !!r.verrouillee;
+        const roleUser = user?.role || 'membre';
+        const lectureSeule = ROLES_LECTURE_SEULE.includes(roleUser);
+        const allTabs = [
           { id:'info',              label:'Informations',       icon: ClipboardList  },
+          { id:'presences',         label:'Présences',           icon: Users          },
           { id:'feuille_cotisation',label:'Feuille Cotisation', icon: ClipboardCheck },
           { id:'beneficiaire',      label:'Bénéficiaire',       icon: Trophy         },
-          { id:'transactions',      label:'Transactions',        icon: Receipt        },
+          ...RUBRIQUES.map(rb => ({ id: rb.id, label: rb.label, icon: rb.icon })),
+          { id:'signatures',        label:'Signatures',          icon: FileText       },
         ];
+        // Chaque acteur ne voit que les onglets qui le concernent (RG-SEC-002)
+        const tabs = allTabs.filter(t => (TAB_ACCESS[t.id]||[]).includes(roleUser));
+        const effectiveTab = tabs.some(t => t.id === detailTab) ? detailTab : 'info';
 
         return (
-          <Modal open={true} onClose={()=>setShowDetail(null)} title={`Réunion N°${r.numero}`}
-            footer={
-              <div className="flex gap-2 flex-wrap w-full">
-                {r.statutReunion==='planifiee' && (
-                  <>
-                    <button onClick={()=>{ setShowEdit(r); setFormReunion({date:r.date,lieu:r.lieu,numero:r.numero,observation:r.observation||''}); setShowDetail(null); }} className="btn-secondary">
-                      <Pencil size={13}/> Modifier
+          <div className="space-y-4">
+            <PageHeader
+              title={`Réunion N°${r.numero}`}
+              subtitle={`${fmtDate(r.date)} · ${r.lieu}`}
+              action={<button onClick={()=>navigate('/reunions')} className="btn-secondary">
+                <ArrowLeft size={14}/> Retour aux réunions
+              </button>}
+            />
+
+            <div className="card space-y-4">
+              <div className="flex items-center justify-between flex-wrap gap-3 pb-4 border-b border-gray-100">
+                <Badge variant={cfg.v}>{cfg.label}</Badge>
+                <div className="flex gap-2 flex-wrap">
+                  {r.statutReunion==='planifiee' && (
+                    <>
+                      <button onClick={()=>{ setShowEdit(r); setFormReunion({date:r.date,lieu:r.lieu,numero:r.numero,observation:r.observation||''}); }} className="btn-secondary">
+                        <Pencil size={13}/> Modifier
+                      </button>
+                      <button onClick={()=>{ setShowOuverture(r); setFormOuv(EMPTY_OUVERTURE); }} className="btn-primary">
+                        <PlayCircle size={13}/> Ouvrir la séance
+                      </button>
+                    </>
+                  )}
+                  {r.statutReunion==='en_cours' && (
+                    <button onClick={()=>{ setShowCloture(r); setFormCloture(EMPTY_CLOTURE); }} className="btn-primary">
+                      <CheckCircle size={13}/> Clôturer la séance
                     </button>
-                    <button onClick={()=>{ setShowOuverture(r); setFormOuv(EMPTY_OUVERTURE); setShowDetail(null); }} className="btn-primary">
-                      <PlayCircle size={13}/> Ouvrir la séance
+                  )}
+                  {r.statutReunion==='tenue' && !locked && (
+                    <button onClick={()=>setDetailTab('signatures')} className="btn-primary">
+                      <Lock size={13}/> Signer / Verrouiller
                     </button>
-                  </>
-                )}
-                {r.statutReunion==='en_cours' && (
-                  <button onClick={()=>{ setShowCloture(r); setFormCloture(EMPTY_CLOTURE); setShowDetail(null); }} className="btn-primary">
-                    <CheckCircle size={13}/> Clôturer la séance
-                  </button>
-                )}
-                {(r.statutReunion==='cloturee' || seanceTransactions.filter(t=>t.reunionId===r.id).length > 0) && (
-                  <button onClick={()=>{ setShowRapport(r); }} className="btn-secondary">
-                    <FileText size={13}/> Rapport PV
-                  </button>
-                )}
-                <button onClick={()=>setShowDetail(null)} className="btn-secondary ml-auto">Fermer</button>
+                  )}
+                  {(r.statutReunion==='cloturee' || seanceTransactions.filter(t=>t.idReunion===r.id).length > 0) && (
+                    <button onClick={()=>{ setShowRapport(r); }} className="btn-secondary">
+                      <FileText size={13}/> Rapport PV
+                    </button>
+                  )}
+                </div>
               </div>
-            }>
-            <div className="space-y-4">
+              {lectureSeule && (
+                <div className="p-2.5 bg-blue-50 border border-blue-100 rounded-xl text-xs text-blue-700 flex items-center gap-2">
+                  <Lock size={13}/>
+                  <span>Vous êtes connecté en tant que <strong>{roleLabel[roleUser] || acteurRoleLabel[roleUser] || roleUser}</strong> : consultation uniquement, aucune saisie possible. Pour saisir la cotisation, reconnectez-vous avec le rôle Trésorier ; pour les présences, avec le rôle Secrétaire.</span>
+                </div>
+              )}
               {/* Tabs */}
-              <div className="flex gap-1 p-1 bg-gray-100 rounded-xl">
-                {tabs.map(tab => (
+              <div className="flex flex-wrap gap-1.5 p-1.5 bg-gray-100 rounded-xl">
+                {tabs.map(tab => {
+                  const rubriqueCount = RUBRIQUES.find(rb => rb.id === tab.id)
+                    ? seanceTransactions.filter(t => t.idReunion === r.id && RUBRIQUES.find(rb => rb.id === tab.id).types.includes(t.type)).length
+                    : 0;
+                  return (
                   <button key={tab.id} onClick={()=>setDetailTab(tab.id)}
-                    className={clsx('flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-xs font-medium transition-all',
-                      detailTab===tab.id ? 'bg-white text-primary-700 shadow-sm' : 'text-gray-500 hover:text-gray-700')}>
+                    className={clsx('flex items-center justify-center gap-1.5 py-2 px-3.5 rounded-lg text-xs font-medium transition-all',
+                      effectiveTab===tab.id ? 'bg-white text-primary-700 shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-white/60')}>
                     <tab.icon size={13}/>{tab.label}
-                    {tab.id==='transactions' && seanceTransactions.filter(t=>t.reunionId===r.id).length > 0 && (
+                    {rubriqueCount > 0 && (
                       <span className="ml-1 px-1.5 py-0.5 bg-primary-600 text-white rounded-full text-xs leading-none">
-                        {seanceTransactions.filter(t=>t.reunionId===r.id).length}
+                        {rubriqueCount}
                       </span>
                     )}
-                    {tab.id==='beneficiaire' && (r.beneficiairesSeance||[]).length > 0 && (
+                    {tab.id==='beneficiaire' && cyclesTontine.filter(c => c.idReunion === r.id && c.statut === 'clos').length > 0 && (
                       <span className="ml-1 px-1.5 py-0.5 bg-amber-500 text-white rounded-full text-xs leading-none">
-                        {(r.beneficiairesSeance||[]).length}
+                        {cyclesTontine.filter(c => c.idReunion === r.id && c.statut === 'clos').length}
+                      </span>
+                    )}
+                    {tab.id==='presences' && r.statutReunion !== 'planifiee' && (
+                      <span className="ml-1 px-1.5 py-0.5 bg-primary-500 text-white rounded-full text-xs leading-none">
+                        {presences.filter(p=>p.reunionId===r.id).length}
                       </span>
                     )}
                   </button>
-                ))}
+                  );
+                })}
               </div>
 
               {/* Tab: Informations */}
-              {detailTab === 'info' && (
+              {effectiveTab === 'info' && (
                 <div className="space-y-4">
                   <div className="grid grid-cols-2 gap-3 text-sm">
                     <div className="p-3 bg-gray-50 rounded-xl">
@@ -2159,25 +2677,44 @@ export function Reunions() {
                         Ordre du jour ({r.pointsOrdreJour?.length || 0})
                       </p>
                       {!locked && (
-                        <button onClick={()=>{ setShowAddPoint(r.id); setFormPoint(EMPTY_POINT); }} className="btn-secondary text-xs py-1">
+                        <button onClick={()=>{ setShowAddPoint(r.id); setFormPoint(EMPTY_POINT); setEnregistrerPointCommeRubrique(false); }} className="btn-secondary text-xs py-1">
                           <Plus size={12}/> Ajouter
                         </button>
                       )}
                     </div>
+                    {r.statutReunion === 'en_cours' && (
+                      <p className="text-[11px] text-amber-600 bg-amber-50 border border-amber-100 rounded-lg px-2 py-1 mb-2">
+                        Séance ouverte — chaque acteur assigné saisit sa rubrique dans l'onglet correspondant (Cotisation, Prêt, Sanction, Aide sociale…). Vous êtes connecté en tant que <strong>{roleLabel[user?.role] || acteurRoleLabel[user?.role] || user?.role || '—'}</strong>.
+                      </p>
+                    )}
                     <div className="space-y-1.5">
-                      {(r.pointsOrdreJour||[]).map((p,i)=>(
-                        <div key={p.id} className="flex items-start gap-2 p-2.5 bg-gray-50 rounded-lg group">
+                      {(r.pointsOrdreJour||[]).slice().sort((a,b)=>(a.ordre??0)-(b.ordre??0)).map((p,i,arr)=>{
+                        const acteurAssigne = p.acteurRole ? (acteurRoleLabel[p.acteurRole] || p.acteurRole) : null;
+                        const peutSaisir = !p.acteurRole || user?.role === p.acteurRole || user?.role === 'president';
+                        return (
+                        <div key={p.id} className={clsx('flex items-start gap-2 p-2.5 rounded-lg group', peutSaisir ? 'bg-gray-50' : 'bg-gray-50/60 opacity-70')}>
                           <span className="text-xs text-gray-400 font-mono mt-0.5 shrink-0">{String(i+1).padStart(2,'0')}.</span>
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium text-gray-800 truncate">{p.titre}</p>
                             {p.description && <p className="text-xs text-gray-500 truncate">{p.description}</p>}
+                            {acteurAssigne && (
+                              <p className="text-[11px] text-primary-600 flex items-center gap-1 mt-0.5">
+                                {!peutSaisir && <Lock size={10}/>} Acteur : {acteurAssigne}
+                              </p>
+                            )}
                           </div>
                           <div className="flex items-center gap-1 shrink-0">
                             <Badge variant={typeCfg[p.type]?.v||'gray'}>{typeCfg[p.type]?.label||p.type}</Badge>
                             <Badge variant={statutPointCfg[p.statut]?.v||'gray'}>{statutPointCfg[p.statut]?.label||p.statut}</Badge>
-                            {!locked && (
+                            {!locked && r.statutReunion === 'planifiee' && (
                               <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <button onClick={e=>{e.stopPropagation();setShowEditPoint({reunionId:r.id,point:p});setFormPoint({titre:p.titre,type:p.type,description:p.description||'',statut:p.statut});}} className="p-1 hover:bg-white rounded">
+                                <button onClick={e=>{e.stopPropagation();movePointODJ(r.id,p.id,'up');}} disabled={i===0} className="p-1 hover:bg-white rounded disabled:opacity-30">
+                                  <ChevronRight size={11} className="text-gray-400 -rotate-90"/>
+                                </button>
+                                <button onClick={e=>{e.stopPropagation();movePointODJ(r.id,p.id,'down');}} disabled={i===arr.length-1} className="p-1 hover:bg-white rounded disabled:opacity-30">
+                                  <ChevronRight size={11} className="text-gray-400 rotate-90"/>
+                                </button>
+                                <button onClick={e=>{e.stopPropagation();setShowEditPoint({reunionId:r.id,point:p});setFormPoint({titre:p.titre,type:p.type,description:p.description||'',statut:p.statut,acteurRole:p.acteurRole||''});}} className="p-1 hover:bg-white rounded">
                                   <Pencil size={11} className="text-gray-400"/>
                                 </button>
                                 <button onClick={e=>{e.stopPropagation();removePointODJ(r.id,p.id);}} className="p-1 hover:bg-white rounded">
@@ -2185,9 +2722,15 @@ export function Reunions() {
                                 </button>
                               </div>
                             )}
+                            {!locked && r.statutReunion === 'en_cours' && (
+                              <button onClick={e=>{e.stopPropagation();setShowEditPoint({reunionId:r.id,point:p});setFormPoint({titre:p.titre,type:p.type,description:p.description||'',statut:p.statut,acteurRole:p.acteurRole||''});}} className="p-1 hover:bg-white rounded opacity-0 group-hover:opacity-100 transition-opacity">
+                                <Pencil size={11} className="text-gray-400"/>
+                              </button>
+                            )}
                           </div>
                         </div>
-                      ))}
+                        );
+                      })}
                       {(!r.pointsOrdreJour||r.pointsOrdreJour.length===0) && (
                         <p className="text-xs text-gray-400 text-center py-3">Aucun point à l'ordre du jour</p>
                       )}
@@ -2223,28 +2766,49 @@ export function Reunions() {
 
                   {locked && (
                     <div className="flex items-center gap-2 p-2.5 bg-gray-100 rounded-lg text-xs text-gray-500">
-                      <Lock size={12}/> Cette séance est clôturée. Aucune modification possible.
+                      <Lock size={12}/> Réunion verrouillée définitivement (signature du Président). Aucune modification possible.
+                    </div>
+                  )}
+                  {r.statutReunion==='tenue' && !locked && (
+                    <div className="flex items-center gap-2 p-2.5 bg-amber-50 rounded-lg text-xs text-amber-700 border border-amber-200">
+                      <AlertCircle size={12}/> Séance tenue, en attente des 3 signatures — le verrouillage définitif interviendra à la dernière signature (onglet Signatures).
                     </div>
                   )}
                 </div>
               )}
 
               {/* Tab: Bénéficiaire */}
-              {detailTab === 'beneficiaire' && (
-                <BeneficiaireSeancePanel reunion={r}/>
+              {effectiveTab === 'beneficiaire' && (
+                <div className={clsx(lectureSeule && 'pointer-events-none opacity-95')}>
+                  <BeneficiaireSeancePanel reunion={r}/>
+                </div>
+              )}
+
+              {/* Tab: Présences */}
+              {effectiveTab === 'presences' && (
+                <div className={clsx(lectureSeule && 'pointer-events-none opacity-95')}>
+                  <PanneauPresences reunion={r} membres={membres}/>
+                </div>
               )}
 
               {/* Tab: Feuille de cotisation */}
-              {detailTab === 'feuille_cotisation' && (
-                <FeuillePresenceTontine reunion={r} onClose={() => setShowDetail(null)}/>
+              {effectiveTab === 'feuille_cotisation' && (
+                <FeuillePresenceTontine reunion={r} onClose={() => navigate('/reunions')} readOnly={lectureSeule}/>
               )}
 
-              {/* Tab: Transactions */}
-              {detailTab === 'transactions' && (
-                <PanneauTransactions reunion={r} onClose={()=>setShowDetail(null)}/>
+              {/* Tabs: Rubriques financières individuelles (ex-Transactions) */}
+              {RUBRIQUES.map(rb => effectiveTab === rb.id && (
+                <div key={rb.id} className={clsx(lectureSeule && 'pointer-events-none opacity-95')}>
+                  <PanneauRubrique reunion={r} types={rb.types} titre={rb.label} readOnly={lectureSeule}/>
+                </div>
+              ))}
+
+              {/* Tab: Signatures */}
+              {effectiveTab === 'signatures' && (
+                <PanneauSignatures reunion={r}/>
               )}
             </div>
-          </Modal>
+          </div>
         );
       })()}
 
@@ -2262,8 +2826,9 @@ export function Reunions() {
       <Modal open={showAdd} onClose={()=>setShowAdd(false)} title="Planifier une réunion"
         footer={<>
           <button onClick={()=>setShowAdd(false)} className="btn-secondary">Annuler</button>
-          <button onClick={handleAddReunion} disabled={!formReunion.date || !formReunion.lieu}
-            className={clsx('btn-primary', (!formReunion.date || !formReunion.lieu) && 'opacity-40 cursor-not-allowed')}>
+          <button onClick={handleAddReunion}
+            disabled={!formReunion.date || !formReunion.lieu || formReunion.date < dateMinReunion || reunions.some(r => r.date === formReunion.date)}
+            className={clsx('btn-primary', (!formReunion.date || !formReunion.lieu || formReunion.date < dateMinReunion || reunions.some(r => r.date === formReunion.date)) && 'opacity-40 cursor-not-allowed')}>
             <CalendarPlus size={14}/> Planifier la réunion
           </button>
         </>}>
@@ -2276,8 +2841,11 @@ export function Reunions() {
 
           {/* Date + N° (pré-remplis automatiquement) */}
           <div className="grid grid-cols-2 gap-3">
-            <FormField label="Date de la réunion" required>
-              <FR k="date" type="date"/>
+            <FormField label="Date de la réunion" required hint="Minimum 24h à l'avance (RG-REU-002)">
+              <FR k="date" type="date" min={dateMinReunion}/>
+              {formReunion.date && reunions.some(r => r.date === formReunion.date) && (
+                <p className="text-xs text-red-500 mt-1">Une réunion est déjà planifiée ce jour-là.</p>
+              )}
             </FormField>
             <FormField label="N° de séance">
               <div className="relative">
@@ -2416,10 +2984,44 @@ export function Reunions() {
       <Modal open={!!showAddPoint} onClose={()=>setShowAddPoint(null)} title="Ajouter un point à l'ordre du jour"
         footer={<><button onClick={()=>setShowAddPoint(null)} className="btn-secondary">Annuler</button><button onClick={handleAddPoint} className="btn-primary"><Plus size={14}/>Ajouter</button></>}>
         <div className="space-y-4">
-          <FormField label="Titre du point" required><FP k="titre" placeholder="Ex : Collecte des cotisations"/></FormField>
+          <div className="p-3 bg-primary-50 border border-primary-100 rounded-xl space-y-2">
+            <FormField label="Rubrique enregistrée" hint="Sélectionnez une rubrique utilisée régulièrement pour ne pas la ressaisir.">
+              <select className="select" value={formPoint.rubriqueId || ''} onChange={e => {
+                const rubrique = rubriquesODJ.find((item) => item.id === e.target.value);
+                setFormPoint((point) => ({
+                  ...point,
+                  rubriqueId: e.target.value,
+                  titre: rubrique?.libelle || point.titre,
+                }));
+                setEnregistrerPointCommeRubrique(false);
+              }}>
+                <option value="">— Saisir une rubrique ponctuelle —</option>
+                {rubriquesODJ.filter((rubrique) => rubrique.actif).map((rubrique) => (
+                  <option key={rubrique.id} value={rubrique.id}>{rubrique.libelle}</option>
+                ))}
+              </select>
+            </FormField>
+            {rubriquesODJ.length === 0 && <p className="text-xs text-primary-700">Aucune rubrique enregistrée : ajoutez votre premier point puis cochez l’option ci-dessous.</p>}
+          </div>
+          <FormField label="Titre du point" required>
+            <input className="input" value={formPoint.titre || ''} placeholder="Ex : Collecte des cotisations"
+              onChange={e => setFormPoint((point) => ({ ...point, titre: e.target.value, rubriqueId: '' }))}/>
+          </FormField>
+          {!formPoint.rubriqueId && formPoint.titre.trim() && (
+            <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+              <input type="checkbox" checked={enregistrerPointCommeRubrique} onChange={e => setEnregistrerPointCommeRubrique(e.target.checked)}/>
+              Enregistrer cette rubrique pour les prochaines réunions
+            </label>
+          )}
           <FormField label="Type">
             <select className="select" value={formPoint.type||'administratif'} onChange={e=>setFormPoint(f=>({...f,type:e.target.value}))}>
               {Object.entries(typePointLabel).map(([k,l])=><option key={k} value={k}>{l}</option>)}
+            </select>
+          </FormField>
+          <FormField label="Acteur responsable" hint="Seule cette personne pourra saisir cette rubrique une fois la séance ouverte">
+            <select className="select" value={formPoint.acteurRole||''} onChange={e=>setFormPoint(f=>({...f,acteurRole:e.target.value}))}>
+              <option value="">— Non assigné (tous peuvent saisir) —</option>
+              {ACTEUR_ROLES.map(r=><option key={r.value} value={r.value}>{r.label}</option>)}
             </select>
           </FormField>
           <FormField label="Description">
@@ -2446,6 +3048,12 @@ export function Reunions() {
               </select>
             </FormField>
           </div>
+          <FormField label="Acteur responsable" hint="Seule cette personne pourra saisir cette rubrique une fois la séance ouverte">
+            <select className="select" value={formPoint.acteurRole||''} onChange={e=>setFormPoint(f=>({...f,acteurRole:e.target.value}))}>
+              <option value="">— Non assigné (tous peuvent saisir) —</option>
+              {ACTEUR_ROLES.map(r=><option key={r.value} value={r.value}>{r.label}</option>)}
+            </select>
+          </FormField>
           <FormField label="Description">
             <textarea className="input h-20 resize-none"
               value={formPoint.description||''} onChange={e=>setFormPoint(f=>({...f,description:e.target.value}))}/>
