@@ -96,6 +96,7 @@ Route::middleware(['auth:sanctum', 'association.context'])->group(function () {
     Route::post('/cycles/{id}/designer-gagnant', [CycleTontineController::class, 'designerGagnant']);
     Route::delete('/cycles/{id}/encheres', [CycleTontineController::class, 'annulerEncheres']);
     Route::post('/cycles/{id}/cloturer', [CycleTontineController::class, 'cloturer']);
+    Route::delete('/cycles/{id}', [CycleTontineController::class, 'annulerCycle']);
     Route::get('/cycles/{id}/bulletin', [CycleTontineController::class, 'bulletin']);
     Route::get('/bulletins/{id}/pdf', [CycleTontineController::class, 'bulletinPdf']);
     Route::post('/bulletins/{id}/signer', [CycleTontineController::class, 'signer']);

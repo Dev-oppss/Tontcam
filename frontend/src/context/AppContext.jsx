@@ -769,7 +769,7 @@ export const AppProvider = ({ children }) => {
       const part = membresParTontine.find((p) => p.idTontine === idTontine && p.idMembre === data.idMembre && p.statut === 'actif');
       if (!part) throw new Error('Ce membre ne possède aucune part disponible dans cette tontine.');
       const e = await request(`/cycles/${data.idRotation}/encheres`, { method: 'POST', body: {
-        tontine_part_id: part?.id, membre_id: data.idMembre, montant_offre: Number(data.montantEnchere),
+        tontine_part_id: part?.id, membre_id: data.idMembre, montant_offre: Number(data.montantEnchere), caisse_id: data.idCaisse,
       } });
       const enchere = adapt.enchereFromApi(e);
       setEncheres((prev) => [...prev.filter((x) => !(x.idRotation === enchere.idRotation && x.idMembre === enchere.idMembre)), enchere]);
@@ -1356,6 +1356,15 @@ export const AppProvider = ({ children }) => {
       return b;
     } catch (err) { return handleError(err); }
   };
+  const annulerCycle = async (idCycle) => {
+    try {
+      await request(`/cycles/${idCycle}`, { method: 'DELETE' });
+      setCyclesTontine((prev) => prev.filter((cycle) => cycle.id !== idCycle));
+      setRotations((prev) => prev.filter((rotation) => rotation.id !== idCycle));
+      showToast('Cycle annulé : le bénéficiaire et la feuille peuvent être saisis à nouveau');
+      return true;
+    } catch (err) { return handleError(err); }
+  };
   const addPoste = async (data) => {
     try {
       const poste = adapt.posteFromApi(await request('/postes', { method: 'POST', body: data }));
@@ -1446,7 +1455,7 @@ export const AppProvider = ({ children }) => {
     addReunion, updateReunion, chargerReunion, ouvrirReunion, cloturerReunion, ouvrirSeance, cloturerSeance,
     addPointODJ, updatePointODJ, removePointODJ, movePointODJ, chargerRubriquesODJ, creerRubriqueODJ,
     setPresenceMembre, signerPV,
-    chargerRotations, tirerAuSort, addEnchere, attribuerTour, annulerEncheres,
+    chargerRotations, tirerAuSort, addEnchere, attribuerTour, annulerEncheres, annulerCycle,
     addBanque, addCaisse: addBanque, doOperation, addMembreBanque, transfererCaisse, approuverTransfertCaisse, addCompteBancaire, chargerTransferts,
     addTypeSanction, updateTypeSanction, addSanction, payerSanction,
     addPret, validerPret, approuverPret, refuserPret, decaisserPret, rembourserPret, distribuerInteretsPret,

@@ -177,4 +177,22 @@ class CaisseService
             ? $this->entree($caisse, $ecart, $libelle, $options)
             : $this->sortie($caisse, abs($ecart), $libelle, $options);
     }
+
+    /** Contre-écriture d'une pièce validée : le livre reste complet et le solde est rétabli. */
+    public function annuler(Transaction $transaction, Utilisateur $auteur, string $motif): Transaction
+    {
+        if ($transaction->annulee) throw new RuntimeException('Cette transaction est déjà annulée.');
+
+        return DB::transaction(function () use ($transaction, $auteur, $motif) {
+            $transaction->refresh();
+            $sens = in_array($transaction->type, ['sortie', 'transfert_sortant'], true) ? 'entree' : 'sortie';
+            $contrepassation = $this->{$sens}($transaction->caisse, (float) $transaction->montant,
+                "Annulation {$transaction->id} — {$motif}", [
+                    'type' => 'ajustement', 'reference_type' => 'annulation_transaction', 'reference_id' => $transaction->id,
+                    'created_by' => $auteur->id, 'valide_par' => $auteur->id, 'notes' => $motif,
+                ]);
+            $transaction->update(['annulee' => true, 'annulee_par' => $auteur->id, 'annulee_at' => now(), 'motif_annulation' => $motif]);
+            return $contrepassation;
+        });
+    }
 }

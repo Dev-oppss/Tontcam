@@ -201,6 +201,19 @@ class CycleTontineController extends Controller
         return response()->json($cycle->load('bulletin.retenues'));
     }
 
+    /** Annule un bénéficiaire/cycle non payé avant la clôture de la réunion. */
+    public function annulerCycle(string $id): JsonResponse
+    {
+        $cycle = $this->cycleScope($id);
+        try {
+            $this->service->annulerCycleAvantVersement($cycle);
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json(['annulee' => true]);
+    }
+
     public function bulletin(string $id): JsonResponse
     {
         $cycle = $this->cycleScope($id);
@@ -339,7 +352,10 @@ class CycleTontineController extends Controller
             'tontine_part_id' => ['required', 'uuid'],
             'membre_id' => ['required', 'uuid'],
             'montant_offre' => ['required', 'numeric', 'min:0'],
+            'caisse_id' => ['required', 'uuid'],
         ]);
+
+        $caisse = $this->scope->scopeAssociation(Caisse::query())->where('actif', true)->findOrFail($data['caisse_id']);
 
         $miseMin = (float) ($cycle->tontine->mise_min_enchere ?? 0);
         $pot = (float) ($cycle->montant_collecte_reel > 0
@@ -366,7 +382,7 @@ class CycleTontineController extends Controller
 
         $enchere = \App\Models\Encherite::updateOrCreate(
             ['cycle_id' => $cycle->id, 'membre_id' => $data['membre_id']],
-            ['tontine_part_id' => $data['tontine_part_id'], 'montant_offre' => $data['montant_offre']]
+            ['tontine_part_id' => $data['tontine_part_id'], 'montant_offre' => $data['montant_offre'], 'caisse_id' => $caisse->id]
         );
 
         return response()->json($enchere->load('membre'), 201);

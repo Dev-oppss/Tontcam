@@ -16,10 +16,13 @@ class SeanceTransaction extends Model
     protected $fillable = [
         'reunion_id', 'type', 'membre_id', 'montant', 'libelle',
         'reference_sanction_id', 'reference_pret_id', 'caisse_id', 'note', 'created_by',
+        'annulee', 'annulee_at', 'annulee_par', 'motif_annulation',
     ];
 
     protected $casts = [
         'montant' => 'decimal:2',
+        'annulee' => 'boolean',
+        'annulee_at' => 'datetime',
     ];
 
     public function reunion()

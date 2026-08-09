@@ -113,6 +113,8 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
   const [cycleActuelId,     setCycleActuelId]     = useState(null); // cycle ouvert à l'étape cotisation, réutilisé à l'étape bénéficiaire
   const [nouvelleEnchereMembre, setNouvelleEnchereMembre] = useState('');
   const [nouvelleEnchereMontant, setNouvelleEnchereMontant] = useState('');
+  const [nouvelleEnchereCaisseId, setNouvelleEnchereCaisseId] = useState('');
+  const [miseGagnanteCaisseId, setMiseGagnanteCaisseId] = useState('');
   const [retenueModal, setRetenueModal] = useState(false);
   const [retenueLibelle, setRetenueLibelle] = useState('');
   const [retenueMontant, setRetenueMontant] = useState('');
@@ -281,14 +283,15 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
   };
 
   const handleAjouterEnchere = async () => {
-    if (!cycleActuelId || !nouvelleEnchereMembre || !nouvelleEnchereMontant) return;
+    if (!cycleActuelId || !nouvelleEnchereMembre || !nouvelleEnchereMontant || !nouvelleEnchereCaisseId) return;
     const ok = await addEnchere({
       idRotation: cycleActuelId,
       idTontine: tontineSelectee.id,
       idMembre: nouvelleEnchereMembre,
       montantEnchere: nouvelleEnchereMontant,
+      idCaisse: nouvelleEnchereCaisseId,
     });
-    if (ok) { setNouvelleEnchereMembre(''); setNouvelleEnchereMontant(''); }
+    if (ok) { setNouvelleEnchereMembre(''); setNouvelleEnchereMontant(''); setNouvelleEnchereCaisseId(''); }
   };
 
   const terminerEnchere = async (cycleFinal) => {
@@ -323,12 +326,13 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
   // La désignation manuelle sans offre crée d'abord une offre réelle, afin que
   // le montant apparaisse dans l'historique et le bulletin de gain.
   const handleEnregistrerEtDesignerManuellement = async () => {
-    if (!cycleActuelId || !enchereIdGagnant || !miseGagnante) return;
+    if (!cycleActuelId || !enchereIdGagnant || !miseGagnante || !miseGagnanteCaisseId) return;
     const offre = await addEnchere({
       idRotation: cycleActuelId,
       idTontine: tontineSelectee.id,
       idMembre: enchereIdGagnant,
       montantEnchere: miseGagnante,
+      idCaisse: miseGagnanteCaisseId,
     });
     if (offre) await handleConfirmerEnchere(offre.idPart);
   };
@@ -649,7 +653,11 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
                   <input type="number" min="0" max={cycleActuel?.montantCollecteReel || cycleActuel?.montantCollectePrevu || undefined} className="input text-sm" placeholder="Montant (FCFA)"
                     value={nouvelleEnchereMontant} onChange={e => setNouvelleEnchereMontant(e.target.value)}/>
                 </div>
-                <button onClick={handleAjouterEnchere} disabled={!nouvelleEnchereMembre || !nouvelleEnchereMontant}
+                <select className="select text-sm" value={nouvelleEnchereCaisseId} onChange={e => setNouvelleEnchereCaisseId(e.target.value)}>
+                  <option value="">— Caisse bénéficiaire de l'enchère —</option>
+                  {banques.filter(c => c.statut !== 'inactive').map(c => <option key={c.id} value={c.id}>{c.nom}</option>)}
+                </select>
+                <button onClick={handleAjouterEnchere} disabled={!nouvelleEnchereMembre || !nouvelleEnchereMontant || !nouvelleEnchereCaisseId}
                   className="btn-secondary w-full justify-center text-sm">
                   <Gavel size={14}/> Ajouter cette enchère
                 </button>
@@ -702,6 +710,10 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
                   </select>
                   <input type="number" className="input" placeholder="Montant de la mise gagnante (FCFA)"
                     value={miseGagnante} onChange={e => setMiseGagnante(e.target.value)}/>
+                  <select className="select" value={miseGagnanteCaisseId} onChange={e => setMiseGagnanteCaisseId(e.target.value)}>
+                    <option value="">— Caisse bénéficiaire de l'enchère —</option>
+                    {banques.filter(c => c.statut !== 'inactive').map(c => <option key={c.id} value={c.id}>{c.nom}</option>)}
+                  </select>
                   {enchereIdGagnant && miseGagnante && (() => {
                     const m = membres.find(x => x.id === enchereIdGagnant);
                     return m ? (
@@ -1693,7 +1705,7 @@ function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, san
 
 // ── Panneau Bénéficiaire de séance ────────────────────────────
 function BeneficiaireSeancePanel({ reunion }) {
-  const { tontines, cyclesTontine, ouvrirBulletinPdf, ajouterRetenueBulletin, payerBulletin, banques } = useApp();
+  const { tontines, cyclesTontine, ouvrirBulletinPdf, ajouterRetenueBulletin, payerBulletin, annulerCycle, banques } = useApp();
   const [bulletinUrl, setBulletinUrl] = useState(null);
   const [retenueModal, setRetenueModal] = useState(null); // idBulletin ciblé
   const [retenueLibelle, setRetenueLibelle] = useState('');
@@ -1713,6 +1725,7 @@ function BeneficiaireSeancePanel({ reunion }) {
     .map(c => {
       const t = tontines.find(tt => tt.id === c.idTontine);
       return {
+        idCycle: c.id,
         idTontine: c.idTontine, nomTontine: t?.nom || '',
         typeAttribution: t?.typeAttribution, nomMembre: c.gagnantNom,
         numeroTour: c.numeroCycle, montantEnchere: c.montantEnchere,
@@ -1749,6 +1762,11 @@ function BeneficiaireSeancePanel({ reunion }) {
                   <button onClick={async () => { const url = await ouvrirBulletinPdf(b.idBulletin); if (url) setBulletinUrl(url); }}
                     className="text-xs px-2.5 py-1.5 bg-amber-600 text-white rounded-lg font-medium hover:bg-amber-700 flex items-center gap-1">
                     <FileText size={12}/> Bulletin
+                  </button>
+                  <button onClick={() => {
+                    if (window.confirm('Annuler ce cycle non versé ? Le bénéficiaire et les cotisations pourront être corrigés.')) annulerCycle(b.idCycle);
+                  }} className="text-xs px-2.5 py-1.5 bg-red-50 text-red-600 rounded-lg font-medium hover:bg-red-100">
+                    Annuler
                   </button>
                 </div>
               )}
@@ -2131,7 +2149,9 @@ function PanneauRubrique({ reunion, types, titre, readOnly = false }) {
                   </p>
                 </div>
                 {!locked && (
-                  <button onClick={() => deleteSeanceTransaction(tx.idReunion, tx.id)}
+                  <button onClick={() => {
+                    if (window.confirm('Annuler cette opération ? Une contre-écriture sera créée pour conserver la traçabilité.')) deleteSeanceTransaction(tx.idReunion, tx.id);
+                  }} title="Annuler l'opération"
                     className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg opacity-0 group-hover:opacity-100 transition-all shrink-0">
                     <Trash2 size={13}/>
                   </button>

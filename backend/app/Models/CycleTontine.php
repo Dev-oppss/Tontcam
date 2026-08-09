@@ -20,6 +20,7 @@ class CycleTontine extends Model
         'montant_collecte_reel',
         'gagnant_part_id',
         'montant_enchere',
+        'caisse_enchere_id',
         'surplus_enchere',
         'surplus_redistribue',
         'surplus_mis_en_caisse',
@@ -73,6 +74,11 @@ class CycleTontine extends Model
     public function bulletin()
     {
         return $this->hasOne(BulletinGain::class, 'cycle_id');
+    }
+
+    public function caisseEnchere()
+    {
+        return $this->belongsTo(Caisse::class, 'caisse_enchere_id');
     }
 
 }

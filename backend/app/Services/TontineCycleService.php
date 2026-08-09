@@ -431,6 +431,7 @@ class TontineCycleService
 
         $cycle->update([
             'montant_enchere' => $meilleure->montant_offre,
+            'caisse_enchere_id' => $meilleure->caisse_id,
             'surplus_enchere' => $surplus,
             'surplus_redistribue' => $surplusRedistribue,
             'surplus_mis_en_caisse' => $surplusCaisse,
@@ -483,5 +484,37 @@ class TontineCycleService
         app(BulletinGainService::class)->genererDepuisCycle($cycle, $auteur);
 
         return $cycle;
+    }
+
+    /**
+     * Retour contrôlé avant la clôture de séance. Un bulletin non payé ne porte
+     * encore aucun décaissement : on peut donc défaire le bénéficiaire et les
+     * cotisations du cycle sans altérer le livre de caisse.
+     */
+    public function annulerCycleAvantVersement(CycleTontine $cycle): void
+    {
+        $cycle->loadMissing('reunion', 'bulletin.retenues', 'gagnant');
+        if (in_array($cycle->reunion->statut, ['cloturee', 'annulee'], true)) {
+            throw new RuntimeException('Une réunion clôturée ou annulée ne peut plus être modifiée.');
+        }
+        if ($cycle->bulletin?->statut === 'paye') {
+            throw new RuntimeException('Le gain a déjà été versé : enregistrez d’abord le retour des fonds avant d’annuler le cycle.');
+        }
+
+        DB::transaction(function () use ($cycle) {
+            if ($cycle->gagnant) {
+                $cycle->gagnant->update(['statut' => 'disponible', 'date_attribution' => null]);
+            }
+            if ($cycle->gagnant_part_id) {
+                PlanningTour::where('tontine_id', $cycle->tontine_id)
+                    ->where('tontine_part_id', $cycle->gagnant_part_id)
+                    ->where('statut', 'encaisse')->update(['statut' => 'planifie']);
+            }
+            $cycle->bulletin?->retenues()->delete();
+            $cycle->bulletin?->delete();
+            $cycle->encherites()->delete();
+            $cycle->cotisations()->delete();
+            $cycle->delete();
+        });
     }
 }

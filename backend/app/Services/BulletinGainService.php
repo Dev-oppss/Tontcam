@@ -125,12 +125,6 @@ class BulletinGainService
 
     public function calculerBrut(CycleTontine $cycle): float
     {
-        // Cahier des charges — cas enchère : le gain brut n'est pas la somme des
-        // cotisations standard, mais le montant de l'enchère gagnante.
-        if ($cycle->tontine->mode_attribution === 'enchere' && $cycle->montant_enchere !== null) {
-            return (float) $cycle->montant_enchere;
-        }
-
         return (float) $cycle->cotisations()->sum('montant_verse');
     }
 
@@ -141,6 +135,20 @@ class BulletinGainService
     {
         $lignes = [];
         $priorite = 1;
+
+        // L'enchère gagnante est une retenue sur le pot, jamais le pot lui-même.
+        // Elle est versée dans la caisse choisie lors de l'offre et apparaîtra au PV
+        // au même titre que toute autre imputation lors du versement du bulletin.
+        $cycle = $bulletin->cycle()->with('caisseEnchere')->first();
+        if ($cycle?->montant_enchere > 0 && $cycle->caisse_enchere_id) {
+            $lignes[] = RetenueBulletin::create([
+                'bulletin_id' => $bulletin->id, 'type_retenue' => 'autre',
+                'libelle' => 'Enchère gagnante — versement en caisse',
+                'montant' => (float) $cycle->montant_enchere, 'priorite' => 0,
+                'reference_id' => $cycle->id, 'reference_type' => 'enchere_gagnante',
+                'caisse_id' => $cycle->caisse_enchere_id,
+            ]);
+        }
 
         // 1. Prêts dus (échéances impayées/en retard de ce membre)
         $pretsEnCours = Pret::where('emprunteur_id', $membre->id)->whereIn('statut', ['en_cours', 'en_retard'])->get();

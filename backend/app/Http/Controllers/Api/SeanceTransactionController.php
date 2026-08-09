@@ -36,7 +36,7 @@ class SeanceTransactionController extends Controller
         $reunion = $this->scope->scopeAssociation(Reunion::query())->findOrFail($reunionId);
         $this->authorize('view', $reunion);
 
-        return response()->json($reunion->seanceTransactions()->with(['membre', 'caisse'])->latest()->get());
+        return response()->json($reunion->seanceTransactions()->where('annulee', false)->with(['membre', 'caisse'])->latest()->get());
     }
 
     public function store(Request $request, string $reunionId): JsonResponse
@@ -116,15 +116,25 @@ class SeanceTransactionController extends Controller
             ->whereHas('reunion', fn ($q) => $this->scope->scopeAssociation($q))
             ->findOrFail($id);
         $this->authorize('update', $seance->reunion);
-
-        // Ne supprime que l'entrée du journal — ne défait pas une transaction de caisse déjà validée
-        // (RG-CAI : jamais de suppression silencieuse d'un mouvement financier). Utiliser un ajustement sinon.
-        if ($seance->caisse_id) {
-            return response()->json(['message' => 'Cette entrée a généré un mouvement de caisse réel — utilisez un ajustement plutôt qu\'une suppression.'], 422);
+        if (in_array($seance->reunion->statut, ['cloturee', 'annulee'], true)) {
+            return response()->json(['message' => 'Réunion clôturée ou annulée : opération non réversible.'], 422);
         }
+        if ($seance->annulee) return response()->json(['message' => 'Cette opération est déjà annulée.'], 422);
+        if ($seance->type === 'remboursement_pret') {
+            return response()->json(['message' => 'Le remboursement de prêt doit être annulé depuis la fiche du prêt.'], 422);
+        }
+        $motif = $request->input('motif', 'Correction avant clôture de séance');
 
-        $seance->delete();
+        DB::transaction(function () use ($seance, $motif, $request) {
+            $transactions = \App\Models\Transaction::where('reference_type', 'seance_transaction')
+                ->where('reference_id', $seance->id)->where('annulee', false)->get();
+            foreach ($transactions as $transaction) $this->caisseService->annuler($transaction, $request->user(), $motif);
+            if ($seance->reference_sanction_id) {
+                SanctionMembre::whereKey($seance->reference_sanction_id)->where('statut', 'payee')->update(['statut' => 'due', 'payee_at' => null]);
+            }
+            $seance->update(['annulee' => true, 'annulee_at' => now(), 'annulee_par' => $request->user()->id, 'motif_annulation' => $motif]);
+        });
 
-        return response()->json(['deleted' => true]);
+        return response()->json(['annulee' => true]);
     }
 }

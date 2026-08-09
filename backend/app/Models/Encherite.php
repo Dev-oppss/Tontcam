@@ -18,6 +18,7 @@ class Encherite extends Model
         'tontine_part_id',
         'membre_id',
         'montant_offre',
+        'caisse_id',
         'est_gagnante',
     ];
 
@@ -41,6 +42,11 @@ class Encherite extends Model
     public function membre()
     {
         return $this->belongsTo(Membre::class);
+    }
+
+    public function caisse()
+    {
+        return $this->belongsTo(Caisse::class);
     }
 
 }
