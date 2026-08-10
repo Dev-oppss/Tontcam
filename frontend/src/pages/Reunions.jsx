@@ -910,7 +910,7 @@ function RapportSeance({ reunion, transactions, membres, onClose }) {
 
     return [...groupes.values()].map((groupe) => {
       const totalEntrees = groupe.items
-        .filter((tx) => TX_TYPES.find((type) => type.value === tx.type)?.dir === 'entree' && !tx.note?.includes('Imputation sur gain'))
+        .filter((tx) => TX_TYPES.find((type) => type.value === tx.type)?.dir === 'entree')
         .reduce((somme, tx) => somme + tx.montant, 0);
       const totalSorties = groupe.items
         .filter((tx) => TX_TYPES.find((type) => type.value === tx.type)?.dir === 'sortie')
@@ -1053,7 +1053,7 @@ function RapportSeance({ reunion, transactions, membres, onClose }) {
                                   <td className="p-2.5"><span>{meta?.icon} {meta?.label || tx.type}{isImputation ? ' (imputation)' : ''}</span></td>
                                   <td className="p-2.5 font-medium text-gray-700">{tx.nomMembre || '—'}</td>
                                   <td className="p-2.5 text-gray-500 italic truncate max-w-[140px]">{tx.libelle || '—'}</td>
-                                  <td className="p-2.5 text-right font-bold text-green-600">{isEntree && !isImputation ? fmt(tx.montant) : '—'}</td>
+                                  <td className="p-2.5 text-right font-bold text-green-600">{isEntree ? fmt(tx.montant) : '—'}</td>
                                   <td className="p-2.5 text-right font-bold text-red-500">{isSortie ? fmt(tx.montant) : '—'}</td>
                                   <td className="p-2.5 text-right font-bold text-blue-600">{isBanque ? fmt(tx.montant) : '—'}</td>
                                 </tr>

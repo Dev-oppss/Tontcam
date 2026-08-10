@@ -72,7 +72,7 @@
                         <td>{{ $libellesTypes[$transaction->type] ?? ucfirst(str_replace('_', ' ', $transaction->type)) }}{{ $imputation ? ' (imputation)' : '' }}</td>
                         <td>{{ $transaction->membre->nom ?? '' }} {{ $transaction->membre->prenom ?? '' }}</td>
                         <td>{{ $transaction->libelle ?? '—' }}</td>
-                        <td style="text-align:right">{{ ! $sortie && ! $imputation ? number_format($transaction->montant, 0, ',', ' ').' FCFA' : '—' }}</td>
+                        <td style="text-align:right">{{ ! $sortie ? number_format($transaction->montant, 0, ',', ' ').' FCFA' : '—' }}</td>
                         <td style="text-align:right">{{ $sortie ? number_format($transaction->montant, 0, ',', ' ').' FCFA' : '—' }}</td>
                     </tr>
                 @endforeach
