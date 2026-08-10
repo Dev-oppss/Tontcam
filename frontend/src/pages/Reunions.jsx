@@ -1705,7 +1705,7 @@ function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, san
 
 // ── Panneau Bénéficiaire de séance ────────────────────────────
 function BeneficiaireSeancePanel({ reunion }) {
-  const { tontines, cyclesTontine, ouvrirBulletinPdf, ajouterRetenueBulletin, payerBulletin, annulerCycle, chargerCycle, saisirCotisationCycle, banques } = useApp();
+  const { tontines, cyclesTontine, ouvrirBulletinPdf, ajouterRetenueBulletin, payerBulletin, annulerVersementBulletin, annulerCycle, chargerCycle, saisirCotisationCycle, banques } = useApp();
   const [bulletinUrl, setBulletinUrl] = useState(null);
   const [retenueModal, setRetenueModal] = useState(null); // idBulletin ciblé
   const [retenueLibelle, setRetenueLibelle] = useState('');
@@ -1734,6 +1734,7 @@ function BeneficiaireSeancePanel({ reunion }) {
         typeAttribution: t?.typeAttribution, nomMembre: c.gagnantNom,
         numeroTour: c.numeroCycle, montantEnchere: c.montantEnchere,
         montantPot: c.montantCollecteReel, dateAttrib: c.dateCloture, idBulletin: c.idBulletin,
+        statutBulletin: c.statutBulletin,
       };
     }), [cyclesTontine, tontines, reunion.id]);
 
@@ -1784,10 +1785,12 @@ function BeneficiaireSeancePanel({ reunion }) {
                 </button>
                 {b.idBulletin && (
                   <>
-                  <button onClick={() => { setModeVersement('especes'); setReferenceVersement(''); setVersementModal(b.idBulletin); }}
-                    className="text-xs px-2.5 py-1.5 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700">
-                    Verser le gain
-                  </button>
+                  {b.statutBulletin !== 'paye' && (
+                    <button onClick={() => { setModeVersement('especes'); setReferenceVersement(''); setVersementModal(b.idBulletin); }}
+                      className="text-xs px-2.5 py-1.5 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700">
+                      Verser le gain
+                    </button>
+                  )}
                   <button onClick={() => { setRetenueLibelle(''); setRetenueMontant(''); setRetenueCaisseId(''); setRetenueModal(b.idBulletin); }}
                     className="text-xs px-2.5 py-1.5 bg-white border border-amber-300 text-amber-700 rounded-lg font-medium hover:bg-amber-50">
                     + Retenue
@@ -1796,6 +1799,13 @@ function BeneficiaireSeancePanel({ reunion }) {
                     className="text-xs px-2.5 py-1.5 bg-amber-600 text-white rounded-lg font-medium hover:bg-amber-700 flex items-center gap-1">
                     <FileText size={12}/> Bulletin
                   </button>
+                  {b.statutBulletin === 'paye' && (
+                    <button onClick={() => {
+                      if (window.confirm('Annuler le versement de ce gain ? Le net et les retenues (transferts, prêt, sanctions) seront contre-passés, et le bulletin repassera au statut « généré ».')) annulerVersementBulletin(b.idBulletin);
+                    }} className="text-xs px-2.5 py-1.5 bg-orange-50 text-orange-700 border border-orange-300 rounded-lg font-medium hover:bg-orange-100">
+                      Annuler le versement
+                    </button>
+                  )}
                   <button onClick={() => {
                     if (window.confirm('Annuler ce cycle ? Le bénéficiaire et les cotisations pourront être corrigés.')) annulerCycle(b.idCycle, b.idBulletin);
                   }} className="text-xs px-2.5 py-1.5 bg-red-50 text-red-600 rounded-lg font-medium hover:bg-red-100">

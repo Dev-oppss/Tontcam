@@ -148,6 +148,7 @@ export const cycleFromApi = (c) => !c ? null : ({
   idGagnantPart: c.gagnant_part_id || null,
   montantEnchere: Number(c.montant_enchere || 0),
   idBulletin: c.bulletin?.id || null,
+  statutBulletin: c.bulletin?.statut || null, // brouillon | genere | paye
   dateOuverture: c.date_ouverture,
   dateCloture: c.date_cloture,
   cotisations: (c.cotisations || []).map(cotisationFromApi),
