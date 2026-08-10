@@ -949,6 +949,15 @@ export const AppProvider = ({ children }) => {
       return caisse;
     } catch (err) { return handleError(err); }
   };
+  const modifierBanque = async (id, data) => {
+    try {
+      const c = await request(`/caisses/${id}`, { method: 'PUT', body: adapt.caisseUpdateToApi(data) });
+      const caisse = adapt.caisseFromApi(c);
+      setBanques((prev) => prev.map((b) => (b.id === id ? caisse : b)));
+      showToast('Caisse modifiée');
+      return caisse;
+    } catch (err) { return handleError(err); }
+  };
   const chargerJournalCaisse = async (idCaisse, filtres = {}) => {
     try {
       const qs = new URLSearchParams({ per_page: '100', ...filtres }).toString();
@@ -1456,7 +1465,7 @@ export const AppProvider = ({ children }) => {
     addPointODJ, updatePointODJ, removePointODJ, movePointODJ, chargerRubriquesODJ, creerRubriqueODJ,
     setPresenceMembre, signerPV,
     chargerRotations, tirerAuSort, addEnchere, attribuerTour, annulerEncheres, annulerCycle,
-    addBanque, addCaisse: addBanque, doOperation, addMembreBanque, transfererCaisse, approuverTransfertCaisse, addCompteBancaire, chargerTransferts,
+    addBanque, addCaisse: addBanque, modifierBanque, modifierCaisse: modifierBanque, doOperation, addMembreBanque, transfererCaisse, approuverTransfertCaisse, addCompteBancaire, chargerTransferts,
     addTypeSanction, updateTypeSanction, addSanction, payerSanction,
     addPret, validerPret, approuverPret, refuserPret, decaisserPret, rembourserPret, distribuerInteretsPret,
     addAide, addAideSociale: addAide, validerAideSociale, verserAideSociale, addTypeAideSociale, membreEligibleAssurance, addCaisseEntry, uploadFichier,

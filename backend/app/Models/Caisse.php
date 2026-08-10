@@ -70,6 +70,22 @@ class Caisse extends Model
         return $this->hasMany(Transaction::class);
     }
 
+    /**
+     * Une caisse reste modifiable tant qu'aucune transaction "réelle" n'y a
+     * été enregistrée. L'écriture de solde initial (reference_type =
+     * 'solde_initial') créée automatiquement à l'ouverture ne compte pas :
+     * sinon aucune caisse ouverte avec un solde de départ ne serait jamais
+     * modifiable.
+     */
+    public function getHasTransactionsAttribute(): bool
+    {
+        return $this->transactions()
+            ->where('reference_type', '!=', 'solde_initial')
+            ->exists();
+    }
+
+    protected $appends = ['has_transactions'];
+
 
     public function prets()
     {

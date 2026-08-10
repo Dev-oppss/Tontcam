@@ -335,6 +335,7 @@ export const aideFromApi = (a) => !a ? null : ({
 export const caisseFromApi = (c) => !c ? null : ({
   id: c.id,
   nom: c.libelle,
+  description: c.description || '',
   type: c.type,
   totalSolde: Number(c.solde_actuel),
   soldeInitial: Number(c.solde_initial),
@@ -343,6 +344,9 @@ export const caisseFromApi = (c) => !c ? null : ({
   statut: c.actif ? 'active' : 'inactive',
   dateCreation: c.date_ouverture || c.created_at,
   compteBancaireId: c.compte_bancaire_id || null,
+  // Une caisse n'est modifiable (hors activation/désactivation) que tant
+  // qu'aucune transaction réelle n'y a été enregistrée.
+  modifiable: !c.has_transactions,
 });
 
 export const caisseToApi = (c) => ({
@@ -351,6 +355,16 @@ export const caisseToApi = (c) => ({
   type: c.type || 'autre',
   compte_bancaire_id: c.compteBancaireId || null,
   solde_initial: Number(c.soldeInitial || 0),
+  pret_autorise: !!c.pretAutorise,
+  taux_interet_mensuel: c.tauxInteret ? Number(c.tauxInteret) / 100 : undefined,
+});
+
+// Pour la mise à jour : on ne renvoie pas solde_initial (non modifiable après coup).
+export const caisseUpdateToApi = (c) => ({
+  libelle: c.nom,
+  description: c.description || null,
+  type: c.type || 'autre',
+  compte_bancaire_id: c.compteBancaireId || null,
   pret_autorise: !!c.pretAutorise,
   taux_interet_mensuel: c.tauxInteret ? Number(c.tauxInteret) / 100 : undefined,
 });
