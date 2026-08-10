@@ -273,8 +273,10 @@ class TontineCycleService
      */
     public function saisirCotisations(CycleTontine $cycle, CotisationTontine $cotisation, float $montantVerse, Utilisateur $saisiPar, array $options = []): CotisationTontine
     {
+        $cycle->loadMissing('reunion', 'bulletin');
+
         if ($cycle->statut === 'clos') {
-            throw new RuntimeException('Cycle clôturé : cotisations non modifiables.');
+            $this->assertCotisationCorrigeable($cycle);
         }
 
         $deficit = (float) $cotisation->montant_du - $montantVerse;
@@ -300,7 +302,39 @@ class TontineCycleService
         $totalCollecte = (float) $cycle->cotisations()->sum('montant_verse');
         $cycle->update(['montant_collecte_reel' => $totalCollecte]);
 
+        // Une correction après clôture change le brut du bulletin : on le
+        // recalcule pour rester cohérent avec les cotisations réellement saisies.
+        if ($cycle->statut === 'clos' && $cycle->bulletin) {
+            app(BulletinGainService::class)->recalculerDepuisCotisations($cycle->bulletin->fresh(), $saisiPar);
+        }
+
         return $cotisation;
+    }
+
+    /**
+     * Autorise la correction d'une cotisation même après la clôture du cycle
+     * (RG-TON — erreur de saisie fréquente : membre coché « cotisé » à tort ou
+     * inversement). Reste bloqué dès qu'un mouvement de caisse ou une signature
+     * rendrait la correction risquée ; dans ces cas, il faut d'abord passer par
+     * le retour des fonds (BulletinGainService::annulerVersement) ou, en dernier
+     * recours, l'annulation complète du cycle.
+     */
+    private function assertCotisationCorrigeable(CycleTontine $cycle): void
+    {
+        if (in_array($cycle->reunion->statut, ['cloturee', 'annulee'], true)) {
+            throw new RuntimeException('Une réunion clôturée ou annulée ne peut plus être modifiée.');
+        }
+
+        $bulletin = $cycle->bulletin;
+        if (! $bulletin) {
+            return;
+        }
+        if ($bulletin->statut === 'paye') {
+            throw new RuntimeException('Le gain a déjà été versé : enregistrez d’abord le retour des fonds (bulletin) avant de corriger une cotisation de ce cycle.');
+        }
+        if ($bulletin->signe_tresorier_at || $bulletin->signe_president_at || $bulletin->signe_beneficiaire_at) {
+            throw new RuntimeException('Impossible de corriger : le bulletin de ce cycle porte déjà au moins une signature.');
+        }
     }
 
     /**

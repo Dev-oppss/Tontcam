@@ -45,31 +45,71 @@ class BulletinGainService
                 'genere_par' => $auteur->id,
             ]);
 
-            $retenues = $this->calculerRetenues($membre, $bulletin);
-            // Une retenue ne peut jamais excéder le gain disponible. Le reliquat
-            // d'une dette reste ouvert et sera repris lors d'un prochain gain.
-            $disponible = $brut;
-            foreach ($retenues as $retenue) {
-                $montantRetenu = min((float) $retenue->montant, max(0, $disponible));
-                if ($montantRetenu <= 0) {
-                    $retenue->delete();
-                    continue;
-                }
-                $retenue->update(['montant' => round($montantRetenu, 2)]);
-                $disponible -= $montantRetenu;
-            }
-            $retenues = array_values(array_filter($retenues, fn ($retenue) => $retenue->exists));
-            $totalRetenues = collect($retenues)->sum('montant');
-            $net = $this->calculerNet($brut, $totalRetenues);
-
-            $bulletin->update([
-                'total_retenues' => $totalRetenues,
-                'montant_net' => $net,
-                'statut' => 'genere',
-            ]);
+            $this->appliquerRetenues($bulletin, $membre, $brut);
+            $bulletin->update(['statut' => 'genere']);
 
             return $bulletin->fresh(['retenues', 'cycle']);
         });
+    }
+
+    /**
+     * Recalcule un bulletin non payé (RG-TON) après correction d'une ou plusieurs
+     * cotisations d'un cycle déjà clos : le brut change, donc les retenues (qui
+     * dépendent du brut disponible) doivent être régénérées à l'identique de
+     * genererDepuisCycle(), sans changer le numéro de bulletin ni son historique
+     * de dates. Interdit si le bulletin est payé ou déjà signé (voir
+     * TontineCycleService::assertCotisationCorrigeable, qui filtre ces cas en amont).
+     */
+    public function recalculerDepuisCotisations(BulletinGain $bulletin, Utilisateur $auteur): BulletinGain
+    {
+        $bulletin->loadMissing('cycle', 'retenues');
+        if ($bulletin->statut === 'paye') {
+            throw new \RuntimeException('Ce bulletin est déjà versé, il ne peut plus être recalculé automatiquement.');
+        }
+        if ($bulletin->signe_tresorier_at || $bulletin->signe_president_at || $bulletin->signe_beneficiaire_at) {
+            throw new \RuntimeException('Impossible de recalculer : le bulletin porte déjà au moins une signature.');
+        }
+
+        return DB::transaction(function () use ($bulletin, $auteur) {
+            $membre = \App\Models\Membre::find($bulletin->gagnant_membre_id);
+            $brut = $this->calculerBrut($bulletin->cycle);
+
+            $bulletin->retenues()->delete();
+            $bulletin->update(['montant_brut' => $brut, 'total_retenues' => 0, 'montant_net' => $brut]);
+
+            $this->appliquerRetenues($bulletin, $membre, $brut);
+
+            return $bulletin->fresh(['retenues', 'cycle']);
+        });
+    }
+
+    /**
+     * Calcule et enregistre les retenues d'un bulletin pour un brut donné (extrait
+     * de genererDepuisCycle pour être réutilisé par recalculerDepuisCotisations).
+     */
+    private function appliquerRetenues(BulletinGain $bulletin, \App\Models\Membre $membre, float $brut): void
+    {
+        $retenues = $this->calculerRetenues($membre, $bulletin);
+        // Une retenue ne peut jamais excéder le gain disponible. Le reliquat
+        // d'une dette reste ouvert et sera repris lors d'un prochain gain.
+        $disponible = $brut;
+        foreach ($retenues as $retenue) {
+            $montantRetenu = min((float) $retenue->montant, max(0, $disponible));
+            if ($montantRetenu <= 0) {
+                $retenue->delete();
+                continue;
+            }
+            $retenue->update(['montant' => round($montantRetenu, 2)]);
+            $disponible -= $montantRetenu;
+        }
+        $retenues = array_values(array_filter($retenues, fn ($retenue) => $retenue->exists));
+        $totalRetenues = collect($retenues)->sum('montant');
+        $net = $this->calculerNet($brut, $totalRetenues);
+
+        $bulletin->update([
+            'total_retenues' => $totalRetenues,
+            'montant_net' => $net,
+        ]);
     }
 
     /**

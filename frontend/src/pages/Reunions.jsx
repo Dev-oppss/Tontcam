@@ -1705,7 +1705,7 @@ function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, san
 
 // ── Panneau Bénéficiaire de séance ────────────────────────────
 function BeneficiaireSeancePanel({ reunion }) {
-  const { tontines, cyclesTontine, ouvrirBulletinPdf, ajouterRetenueBulletin, payerBulletin, annulerCycle, banques } = useApp();
+  const { tontines, cyclesTontine, ouvrirBulletinPdf, ajouterRetenueBulletin, payerBulletin, annulerCycle, chargerCycle, saisirCotisationCycle, banques } = useApp();
   const [bulletinUrl, setBulletinUrl] = useState(null);
   const [retenueModal, setRetenueModal] = useState(null); // idBulletin ciblé
   const [retenueLibelle, setRetenueLibelle] = useState('');
@@ -1714,6 +1714,10 @@ function BeneficiaireSeancePanel({ reunion }) {
   const [versementModal, setVersementModal] = useState(null);
   const [modeVersement, setModeVersement] = useState('especes');
   const [referenceVersement, setReferenceVersement] = useState('');
+  const [corrigerModal, setCorrigerModal] = useState(null); // idCycle ciblé
+  const [cotisationsCorrection, setCotisationsCorrection] = useState([]); // [{id, nomMembre, montantDu, montantVerse}]
+  const [chargementCorrection, setChargementCorrection] = useState(false);
+  const [enregistrementCorrection, setEnregistrementCorrection] = useState(false);
 
   // Onglet purement informatif : affiche le(s) bénéficiaire(s) déjà désigné(s)
   // cette séance, quel que soit le mode d'attribution (rotation/tirage/enchère).
@@ -1735,6 +1739,30 @@ function BeneficiaireSeancePanel({ reunion }) {
 
   const typeLabel = { rotation: 'Rotation', tirage: 'Tirage au sort', enchere: 'Enchère' };
 
+  // Erreur de saisie sur la feuille de cotisation (membre coché à tort, ou oublié) :
+  // reste corrigeable même après désignation du bénéficiaire, tant que le bulletin
+  // n'a pas été versé ni signé (voir TontineCycleService::assertCotisationCorrigeable
+  // côté serveur, qui reste la source de vérité — ce panneau ne fait que la refléter).
+  const ouvrirCorrection = async (idCycle) => {
+    setCorrigerModal(idCycle);
+    setChargementCorrection(true);
+    const cycle = await chargerCycle(idCycle);
+    setCotisationsCorrection((cycle?.cotisations || []).map(co => ({
+      id: co.id, nomMembre: co.nomMembre || '', montantDu: co.montantDu,
+      montantVerse: co.montantVerse, statut: co.statut,
+    })));
+    setChargementCorrection(false);
+  };
+
+  const enregistrerCorrections = async () => {
+    setEnregistrementCorrection(true);
+    for (const c of cotisationsCorrection) {
+      await saisirCotisationCycle(corrigerModal, c.id, c.montantVerse);
+    }
+    setEnregistrementCorrection(false);
+    setCorrigerModal(null);
+  };
+
   return (
     <div className="space-y-4">
       {beneficiairesSeance.length > 0 ? (
@@ -1749,8 +1777,13 @@ function BeneficiaireSeancePanel({ reunion }) {
                 {b.montantEnchere > 0 && <p className="text-xs text-amber-600">Mise : {fmt(b.montantEnchere)} | Net reçu : {fmt(b.montantPot)}</p>}
                 {!b.montantEnchere && <p className="text-xs text-amber-600">Montant : {fmt(b.montantPot)}</p>}
               </div>
-              {b.idBulletin && (
-                <div className="shrink-0 flex items-center gap-1.5">
+              <div className="shrink-0 flex items-center gap-1.5">
+                <button onClick={() => ouvrirCorrection(b.idCycle)}
+                  className="text-xs px-2.5 py-1.5 bg-white border border-blue-300 text-blue-700 rounded-lg font-medium hover:bg-blue-50">
+                  Corriger cotisations
+                </button>
+                {b.idBulletin && (
+                  <>
                   <button onClick={() => { setModeVersement('especes'); setReferenceVersement(''); setVersementModal(b.idBulletin); }}
                     className="text-xs px-2.5 py-1.5 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700">
                     Verser le gain
@@ -1768,8 +1801,9 @@ function BeneficiaireSeancePanel({ reunion }) {
                   }} className="text-xs px-2.5 py-1.5 bg-red-50 text-red-600 rounded-lg font-medium hover:bg-red-100">
                     Annuler
                   </button>
-                </div>
-              )}
+                  </>
+                )}
+              </div>
               <span className="text-xs px-2 py-0.5 bg-amber-200 text-amber-800 rounded-full font-medium">OK Confirmé</span>
             </div>
           ))}
@@ -1848,6 +1882,51 @@ function BeneficiaireSeancePanel({ reunion }) {
             ))}
           </select>
         </FormField>
+      </Modal>
+
+      <Modal open={!!corrigerModal} onClose={() => setCorrigerModal(null)} title="Corriger la feuille de cotisation" size="lg"
+        footer={<>
+          <button onClick={() => setCorrigerModal(null)} className="btn-secondary">Fermer</button>
+          <button onClick={enregistrerCorrections} disabled={chargementCorrection || enregistrementCorrection}
+            className={clsx('btn-primary', (chargementCorrection || enregistrementCorrection) && 'opacity-40 cursor-not-allowed')}>
+            {enregistrementCorrection ? 'Enregistrement…' : 'Enregistrer les corrections'}
+          </button>
+        </>}>
+        <p className="text-xs text-gray-500 mb-3">
+          Corrige une erreur de saisie (membre coché à tort, ou cotisation oubliée) même après
+          la désignation du bénéficiaire. Le bulletin de gain est automatiquement recalculé.
+          Bloqué si le bulletin est déjà versé ou signé — annulez alors le versement (bouton
+          « Verser le gain » → retour des fonds) ou, en dernier recours, le cycle entier.
+        </p>
+        {chargementCorrection ? (
+          <p className="text-sm text-gray-400 text-center py-6">Chargement…</p>
+        ) : (
+          <div className="space-y-2 max-h-96 overflow-y-auto">
+            {cotisationsCorrection.map((c, i) => (
+              <div key={c.id} className="flex items-center gap-3 p-2.5 bg-gray-50 rounded-lg border border-gray-200">
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-gray-800 truncate">{c.nomMembre}</p>
+                  <p className="text-xs text-gray-400">Dû : {fmt(c.montantDu)}</p>
+                </div>
+                <button
+                  onClick={() => setCotisationsCorrection(prev => prev.map((x, j) => j === i
+                    ? { ...x, montantVerse: x.montantVerse > 0 ? 0 : x.montantDu }
+                    : x))}
+                  className={clsx('shrink-0 text-xs px-2.5 py-1.5 rounded-lg font-medium',
+                    c.montantVerse > 0 ? 'bg-green-100 text-green-700 hover:bg-green-200' : 'bg-red-100 text-red-700 hover:bg-red-200')}>
+                  {c.montantVerse > 0 ? 'A cotisé' : 'Défaillant'}
+                </button>
+                <input type="number" className="input w-28 text-sm" value={c.montantVerse}
+                  onChange={e => setCotisationsCorrection(prev => prev.map((x, j) => j === i
+                    ? { ...x, montantVerse: Number(e.target.value) }
+                    : x))}/>
+              </div>
+            ))}
+            {cotisationsCorrection.length === 0 && (
+              <p className="text-sm text-gray-400 text-center py-6">Aucune cotisation trouvée pour ce cycle.</p>
+            )}
+          </div>
+        )}
       </Modal>
     </div>
   );
