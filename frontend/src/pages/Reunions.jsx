@@ -1764,7 +1764,7 @@ function BeneficiaireSeancePanel({ reunion }) {
                     <FileText size={12}/> Bulletin
                   </button>
                   <button onClick={() => {
-                    if (window.confirm('Annuler ce cycle non versé ? Le bénéficiaire et les cotisations pourront être corrigés.')) annulerCycle(b.idCycle);
+                    if (window.confirm('Annuler ce cycle ? Le bénéficiaire et les cotisations pourront être corrigés.')) annulerCycle(b.idCycle, b.idBulletin);
                   }} className="text-xs px-2.5 py-1.5 bg-red-50 text-red-600 rounded-lg font-medium hover:bg-red-100">
                     Annuler
                   </button>

@@ -228,6 +228,66 @@ class PretService
     }
 
     /**
+     * Contre-passation d'une imputation de prêt réalisée via une retenue de bulletin
+     * de gain (voir BulletinGainService::verser, appel avec encaisserEnCaisse=false).
+     * Comme rembourserLibre(), aucun identifiant de lot n'est conservé par échéance :
+     * on défait donc le montant en partant de l'échéance la plus récemment impactée
+     * (LIFO), symétrique de l'application initiale qui part de la plus ancienne.
+     */
+    public function annulerImputationBulletin(Pret $pret, float $montant, Utilisateur $auteur): void
+    {
+        if ($montant <= 0) {
+            return;
+        }
+
+        DB::transaction(function () use ($pret, $montant, $auteur) {
+            $restant = $montant;
+
+            $echeances = $pret->echeances()
+                ->whereIn('statut', ['payee', 'partielle'])
+                ->where('montant_verse', '>', 0)
+                ->orderByDesc('numero_echeance')
+                ->get();
+
+            foreach ($echeances as $echeance) {
+                if ($restant <= 0) {
+                    break;
+                }
+                $reduction = min($restant, (float) $echeance->montant_verse);
+                if ($reduction <= 0) {
+                    continue;
+                }
+
+                $capitalARetirer = min($reduction, (float) $echeance->montant_capital);
+                $nouveauVerse = round((float) $echeance->montant_verse - $reduction, 2);
+
+                $echeance->update([
+                    'montant_verse' => $nouveauVerse,
+                    'statut' => $nouveauVerse <= 0 ? 'due' : 'partielle',
+                    'date_versement_reel' => $nouveauVerse <= 0 ? null : $echeance->date_versement_reel,
+                ]);
+
+                $etaitSolde = $pret->statut === 'solde';
+                $pret->update([
+                    'montant_rembourse' => max(0, round((float) $pret->montant_rembourse - $reduction, 2)),
+                    'capital_restant' => round((float) $pret->capital_restant + $capitalARetirer, 2),
+                ]);
+                if ($etaitSolde) {
+                    $pret->update(['statut' => 'en_cours', 'date_solde' => null]);
+                    $this->loguerStatut($pret, 'solde', 'en_cours', 'Réouverture suite à annulation d’un versement de gain', $auteur);
+                }
+
+                $restant = round($restant - $reduction, 2);
+                $pret->refresh();
+            }
+
+            if ($restant > 0.01) {
+                throw new RuntimeException('Impossible d’annuler intégralement l’imputation du prêt : montant introuvable dans les échéances réglées (des remboursements postérieurs ont peut-être déjà modifié le prêt).');
+            }
+        });
+    }
+
+    /**
      * Tableau d'amortissement — méthode linéaire (RG-PRT / cahier des charges 5.3).
      */
     public function genererAmortissement(Pret $pret): array

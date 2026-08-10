@@ -1365,14 +1365,46 @@ export const AppProvider = ({ children }) => {
       return b;
     } catch (err) { return handleError(err); }
   };
-  const annulerCycle = async (idCycle) => {
+  // Retour des fonds : contre-passation d'un bulletin déjà versé (préalable
+  // obligatoire côté serveur avant de pouvoir annuler le cycle correspondant).
+  const annulerVersementBulletin = async (idBulletin, motif = '') => {
+    try {
+      const bulletin = await request(`/bulletins/${idBulletin}/annuler-versement`, {
+        method: 'POST', body: { motif: motif || null },
+      });
+      if (bulletin.cycle?.reunion_id) await chargerSeanceTransactions(bulletin.cycle.reunion_id);
+      showToast('Retour des fonds enregistré : le gain et les retenues ont été contre-passés');
+      return bulletin;
+    } catch (err) { return handleError(err); }
+  };
+
+  const annulerCycle = async (idCycle, idBulletin) => {
     try {
       await request(`/cycles/${idCycle}`, { method: 'DELETE' });
       setCyclesTontine((prev) => prev.filter((cycle) => cycle.id !== idCycle));
       setRotations((prev) => prev.filter((rotation) => rotation.id !== idCycle));
       showToast('Cycle annulé : le bénéficiaire et la feuille peuvent être saisis à nouveau');
       return true;
-    } catch (err) { return handleError(err); }
+    } catch (err) {
+      // Le bulletin de ce cycle a déjà été versé : le serveur refuse l'annulation
+      // tant que le retour des fonds n'a pas été enregistré (voir
+      // TontineCycleService::annulerCycleAvantVersement). On propose de l'enchaîner
+      // automatiquement plutôt que de laisser l'utilisateur bloqué.
+      const message = err?.message || '';
+      if (idBulletin && message.includes('gain a déjà été versé')) {
+        const confirmer = window.confirm(
+          `${message}\n\nVoulez-vous enregistrer maintenant le retour des fonds (contre-passation du versement et des retenues), puis annuler le cycle ?`
+        );
+        if (confirmer) {
+          const bulletin = await annulerVersementBulletin(idBulletin);
+          if (bulletin) {
+            return annulerCycle(idCycle, idBulletin);
+          }
+        }
+        return false;
+      }
+      return handleError(err);
+    }
   };
   const addPoste = async (data) => {
     try {
@@ -1464,7 +1496,7 @@ export const AppProvider = ({ children }) => {
     addReunion, updateReunion, chargerReunion, ouvrirReunion, cloturerReunion, ouvrirSeance, cloturerSeance,
     addPointODJ, updatePointODJ, removePointODJ, movePointODJ, chargerRubriquesODJ, creerRubriqueODJ,
     setPresenceMembre, signerPV,
-    chargerRotations, tirerAuSort, addEnchere, attribuerTour, annulerEncheres, annulerCycle,
+    chargerRotations, tirerAuSort, addEnchere, attribuerTour, annulerEncheres, annulerCycle, annulerVersementBulletin,
     addBanque, addCaisse: addBanque, modifierBanque, modifierCaisse: modifierBanque, doOperation, addMembreBanque, transfererCaisse, approuverTransfertCaisse, addCompteBancaire, chargerTransferts,
     addTypeSanction, updateTypeSanction, addSanction, payerSanction,
     addPret, validerPret, approuverPret, refuserPret, decaisserPret, rembourserPret, distribuerInteretsPret,
