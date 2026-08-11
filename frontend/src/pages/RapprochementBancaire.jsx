@@ -3,13 +3,14 @@ import { Landmark, Plus, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { fmt, fmtDate } from '../data/mockData';
 import { PageHeader, SectionCard, Table, Badge, Modal, FormField } from '../components/ui/index';
+import { getMissingFields } from '../lib/validation';
 
 const EMPTY = { idCompteBancaire: '', idCaisse: '', soldeReleve: '', periodeDebut: new Date(new Date().setDate(1)).toISOString().split('T')[0], periodeFin: new Date().toISOString().split('T')[0] };
 
 const joursDepuis = (date) => Math.floor((Date.now() - new Date(date).getTime()) / 86400000);
 
 export default function RapprochementBancaire() {
-  const { caisses = [], comptesBancaire = [], rapprochements = [], addRapprochement, justifierEcart } = useApp();
+  const { caisses = [], comptesBancaire = [], rapprochements = [], addRapprochement, justifierEcart, showToast } = useApp();
   const [add, setAdd] = useState(false);
   const [form, setForm] = useState(EMPTY);
   const [justifModal, setJustifModal] = useState(null);
@@ -19,15 +20,21 @@ export default function RapprochementBancaire() {
   const caissesEligibles = caisses.filter((c) => c.compteBancaireId === form.idCompteBancaire);
 
   const handleAdd = () => {
-    if (!form.idCompteBancaire || !form.idCaisse || form.soldeReleve === '') return;
-    if (form.periodeFin <= form.periodeDebut) return;
+    const missing = getMissingFields(form, [
+      { key: 'idCompteBancaire', label: 'Compte bancaire' },
+      { key: 'idCaisse', label: 'Caisse liée à ce compte' },
+      { key: 'soldeReleve', label: 'Solde du relevé bancaire' },
+    ]);
+    if (missing.length) { showToast?.(`Champ(s) requis manquant(s) : ${missing.join(', ')}`, 'error'); return; }
+    if (form.periodeFin <= form.periodeDebut) { showToast?.('La période de fin doit être postérieure à la période de début.', 'error'); return; }
     addRapprochement?.(form);
     setAdd(false);
     setForm(EMPTY);
   };
 
   const handleJustifier = () => {
-    if (!justifModal || !motif.trim()) return;
+    if (!justifModal) return;
+    if (!motif.trim()) { showToast?.("Motif de l'écart requis.", 'error'); return; }
     justifierEcart?.(justifModal.id, motif);
     setJustifModal(null);
     setMotif('');

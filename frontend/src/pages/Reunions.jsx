@@ -13,6 +13,7 @@ import { fmtDate, typePointLabel, statutPointLabel, fmt, periodeLabel, ACTEUR_RO
 import { API_BASE, request } from '../lib/api';
 import { useApp, TX_TYPES, TX_LABELS } from '../context/AppContext';
 import { PageHeader, Badge, Modal, FormField } from '../components/ui/index';
+import { getMissingFields } from '../lib/validation';
 import { ModePaiementFields, isModePaiementValid, ModePaiementBadge } from '../components/ui/ModePaiement';
 import clsx from 'clsx';
 
@@ -283,7 +284,12 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
   };
 
   const handleAjouterEnchere = async () => {
-    if (!cycleActuelId || !nouvelleEnchereMembre || !nouvelleEnchereMontant || !nouvelleEnchereCaisseId) return;
+    if (!cycleActuelId) return;
+    const missing = [];
+    if (!nouvelleEnchereMembre) missing.push('Membre');
+    if (!nouvelleEnchereMontant) missing.push('Montant de la mise');
+    if (!nouvelleEnchereCaisseId) missing.push('Caisse');
+    if (missing.length) { showToast?.(`Champ(s) requis manquant(s) : ${missing.join(', ')}`, 'error'); return; }
     const ok = await addEnchere({
       idRotation: cycleActuelId,
       idTontine: tontineSelectee.id,
@@ -326,7 +332,12 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
   // La désignation manuelle sans offre crée d'abord une offre réelle, afin que
   // le montant apparaisse dans l'historique et le bulletin de gain.
   const handleEnregistrerEtDesignerManuellement = async () => {
-    if (!cycleActuelId || !enchereIdGagnant || !miseGagnante || !miseGagnanteCaisseId) return;
+    if (!cycleActuelId) return;
+    const missing = [];
+    if (!enchereIdGagnant) missing.push('Membre bénéficiaire');
+    if (!miseGagnante) missing.push('Montant');
+    if (!miseGagnanteCaisseId) missing.push('Caisse');
+    if (missing.length) { showToast?.(`Champ(s) requis manquant(s) : ${missing.join(', ')}`, 'error'); return; }
     const offre = await addEnchere({
       idRotation: cycleActuelId,
       idTontine: tontineSelectee.id,
@@ -2435,7 +2446,11 @@ export function Reunions() {
   const dateMinReunion = new Date(Date.now() + 24 * 3600 * 1000).toISOString().split('T')[0]; // RG-REU-002 : J+1 minimum
 
   const handleAddReunion = () => {
-    if (!formReunion.date || !formReunion.lieu) return;
+    const missing = getMissingFields(formReunion, [
+      { key: 'date', label: 'Date de la réunion' },
+      { key: 'lieu', label: 'Lieu de la réunion' },
+    ]);
+    if (missing.length) { showToast?.(`Champ(s) requis manquant(s) : ${missing.join(', ')}`, 'error'); return; }
     if (formReunion.date < dateMinReunion) { showToast?.("La date doit être au moins 24h après aujourd'hui.", "error"); return; }
     if (reunions.some(r => r.date === formReunion.date)) { showToast?.("Une réunion est déjà planifiée ce jour-là.", "error"); return; } // RG-REU-005
     addReunion({ ...formReunion });
@@ -2443,26 +2458,38 @@ export function Reunions() {
   };
 
   const handleEditReunion = () => {
-    if (!formReunion.date || !formReunion.lieu) return;
+    const missing = getMissingFields(formReunion, [
+      { key: 'date', label: 'Date' },
+      { key: 'lieu', label: 'Lieu' },
+    ]);
+    if (missing.length) { showToast?.(`Champ(s) requis manquant(s) : ${missing.join(', ')}`, 'error'); return; }
     if (reunions.some(r => r.date === formReunion.date && r.id !== showEdit.id)) { showToast?.("Une réunion est déjà planifiée ce jour-là.", "error"); return; }
     updateReunion({ ...showEdit, ...formReunion });
     setShowEdit(null);
   };
 
   const handleOuverture = () => {
-    if (!formOuv.heureOuverture || !formOuv.presidentSeance) return;
+    const missing = getMissingFields(formOuv, [
+      { key: 'heureOuverture', label: "Heure d'ouverture" },
+      { key: 'presidentSeance', label: 'Président de séance' },
+    ]);
+    if (missing.length) { showToast?.(`Champ(s) requis manquant(s) : ${missing.join(', ')}`, 'error'); return; }
     const ok = ouvrirSeance(showOuverture.id, formOuv);
     if (ok !== false) { setShowOuverture(null); setFormOuv(EMPTY_OUVERTURE); }
   };
 
   const handleCloture = () => {
-    if (!formCloture.heureCloture || !formCloture.presents) return;
+    const missing = getMissingFields(formCloture, [
+      { key: 'heureCloture', label: 'Heure de clôture' },
+      { key: 'presents', label: 'Nombre de présents' },
+    ]);
+    if (missing.length) { showToast?.(`Champ(s) requis manquant(s) : ${missing.join(', ')}`, 'error'); return; }
     cloturerSeance(showCloture.id, formCloture);
     setShowCloture(null); setFormCloture(EMPTY_CLOTURE);
   };
 
   const handleAddPoint = async () => {
-    if (!formPoint.titre.trim()) return;
+    if (!formPoint.titre.trim()) { showToast?.('Titre du point requis.', 'error'); return; }
     let point = { ...formPoint };
     if (enregistrerPointCommeRubrique && !point.rubriqueId) {
       const rubrique = await creerRubriqueODJ(point.titre.trim());
@@ -2478,7 +2505,7 @@ export function Reunions() {
   };
 
   const handleEditPoint = () => {
-    if (!formPoint.titre.trim()) return;
+    if (!formPoint.titre.trim()) { showToast?.('Titre du point requis.', 'error'); return; }
     updatePointODJ(showEditPoint.reunionId, showEditPoint.point.id, formPoint);
     setShowEditPoint(null); setFormPoint(EMPTY_POINT);
   };
