@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   CalendarPlus, MapPin, Users, Clock, CheckCircle, PlayCircle,
@@ -2495,10 +2495,17 @@ export function Reunions() {
     })(), c:'text-purple-600' },
   ];
 
-  const FR = ({ k, ...p }) => <input className="input" value={formReunion[k]||''} onChange={e=>setFormReunion(f=>({...f,[k]:e.target.value}))} {...p}/>;
-  const FO = ({ k, ...p }) => <input className="input" value={formOuv[k]||''} onChange={e=>setFormOuv(f=>({...f,[k]:e.target.value}))} {...p}/>;
-  const FC = ({ k, ...p }) => <input className="input" value={formCloture[k]||''} onChange={e=>setFormCloture(f=>({...f,[k]:e.target.value}))} {...p}/>;
-  const FP = ({ k, ...p }) => <input className="input" value={formPoint[k]||''} onChange={e=>setFormPoint(f=>({...f,[k]:e.target.value}))} {...p}/>;
+  // Refs pour exposer la valeur courante des formulaires sans recréer les composants ci-dessous
+  // à chaque frappe (sinon React démonte/remonte l'<input> et fait perdre le focus - RG bug "1 caractère puis reclic").
+  const formReunionRef = useRef(formReunion); formReunionRef.current = formReunion;
+  const formOuvRef = useRef(formOuv); formOuvRef.current = formOuv;
+  const formClotureRef = useRef(formCloture); formClotureRef.current = formCloture;
+  const formPointRef = useRef(formPoint); formPointRef.current = formPoint;
+
+  const FR = useRef(({ k, ...p }) => <input className="input" value={formReunionRef.current[k]||''} onChange={e=>setFormReunion(f=>({...f,[k]:e.target.value}))} {...p}/>).current;
+  const FO = useRef(({ k, ...p }) => <input className="input" value={formOuvRef.current[k]||''} onChange={e=>setFormOuv(f=>({...f,[k]:e.target.value}))} {...p}/>).current;
+  const FC = useRef(({ k, ...p }) => <input className="input" value={formClotureRef.current[k]||''} onChange={e=>setFormCloture(f=>({...f,[k]:e.target.value}))} {...p}/>).current;
+  const FP = useRef(({ k, ...p }) => <input className="input" value={formPointRef.current[k]||''} onChange={e=>setFormPoint(f=>({...f,[k]:e.target.value}))} {...p}/>).current;
 
   return (
     <div className="space-y-6">
