@@ -3,6 +3,7 @@ import { Gavel, Plus, CheckCircle2, XCircle, MinusCircle } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { fmtDate } from '../data/mockData';
 import { PageHeader, Table, Badge, Modal, FormField } from '../components/ui/index';
+import { getMissingFields } from '../lib/validation';
 
 const TYPES = [
   { value: 'financier', label: 'Financier' },
@@ -19,14 +20,20 @@ const EMPTY = {
 };
 
 export default function DecisionsAG() {
-  const { decisionsAG = [], addDecisionAG, membres = [], reunions = [] } = useApp();
+  const { decisionsAG = [], addDecisionAG, membres = [], reunions = [], showToast } = useApp();
   const [add, setAdd] = useState(false);
   const [form, setForm] = useState(EMPTY);
 
   const adopte = (d) => Number(d.pour) > Number(d.contre);
 
   const handleAdd = () => {
-    if (!form.objet.trim() || !form.idReunion) return;
+    const missing = getMissingFields(form, [
+      { key: 'objet', label: 'Objet de la décision' },
+      { key: 'idReunion', label: 'Réunion associée' },
+      { key: 'type', label: 'Type' },
+      { key: 'dateAG', label: "Date de l'AG" },
+    ]);
+    if (missing.length) { showToast?.(`Champ(s) requis manquant(s) : ${missing.join(', ')}`, 'error'); return; }
     addDecisionAG?.(form);
     setAdd(false);
     setForm(EMPTY);

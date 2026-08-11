@@ -8,6 +8,7 @@ import {
 import { fmt, fmtDate } from '../data/mockData';
 import { useApp } from '../context/AppContext';
 import { PageHeader, Badge, Modal, FormField } from '../components/ui/index';
+import { getMissingFields } from '../lib/validation';
 import clsx from 'clsx';
 
 // ── Catégories de flux financiers (hors cotisations tontine) ──
@@ -39,7 +40,7 @@ export default function Caisse() {
   const {
     user, caisseJournal, caisseJournalPagination, banques, comptesBanque, operationsBanque, transfertsCaisse, transfererCaisse, approuverTransfertCaisse,
     prets, sanctions, encheres, rotations, fondAssurance,
-    seanceTransactions, chargerJournalGlobal,
+    seanceTransactions, chargerJournalGlobal, showToast,
   } = useApp();
 
   const [journalPage, setJournalPage] = useState(1);
@@ -104,8 +105,14 @@ export default function Caisse() {
   const totalRetraitBL = opsBanqueLibre.reduce((s, o) => s + o.sortie, 0);
 
   const handleTransfer = async () => {
-    if (!transferForm.caisseSourceId || !transferForm.caisseDestinationId || transferForm.caisseSourceId === transferForm.caisseDestinationId) return;
-    if (!transferForm.montant || Number(transferForm.montant) <= 0) return;
+    const missing = getMissingFields(transferForm, [
+      { key: 'caisseSourceId', label: 'Caisse source' },
+      { key: 'caisseDestinationId', label: 'Caisse destination' },
+      { key: 'montant', label: 'Montant' },
+    ]);
+    if (missing.length) { showToast?.(`Champ(s) requis manquant(s) : ${missing.join(', ')}`, 'error'); return; }
+    if (transferForm.caisseSourceId === transferForm.caisseDestinationId) { showToast?.('La caisse source et la caisse destination doivent être différentes.', 'error'); return; }
+    if (Number(transferForm.montant) <= 0) { showToast?.('Le montant doit être supérieur à 0.', 'error'); return; }
     try {
       await transfererCaisse({
       idSource: transferForm.caisseSourceId,

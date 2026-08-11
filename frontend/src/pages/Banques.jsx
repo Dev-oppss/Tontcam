@@ -4,6 +4,7 @@ import { fmt, fmtDate } from '../data/mockData';
 import { useApp } from '../context/AppContext';
 import { PageHeader, Table, Badge, Modal, FormField, SectionCard } from '../components/ui/index';
 import { ModePaiementFields, isModePaiementValid } from '../components/ui/ModePaiement';
+import { getMissingFields } from '../lib/validation';
 import clsx from 'clsx';
 
 const typeColors = {
@@ -32,7 +33,7 @@ const createEmptyBanque = () => ({
 export default function Banques() {
   const {
     membres, banques, comptesBanque, operationsBanque, comptesBancaire,
-    addBanque, modifierBanque, doOperation, addMembreBanque,
+    addBanque, modifierBanque, doOperation, addMembreBanque, showToast,
   } = useApp();
 
   const [addModal,    setAddModal]    = useState(false);
@@ -72,9 +73,9 @@ export default function Banques() {
   };
 
   const handleOp = () => {
-    if (!opForm.montant || Number(opForm.montant) <= 0) return;
-    if (!isModePaiementValid(opForm.modePaiement, opForm.detailsPaiement)) return;
-    if (opModal.type === 'retrait' && Number(opForm.montant) > Number(opModal.compte.solde || 0)) return; // RG-CAI-006
+    if (!opForm.montant || Number(opForm.montant) <= 0) { showToast?.('Montant requis.', 'error'); return; }
+    if (!isModePaiementValid(opForm.modePaiement, opForm.detailsPaiement)) { showToast?.('Référence de paiement requise pour ce mode de versement.', 'error'); return; }
+    if (opModal.type === 'retrait' && Number(opForm.montant) > Number(opModal.compte.solde || 0)) { showToast?.('Solde insuffisant pour ce retrait (RG-CAI-006).', 'error'); return; }
     doOperation({
       idMembre: opModal.compte.idMembre,
       idBanque: opModal.compte.idBanque,
@@ -90,7 +91,7 @@ export default function Banques() {
 
   /* ─── Création banque ──────────────────────────────────────── */
   const handleAddBanque = () => {
-    if (!newBanque.nom.trim()) return;
+    if (!newBanque.nom.trim()) { showToast?.('Nom de la caisse requis.', 'error'); return; }
     addBanque({
       ...newBanque,
       pretAutorise: Boolean(newBanque.pretAutorise),
@@ -116,7 +117,8 @@ export default function Banques() {
   };
 
   const handleEditBanque = async () => {
-    if (!editModal || !editBanque.nom.trim()) return;
+    if (!editModal) return;
+    if (!editBanque.nom.trim()) { showToast?.('Nom de la caisse requis.', 'error'); return; }
     await modifierBanque(editModal.id, {
       ...editBanque,
       pretAutorise: Boolean(editBanque.pretAutorise),
@@ -127,7 +129,8 @@ export default function Banques() {
 
   /* ─── Inscription membre ───────────────────────────────────── */
   const handleEnroll = () => {
-    if (!enrollForm.idMembre || !enrollModal) return;
+    if (!enrollModal) return;
+    if (!enrollForm.idMembre) { showToast?.('Membre à inscrire requis.', 'error'); return; }
     const mEnroll = membres.find(m => m.id === enrollForm.idMembre);
     addMembreBanque({ idMembre: enrollForm.idMembre, idBanque: enrollModal.id, nomBanque: enrollModal.nom,
       nomMembre: mEnroll ? `${mEnroll.nom} ${mEnroll.prenom}` : '—',

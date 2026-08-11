@@ -5,9 +5,10 @@ import { useApp } from '../context/AppContext';
 import { PageHeader, Table, Badge, Modal, FormField } from '../components/ui/index';
 import { ModePaiementFields, isModePaiementValid } from '../components/ui/ModePaiement';
 import { computeEcheancesAvecPenalites, statutEcheanceLabel } from '../lib/penalites';
+import { getMissingFields } from '../lib/validation';
 
 export default function Prets() {
-  const { membres, prets, comptesBanque, caisses, addPret, validerPret, approuverPret, refuserPret, decaisserPret, rembourserPret, distribuerInteretsPret } = useApp();
+  const { membres, prets, comptesBanque, caisses, addPret, validerPret, approuverPret, refuserPret, decaisserPret, rembourserPret, distribuerInteretsPret, showToast } = useApp();
 
   const [add,        setAdd]        = useState(false);
   const [remModal,   setRemModal]   = useState(null);
@@ -131,8 +132,13 @@ export default function Prets() {
   const rembourse = pretsLive.filter(p => p.statut === 'rembourse');
 
   const handleAdd = () => {
-    if (!form.idMembre || !form.montantPret || !form.caisseId) return;
-    if (!pretSimule) return;
+    const missing = getMissingFields(form, [
+      { key: 'idMembre', label: 'Membre bénéficiaire' },
+      { key: 'caisseId', label: 'Caisse source' },
+      { key: 'montantPret', label: 'Montant' },
+    ]);
+    if (missing.length) { showToast?.(`Champ(s) requis manquant(s) : ${missing.join(', ')}`, 'error'); return; }
+    if (!pretSimule) { showToast?.('Simulation du prêt indisponible — vérifiez les paramètres saisis.', 'error'); return; }
     const m = membres.find(x => x.id === form.idMembre);
     addPret({
       ...form,
@@ -155,8 +161,8 @@ export default function Prets() {
   };
 
   const handleRembourser = () => {
-    if (!remMontant || Number(remMontant) <= 0) return;
-    if (!isModePaiementValid(remModePaiement, remDetailsPaiement)) return;
+    if (!remMontant || Number(remMontant) <= 0) { showToast?.('Montant reçu requis.', 'error'); return; }
+    if (!isModePaiementValid(remModePaiement, remDetailsPaiement)) { showToast?.('Référence de paiement requise pour ce mode de versement.', 'error'); return; }
     const reste = remModal.resteAPayer - Number(remMontant);
     rembourserPret(remModal.id, Number(remMontant), { modePaiement: remModePaiement, detailsPaiement: remDetailsPaiement });
     if (reste <= 0 && !remModal.interetsDistribues) {

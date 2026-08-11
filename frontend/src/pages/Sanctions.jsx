@@ -4,6 +4,7 @@ import { fmt, fmtDate, typeSancLabel } from '../data/mockData';
 import { useApp } from '../context/AppContext';
 import { PageHeader, Table, Badge, Modal, FormField } from '../components/ui/index';
 import { ModePaiementFields, isModePaiementValid, ModePaiementBadge } from '../components/ui/ModePaiement';
+import { getMissingFields } from '../lib/validation';
 
 const PRESET_TYPES = [
   { code: 'retard_cotisation', libelle: 'Retard de cotisation', montantFixe: 2500 },
@@ -26,7 +27,7 @@ const slugify = (value) => String(value || '')
   .replace(/^_+|_+$/g, '');
 
 export default function Sanctions() {
-  const { membres, sanctions, addSanction, payerSanction, typesSanction, addTypeSanction } = useApp();
+  const { membres, sanctions, addSanction, payerSanction, typesSanction, addTypeSanction, showToast } = useApp();
   const [add, setAdd] = useState(false);
   const [addType, setAddType] = useState(false);
   const [form, setForm] = useState({
@@ -43,7 +44,7 @@ export default function Sanctions() {
   const [payDetailsPaiement, setPayDetailsPaiement] = useState('');
 
   const handlePayer = () => {
-    if (!isModePaiementValid(payModePaiement, payDetailsPaiement)) return;
+    if (!isModePaiementValid(payModePaiement, payDetailsPaiement)) { showToast?.('Référence de paiement requise pour ce mode de versement.', 'error'); return; }
     payerSanction(payModal.id, { modePaiement: payModePaiement, detailsPaiement: payDetailsPaiement });
     setPayModal(null);
     setPayModePaiement('especes');
@@ -96,7 +97,9 @@ export default function Sanctions() {
   };
 
   const handleAdd = async () => {
-    if (!form.idMembre) return;
+    const missing = getMissingFields(form, [{ key: 'idMembre', label: 'Membre' }]);
+    if (form.typeSanction === 'autre' && !customTypeForm.libelle.trim()) missing.push('Libellé de la sanction');
+    if (missing.length) { showToast?.(`Champ(s) requis manquant(s) : ${missing.join(', ')}`, 'error'); return; }
     const m = membres.find(x=>x.id===form.idMembre);
     let typeCode = form.typeSanction;
     let motif = typeSancLabel[typeCode] || typeCode;
@@ -104,7 +107,7 @@ export default function Sanctions() {
 
     if (typeCode === 'autre') {
       const created = await ensureCustomType();
-      if (!created) return;
+      if (!created) { showToast?.('Libellé de la sanction requis.', 'error'); return; }
       typeCode = created.code;
       motif = created.libelle || customTypeForm.libelle.trim();
       montant = Number(created.montantFixe ?? customTypeForm.montant ?? form.montant ?? 0);
@@ -124,7 +127,7 @@ export default function Sanctions() {
   };
 
   const handleAddType = () => {
-    if (!customTypeForm.libelle.trim()) return;
+    if (!customTypeForm.libelle.trim()) { showToast?.('Libellé requis.', 'error'); return; }
     addTypeSanction({
       libelle: customTypeForm.libelle.trim(),
       code: slugify(customTypeForm.libelle),
