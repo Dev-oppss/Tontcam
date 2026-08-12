@@ -21,6 +21,15 @@ class PretService
         if (! $caisse->pret_autorise) {
             throw new RuntimeException("La caisse « {$caisse->libelle} » n'autorise pas les prêts.");
         }
+        if ($emprunteur->statut !== 'actif') {
+            throw new RuntimeException("Le membre n'est pas actif ({$emprunteur->statut}) : demande de prêt refusée.");
+        }
+        $pretEnCours = Pret::where('emprunteur_id', $emprunteur->id)
+            ->whereIn('statut', ['en_cours', 'en_retard', 'defaut'])
+            ->exists();
+        if ($pretEnCours) {
+            throw new RuntimeException("Le membre a déjà un prêt en cours : nouvelle demande refusée.");
+        }
         if ($montant > (float) $caisse->solde_actuel) {
             throw new RuntimeException('Montant demandé supérieur au solde disponible de la caisse.');
         }
