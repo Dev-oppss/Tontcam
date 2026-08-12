@@ -93,6 +93,7 @@ class SanctionController extends Controller
     public function update(Request $request, string $id): JsonResponse
     {
         $sanction = $this->scope->scopeAssociation(SanctionMembre::query())->findOrFail($id);
+        $this->authorize('update', $sanction);
 
         if (in_array($sanction->statut, ['payee', 'annulee'], true)) {
             return response()->json(['message' => 'Sanction déjà clôturée.'], 422);
@@ -100,6 +101,9 @@ class SanctionController extends Controller
 
         $data = $request->validate(['statut' => ['sometimes', 'in:annulee'], 'motif_annulation' => ['required_if:statut,annulee', 'string']]);
         if (($data['statut'] ?? null) === 'annulee') {
+            if (! in_array($request->user()->role, ['president', 'super_admin'], true)) {
+                return response()->json(['message' => "Seul le président peut annuler une sanction."], 403);
+            }
             $sanction->update([
                 'statut' => 'annulee',
                 'annulee_par' => $request->user()->id,
