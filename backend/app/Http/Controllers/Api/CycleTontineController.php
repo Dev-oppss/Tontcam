@@ -365,8 +365,31 @@ class CycleTontineController extends Controller
     }
 
     /**
-     * POST /cycles/{id}/encheres — soumission d'une offre par un membre.
+     * POST /bulletins/{id}/annuler — annule un bulletin non versé (brouillon/genere),
+     * bloqué dès que le bénéficiaire a signé (voir BulletinGainService::annulerBulletin).
      */
+    public function annulerBulletin(Request $request, string $bulletinId): JsonResponse
+    {
+        if (! in_array($request->user()->role, ['tresorier', 'president', 'super_admin'], true)) {
+            return response()->json(['message' => 'Réservé au trésorier, au président ou au super_admin.'], 403);
+        }
+        $bulletin = \App\Models\BulletinGain::with('cycle.tontine')
+            ->whereHas('cycle.tontine', fn ($q) => $this->scope->scopeAssociation($q))->findOrFail($bulletinId);
+
+        $data = $request->validate([
+            'motif' => ['nullable', 'string', 'max:200'],
+        ]);
+
+        try {
+            $bulletin = $this->bulletinService->annulerBulletin($bulletin, $request->user(), $data['motif'] ?? null);
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json($bulletin);
+    }
+
+
     public function placerEnchere(Request $request, string $id): JsonResponse
     {
         $cycle = $this->cycleScope($id);
