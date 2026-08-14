@@ -10,10 +10,13 @@ use App\Services\CaisseService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use App\Http\Controllers\Controller;
+use App\Http\Controllers\Api\Concerns\AssertSeanceOuverte;
 use RuntimeException;
 
 class AideSocialeController extends Controller
 {
+    use AssertSeanceOuverte;
+
     public function __construct(private AccessScopeService $scope, private CaisseService $caisseService) {}
 
     public function index(Request $request): JsonResponse
@@ -136,9 +139,12 @@ class AideSocialeController extends Controller
         }
 
         $data = $request->validate([
+            'reunion_id' => ['required', 'uuid'],
             'mode_paiement' => ['sometimes', 'nullable', 'string'],
             'details_paiement' => ['sometimes', 'nullable', 'string'],
         ]);
+
+        $reunion = \App\Models\Reunion::where('association_id', $this->scope->associationId())->findOrFail($data['reunion_id']);
 
         $caisse = $evenement->typeAide->caisseSource;
         if (! $caisse) {
@@ -146,6 +152,7 @@ class AideSocialeController extends Controller
         }
 
         try {
+            $this->assertSeanceOuverte($reunion);
             $transaction = $this->caisseService->sortie(
                 $caisse,
                 (float) $evenement->montant_accorde,
@@ -161,7 +168,22 @@ class AideSocialeController extends Controller
             return response()->json(['message' => $e->getMessage()], 422);
         }
 
-        $evenement->update(['statut' => 'versee', 'transaction_id' => $transaction->id, 'date_versement' => now()]);
+        \App\Models\SeanceTransaction::create([
+            'reunion_id' => $reunion->id,
+            'type' => 'aide_sociale',
+            'membre_id' => $evenement->membre_id,
+            'montant' => $evenement->montant_accorde,
+            'libelle' => "Aide sociale — {$evenement->membre->nom} {$evenement->membre->prenom}",
+            'caisse_id' => $caisse->id,
+            'created_by' => $request->user()->id,
+        ]);
+
+        $evenement->update([
+            'statut' => 'versee',
+            'reunion_id' => $reunion->id,
+            'transaction_id' => $transaction->id,
+            'date_versement' => now(),
+        ]);
 
         return response()->json($evenement);
     }

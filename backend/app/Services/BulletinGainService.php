@@ -400,6 +400,33 @@ class BulletinGainService
     }
 
     /**
+     * Annulation d'un bulletin non encore versé (statut brouillon/genere), tant que
+     * le bénéficiaire n'a pas signé. Le paiement déjà effectué doit d'abord être
+     * retourné via annulerVersement() (statut 'paye' non accepté ici).
+     */
+    public function annulerBulletin(BulletinGain $bulletin, Utilisateur $auteur, ?string $motif = null): BulletinGain
+    {
+        if ($bulletin->statut === 'paye') {
+            throw new \RuntimeException('Ce bulletin est déjà versé : utilisez d’abord le retour des fonds.');
+        }
+        if ($bulletin->statut === 'annule') {
+            throw new \RuntimeException('Ce bulletin est déjà annulé.');
+        }
+        if ($bulletin->signe_beneficiaire_at) {
+            throw new \RuntimeException('Ce bulletin a déjà été signé par le bénéficiaire, annulation impossible.');
+        }
+
+        $bulletin->update([
+            'statut' => 'annule',
+            'annule_par' => $auteur->id,
+            'annule_at' => now(),
+            'motif_annulation' => $motif ?: "Annulation bulletin {$bulletin->numero_bulletin}",
+        ]);
+
+        return $bulletin->fresh();
+    }
+
+    /**
      * Génération du PDF officiel (en-tête, retenues, signatures).
      * Nécessite : composer require barryvdh/laravel-dompdf
      */

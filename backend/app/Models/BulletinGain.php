@@ -28,6 +28,9 @@ class BulletinGain extends Model
         'signe_beneficiaire_at',
         'pdf_url',
         'genere_par',
+        'annule_par',
+        'annule_at',
+        'motif_annulation',
     ];
 
     protected $casts = [
@@ -37,7 +40,8 @@ class BulletinGain extends Model
             'date_versement' => 'datetime',
             'signe_tresorier_at' => 'datetime',
             'signe_president_at' => 'datetime',
-            'signe_beneficiaire_at' => 'datetime'
+            'signe_beneficiaire_at' => 'datetime',
+            'annule_at' => 'datetime'
     ];
 
     public function cycle()
