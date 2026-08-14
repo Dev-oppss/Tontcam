@@ -3,9 +3,10 @@ import { Gavel, Plus, Trophy, AlertTriangle } from 'lucide-react';
 import { fmt, fmtDate } from '../data/mockData';
 import { useApp } from '../context/AppContext';
 import { PageHeader, Table, Badge, Modal, FormField } from '../components/ui/index';
+import { getMissingFields } from '../lib/validation';
 
 export default function Encheres() {
-  const { membres, membresParTontine, encheres, rotations, tontines, chargerRotations, addEnchere, attribuerTour, annulerEncheres } = useApp();
+  const { membres, membresParTontine, encheres, rotations, tontines, chargerRotations, addEnchere, attribuerTour, annulerEncheres, showToast } = useApp();
 
   useEffect(() => {
     tontines.filter(t => t.typeAttribution === 'enchere').forEach(t => chargerRotations(t.id));
@@ -26,7 +27,11 @@ export default function Encheres() {
     : null;
 
   const handleAdd = () => {
-    if (!form.idMembre || !form.montantEnchere) return;
+    const missing = getMissingFields(form, [
+      { key: 'idMembre', label: 'Membre' },
+      { key: 'montantEnchere', label: "Montant de l'enchère" },
+    ]);
+    if (missing.length) { showToast?.(`Champ(s) requis manquant(s) : ${missing.join(', ')}`, 'error'); return; }
     const m = membres.find(x => x.id === form.idMembre);
     addEnchere({
       idRotation: tourEnCours?.id,

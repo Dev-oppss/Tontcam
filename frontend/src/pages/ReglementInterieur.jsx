@@ -4,11 +4,12 @@ import { useApp } from '../context/AppContext';
 import { fmtDate } from '../data/mockData';
 import { resolveApiUrl } from '../lib/api';
 import { PageHeader, SectionCard, Table, Badge, Modal, FormField } from '../components/ui/index';
+import { getMissingFields } from '../lib/validation';
 
 const EMPTY = { version: '', dateAdoption: new Date().toISOString().split('T')[0], decisionAG: '', fichier: '', notes: '' };
 
 export default function ReglementInterieur() {
-  const { reglements = [], addReglement, decisionsAG = [] } = useApp();
+  const { reglements = [], addReglement, decisionsAG = [], showToast } = useApp();
   const [add, setAdd] = useState(false);
   const [form, setForm] = useState(EMPTY);
 
@@ -16,7 +17,12 @@ export default function ReglementInterieur() {
     reglements.slice().sort((a, b) => new Date(b.dateAdoption) - new Date(a.dateAdoption))[0];
 
   const handleAdd = async () => {
-    if (!form.version.trim() || !form.fichier || !form.decisionAG) return;
+    const missing = getMissingFields(form, [
+      { key: 'version', label: 'Numéro de version' },
+      { key: 'fichier', label: 'Document PDF' },
+      { key: 'decisionAG', label: "Décision d'AG associée" },
+    ]);
+    if (missing.length) { showToast?.(`Champ(s) requis manquant(s) : ${missing.join(', ')}`, 'error'); return; }
     // Toute modification nécessite une décision AG enregistrée avant publication (RG-ORG-006)
     try {
       await addReglement?.({ ...form });

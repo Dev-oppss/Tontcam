@@ -2,9 +2,10 @@ import { useState } from 'react';
 import { Landmark, UserCheck, History, LogOut, Plus } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { PageHeader, SectionCard, Table, Badge, Modal, FormField } from '../components/ui/index';
+import { getMissingFields } from '../lib/validation';
 
 export default function Postes() {
-  const { membres = [], postes = [], mandats = [], addPoste, addMandat, cloturerMandat, parametres } = useApp();
+  const { membres = [], postes = [], mandats = [], addPoste, addMandat, cloturerMandat, parametres, showToast } = useApp();
   const [assignModal, setAssignModal] = useState(null); // { poste }
   const [form, setForm] = useState({ idMembre: '', dateDebut: new Date().toISOString().split('T')[0] });
   const [posteModal, setPosteModal] = useState(false);
@@ -18,14 +19,19 @@ export default function Postes() {
     mandats.filter((m) => m.idMembre === idMembre && !m.dateFin).length;
 
   const handleAssign = () => {
-    if (!form.idMembre || !assignModal) return;
-    if (nbPostesMembre(form.idMembre) >= plafond) return; // garde-fou RG-ORG-010
+    if (!assignModal) return;
+    if (!form.idMembre) { showToast?.('Membre requis.', 'error'); return; }
+    if (nbPostesMembre(form.idMembre) >= plafond) { showToast?.(`Plafond de ${plafond} poste(s) simultané(s) atteint pour ce membre (RG-ORG-010).`, 'error'); return; }
     addMandat?.({ idPoste: assignModal.poste.id, idMembre: form.idMembre, dateDebut: form.dateDebut });
     setAssignModal(null);
     setForm({ idMembre: '', dateDebut: new Date().toISOString().split('T')[0] });
   };
   const handleCreatePoste = async () => {
-    if (!posteForm.libelle.trim() || !posteForm.code.trim()) return;
+    const missing = getMissingFields(posteForm, [
+      { key: 'libelle', label: 'Intitulé' },
+      { key: 'code', label: 'Code' },
+    ]);
+    if (missing.length) { showToast?.(`Champ(s) requis manquant(s) : ${missing.join(', ')}`, 'error'); return; }
     const poste = await addPoste?.(posteForm);
     if (poste) {
       setPosteModal(false);

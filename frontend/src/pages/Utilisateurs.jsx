@@ -3,13 +3,14 @@ import { UserCog, Plus, ShieldCheck, Pencil, Power, Copy, Check, KeyRound } from
 import { roleLabel } from '../data/mockData';
 import { useApp } from '../context/AppContext';
 import { PageHeader, Table, Badge, Modal, FormField } from '../components/ui/index';
+import { getMissingFields } from '../lib/validation';
 
 const roleV = { super_admin:'red', president:'purple', vice_president:'purple', tresorier:'blue', secretaire:'green', controleur:'gray' };
 
 const EMPTY = { email:'', role:'tresorier', idMembre:'' };
 
 export default function Utilisateurs() {
-  const { membres, utilisateurs, addUtilisateur, updateUtilisateur, desactiverUtilisateur, activerUtilisateur } = useApp();
+  const { membres, utilisateurs, addUtilisateur, updateUtilisateur, desactiverUtilisateur, activerUtilisateur, showToast } = useApp();
   const [add,  setAdd]  = useState(false);
   const [form, setForm] = useState(EMPTY);
   const [confirm, setConfirm] = useState(null); // { u, action: 'activer'|'desactiver' }
@@ -19,9 +20,14 @@ export default function Utilisateurs() {
   const [copied, setCopied] = useState(false);
 
   const handleAdd = async () => {
-    if (!form.email.trim() || !form.idMembre) return;
+    const missing = getMissingFields(form, [
+      { key: 'idMembre', label: 'Membre lié' },
+      { key: 'email', label: 'Email' },
+      { key: 'role', label: 'Rôle' },
+    ]);
+    if (missing.length) { showToast?.(`Champ(s) requis manquant(s) : ${missing.join(', ')}`, 'error'); return; }
     const m = membres.find(x=>x.id===form.idMembre);
-    if (!m) return;
+    if (!m) { showToast?.('Membre introuvable.', 'error'); return; }
     const res = await addUtilisateur({ ...form, idMembre: form.idMembre, nomMembre:`${m.nom} ${m.prenom}` });
     setAdd(false);
     setForm(EMPTY);

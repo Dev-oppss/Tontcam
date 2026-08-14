@@ -6,6 +6,7 @@ import {
   ListOrdered, Gavel, Dices, FileText,
 } from 'lucide-react';
 import { fmt, fmtDate, typeAttrLabel, periodeLabel } from '../data/mockData';
+import { getMissingFields } from '../lib/validation';
 import { useApp } from '../context/AppContext';
 import { PageHeader, Badge, Modal, FormField } from '../components/ui/index';
 import { ModePaiementFields, isModePaiementValid } from '../components/ui/ModePaiement';
@@ -136,17 +137,27 @@ export default function Tontines() {
   const modeAttributionVerrouillee = !!showEdit && (cyclesTontine || []).some((cycle) => cycle.idTontine === showEdit.id);
 
   const handleAdd = () => {
-    if (!form.nom.trim() || !form.idCaisse) return;
-    if (!form.cotisation || Number(form.cotisation) <= 0) return;
-    if (form.typeAttribution === 'enchere' && (!form.miseMinEnchere || Number(form.miseMinEnchere) <= 0)) return;
+    const missing = getMissingFields(form, [
+      { key: 'nom', label: 'Nom de la tontine' },
+      { key: 'idCaisse', label: 'Caisse liée' },
+      { key: 'cotisation', label: 'Cotisation / part' },
+    ]);
+    if (form.typeAttribution === 'enchere' && (!form.miseMinEnchere || Number(form.miseMinEnchere) <= 0)) missing.push('Mise minimum');
+    if (!missing.length && (!form.cotisation || Number(form.cotisation) <= 0)) missing.push('Cotisation / part');
+    if (missing.length) { showToast?.(`Champ(s) requis manquant(s) : ${missing.join(', ')}`, 'error'); return; }
     const dateFin = form.dateFin || calcDateFin(form.dateDebut, form.dureeSeances, form.periode);
     addTontine({ ...form, cotisation: Number(form.cotisation), nbTours: Number(form.nbTours), dateFin });
     setShowAdd(false); setForm(EMPTY_FORM);
   };
 
   const handleEdit = () => {
-    if (!form.nom.trim() || !form.idCaisse) return;
-    if (!form.cotisation || Number(form.cotisation) <= 0) return;
+    const missing = getMissingFields(form, [
+      { key: 'nom', label: 'Nom' },
+      { key: 'idCaisse', label: 'Caisse liée' },
+      { key: 'cotisation', label: 'Cotisation' },
+    ]);
+    if (!missing.length && (!form.cotisation || Number(form.cotisation) <= 0)) missing.push('Cotisation');
+    if (missing.length) { showToast?.(`Champ(s) requis manquant(s) : ${missing.join(', ')}`, 'error'); return; }
     updateTontine({ ...showEdit, ...form, cotisation: Number(form.cotisation), nbTours: Number(form.nbTours), dureeSeances: Number(form.dureeSeances) });
     setShowEdit(null);
   };

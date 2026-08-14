@@ -70,15 +70,31 @@ class CaisseController extends Controller
         $caisse = $this->scope->scopeAssociation(Caisse::query())->findOrFail($id);
         $this->authorize('update', $caisse);
 
-        $caisse->update($request->validate([
+        $data = $request->validate([
             'libelle' => ['sometimes', 'string', 'max:200'],
+            'description' => ['sometimes', 'nullable', 'string'],
+            'type' => ['sometimes', 'in:tontine,mutuelle,scolaire,evenement,annuelle,banque,autre'],
             'pret_autorise' => ['sometimes', 'boolean'],
             'taux_interet_mensuel' => ['sometimes', 'numeric'],
             'taux_penalite_mensuel' => ['sometimes', 'numeric'],
             'seuil_alerte_bas' => ['sometimes', 'nullable', 'numeric'],
             'actif' => ['sometimes', 'boolean'],
             'compte_bancaire_id' => ['sometimes', 'nullable', 'uuid'],
-        ]));
+        ]);
+
+        // RG-CAI : une caisse n'est modifiable que tant qu'aucune transaction
+        // réelle n'y a été enregistrée. 'actif' reste toujours modifiable
+        // (fermeture/réouverture d'une caisse déjà en service).
+        if ($caisse->has_transactions) {
+            $champsInterdits = array_diff(array_keys($data), ['actif']);
+            if (! empty($champsInterdits)) {
+                return response()->json([
+                    'message' => "Cette caisse a déjà enregistré des transactions, elle n'est plus modifiable (sauf activation/désactivation).",
+                ], 422);
+            }
+        }
+
+        $caisse->update($data);
 
         return response()->json($caisse);
     }

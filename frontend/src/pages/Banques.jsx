@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { Plus, ArrowDownCircle, ArrowUpCircle, Eye, UserPlus, Users, Landmark } from 'lucide-react';
+import { Plus, ArrowDownCircle, ArrowUpCircle, Eye, UserPlus, Users, Landmark, Pencil, Lock } from 'lucide-react';
 import { fmt, fmtDate } from '../data/mockData';
 import { useApp } from '../context/AppContext';
 import { PageHeader, Table, Badge, Modal, FormField, SectionCard } from '../components/ui/index';
 import { ModePaiementFields, isModePaiementValid } from '../components/ui/ModePaiement';
+import { getMissingFields } from '../lib/validation';
 import clsx from 'clsx';
 
 const typeColors = {
@@ -32,15 +33,17 @@ const createEmptyBanque = () => ({
 export default function Banques() {
   const {
     membres, banques, comptesBanque, operationsBanque, comptesBancaire,
-    addBanque, doOperation, addMembreBanque,
+    addBanque, modifierBanque, doOperation, addMembreBanque, showToast,
   } = useApp();
 
   const [addModal,    setAddModal]    = useState(false);
+  const [editModal,   setEditModal]   = useState(null); // caisse en cours d'édition
   const [opModal,     setOpModal]     = useState(null);
   const [enrollModal, setEnrollModal] = useState(null);
   const [showComptes, setShowComptes] = useState(null);
 
   const [newBanque,  setNewBanque]  = useState(createEmptyBanque());
+  const [editBanque, setEditBanque] = useState(createEmptyBanque());
   const [opForm,     setOpForm]     = useState({ montant:'', observation:'', dateOperation: new Date().toISOString().split('T')[0], modePaiement: 'especes', detailsPaiement: '' });
   const [enrollForm, setEnrollForm] = useState({ idMembre:'' });
 
@@ -70,9 +73,9 @@ export default function Banques() {
   };
 
   const handleOp = () => {
-    if (!opForm.montant || Number(opForm.montant) <= 0) return;
-    if (!isModePaiementValid(opForm.modePaiement, opForm.detailsPaiement)) return;
-    if (opModal.type === 'retrait' && Number(opForm.montant) > Number(opModal.compte.solde || 0)) return; // RG-CAI-006
+    if (!opForm.montant || Number(opForm.montant) <= 0) { showToast?.('Montant requis.', 'error'); return; }
+    if (!isModePaiementValid(opForm.modePaiement, opForm.detailsPaiement)) { showToast?.('Référence de paiement requise pour ce mode de versement.', 'error'); return; }
+    if (opModal.type === 'retrait' && Number(opForm.montant) > Number(opModal.compte.solde || 0)) { showToast?.('Solde insuffisant pour ce retrait (RG-CAI-006).', 'error'); return; }
     doOperation({
       idMembre: opModal.compte.idMembre,
       idBanque: opModal.compte.idBanque,
@@ -88,7 +91,7 @@ export default function Banques() {
 
   /* ─── Création banque ──────────────────────────────────────── */
   const handleAddBanque = () => {
-    if (!newBanque.nom.trim()) return;
+    if (!newBanque.nom.trim()) { showToast?.('Nom de la caisse requis.', 'error'); return; }
     addBanque({
       ...newBanque,
       pretAutorise: Boolean(newBanque.pretAutorise),
@@ -99,9 +102,35 @@ export default function Banques() {
     resetAddWizard();
   };
 
+  /* ─── Édition banque ───────────────────────────────────────── */
+  const openEditModal = (b) => {
+    if (!b.modifiable) return; // sécurité : déjà bloqué côté UI, mais on double-vérifie
+    setEditBanque({
+      nom: b.nom || '',
+      description: b.description || '',
+      type: b.type || 'autre',
+      compteBancaireId: b.compteBancaireId || '',
+      pretAutorise: !!b.pretAutorise,
+      tauxInteretPret: b.tauxInteret || 0,
+    });
+    setEditModal(b);
+  };
+
+  const handleEditBanque = async () => {
+    if (!editModal) return;
+    if (!editBanque.nom.trim()) { showToast?.('Nom de la caisse requis.', 'error'); return; }
+    await modifierBanque(editModal.id, {
+      ...editBanque,
+      pretAutorise: Boolean(editBanque.pretAutorise),
+      tauxInteret: editBanque.pretAutorise ? Number(editBanque.tauxInteretPret || 0) : 0,
+    });
+    setEditModal(null);
+  };
+
   /* ─── Inscription membre ───────────────────────────────────── */
   const handleEnroll = () => {
-    if (!enrollForm.idMembre || !enrollModal) return;
+    if (!enrollModal) return;
+    if (!enrollForm.idMembre) { showToast?.('Membre à inscrire requis.', 'error'); return; }
     const mEnroll = membres.find(m => m.id === enrollForm.idMembre);
     addMembreBanque({ idMembre: enrollForm.idMembre, idBanque: enrollModal.id, nomBanque: enrollModal.nom,
       nomMembre: mEnroll ? `${mEnroll.nom} ${mEnroll.prenom}` : '—',
@@ -162,6 +191,14 @@ export default function Banques() {
                   className="btn-primary flex-1 text-xs py-1.5 justify-center"
                 >
                   <UserPlus size={12} /> Inscrire
+                </button>
+                <button
+                  onClick={e => { e.stopPropagation(); openEditModal(b); }}
+                  disabled={!b.modifiable}
+                  title={b.modifiable ? 'Modifier la caisse' : 'Des transactions ont déjà été enregistrées : caisse non modifiable'}
+                  className="btn-secondary text-xs py-1.5 px-2 justify-center disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {b.modifiable ? <Pencil size={12} /> : <Lock size={12} />}
                 </button>
               </div>
             </div>
@@ -502,6 +539,78 @@ export default function Banques() {
             )}
           </div>
         )}
+      </Modal>
+
+      {/* ══ MODAL MODIFIER CAISSE ═════════════════════════════ */}
+      <Modal
+        open={!!editModal}
+        onClose={() => setEditModal(null)}
+        size="xl"
+        title="Modifier la caisse"
+        footer={<><button onClick={() => setEditModal(null)} className="btn-secondary">Annuler</button><button onClick={handleEditBanque} disabled={!editBanque.nom.trim()} className="btn-primary disabled:opacity-40 disabled:cursor-not-allowed"><Pencil size={14} /> Enregistrer</button></>}
+      >
+        <div className="space-y-4">
+          <FormField label="Nom de la caisse" required>
+            <input
+              className="input"
+              value={editBanque.nom}
+              onChange={e => setEditBanque(f => ({ ...f, nom: e.target.value }))}
+            />
+          </FormField>
+
+          <FormField label="Type de caisse" required>
+            <select
+              className="select"
+              value={editBanque.type}
+              onChange={e => setEditBanque(f => ({ ...f, type: e.target.value }))}
+            >
+              <option value="tontine">Tontine</option>
+              <option value="mutuelle">Mutuelle</option>
+              <option value="scolaire">Scolaire</option>
+              <option value="evenement">Événement</option>
+              <option value="annuelle">Annuelle</option>
+              <option value="banque">Banque</option>
+              <option value="autre">Autre</option>
+            </select>
+          </FormField>
+
+          <FormField label="Compte bancaire lié (optionnel)">
+            <select
+              className="select"
+              value={editBanque.compteBancaireId}
+              onChange={e => setEditBanque(f => ({ ...f, compteBancaireId: e.target.value }))}
+            >
+              <option value="">Aucun</option>
+              {(comptesBancaire || []).map(c => (
+                <option key={c.id} value={c.id}>{c.banque} — {c.numeroCompte}</option>
+              ))}
+            </select>
+          </FormField>
+
+          <FormField label="Description / règles">
+            <textarea
+              className="input h-24 resize-none"
+              value={editBanque.description}
+              onChange={e => setEditBanque(f => ({ ...f, description: e.target.value }))}
+            />
+          </FormField>
+
+          <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-3 space-y-3">
+            <label className="flex items-center gap-2 cursor-pointer text-sm font-semibold text-blue-900">
+              <input type="checkbox" checked={!!editBanque.pretAutorise} onChange={e => setEditBanque(f => ({ ...f, pretAutorise: e.target.checked }))} className="w-4 h-4 rounded" />
+              Autoriser les prêts depuis cette caisse
+            </label>
+            {editBanque.pretAutorise && (
+              <FormField label="Taux d'intérêt mensuel (%)">
+                <input type="number" className="input" min="0" max="100" value={editBanque.tauxInteretPret} onChange={e => setEditBanque(f => ({ ...f, tauxInteretPret: e.target.value }))} />
+              </FormField>
+            )}
+          </div>
+
+          <p className="text-xs text-ink-600/50">
+            Le solde initial ne peut plus être modifié une fois la caisse créée. Dès qu'une transaction (dépôt, retrait, prêt…) est enregistrée sur cette caisse, elle ne sera plus modifiable.
+          </p>
+        </div>
       </Modal>
 
       {/* ══ MODAL MEMBRES D'UNE BANQUE ════════════════════ */}

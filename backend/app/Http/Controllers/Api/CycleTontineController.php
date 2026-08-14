@@ -339,6 +339,32 @@ class CycleTontineController extends Controller
     }
 
     /**
+     * POST /bulletins/{id}/annuler-versement — retour des fonds. Préalable obligatoire
+     * pour pouvoir ensuite annuler un cycle dont le bulletin était déjà payé
+     * (voir TontineCycleService::annulerCycleAvantVersement).
+     */
+    public function annulerVersementBulletin(Request $request, string $bulletinId): JsonResponse
+    {
+        if (! in_array($request->user()->role, ['tresorier', 'president', 'super_admin'], true)) {
+            return response()->json(['message' => 'Réservé au trésorier, au président ou au super_admin.'], 403);
+        }
+        $bulletin = \App\Models\BulletinGain::with('cycle.tontine.caisse')
+            ->whereHas('cycle.tontine', fn ($q) => $this->scope->scopeAssociation($q))->findOrFail($bulletinId);
+
+        $data = $request->validate([
+            'motif' => ['nullable', 'string', 'max:200'],
+        ]);
+
+        try {
+            $bulletin = $this->bulletinService->annulerVersement($bulletin, $request->user(), $data['motif'] ?? null);
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json($bulletin);
+    }
+
+    /**
      * POST /cycles/{id}/encheres — soumission d'une offre par un membre.
      */
     public function placerEnchere(Request $request, string $id): JsonResponse

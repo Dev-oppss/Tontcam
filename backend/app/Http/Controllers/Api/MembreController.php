@@ -181,6 +181,7 @@ class MembreController extends Controller
             'motif_suspension' => ['sometimes', 'nullable', 'string'],
             'motif_exclusion' => ['sometimes', 'nullable', 'string'],
             'matricule' => ['sometimes', 'nullable', 'string', 'max:50', Rule::unique('membres', 'matricule')->where('association_id', $membre->association_id)->ignore($membre->id)],
+            'date_adhesion' => ['sometimes', 'nullable', 'date', 'before_or_equal:today'],
         ]);
 
         if (array_key_exists('telephone', $validated)) {
