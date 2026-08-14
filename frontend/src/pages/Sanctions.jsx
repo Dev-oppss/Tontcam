@@ -27,7 +27,7 @@ const slugify = (value) => String(value || '')
   .replace(/^_+|_+$/g, '');
 
 export default function Sanctions() {
-  const { membres, sanctions, addSanction, payerSanction, typesSanction, addTypeSanction, showToast } = useApp();
+  const { membres, sanctions, reunions, addSanction, payerSanction, typesSanction, addTypeSanction, showToast } = useApp();
   const [add, setAdd] = useState(false);
   const [addType, setAddType] = useState(false);
   const [form, setForm] = useState({
@@ -193,12 +193,16 @@ export default function Sanctions() {
       )}
 
       <div className="card p-0 overflow-hidden">
-        <Table headers={['Membre','Réunion','Type','Montant','Date','Statut','Paiement','Action']}>
-          {sanctions.map(s=>(
+        <Table headers={['Membre','Réunion','Type','Motif','Origine','Montant','Date','Statut','Paiement','Action']}>
+          {sanctions.map(s=>{
+            const reu = reunions.find(r => r.id === s.numReunion);
+            return (
             <tr key={s.id} className="hover:bg-gray-50 transition-colors">
               <td className="td font-medium text-gray-800">{s.nomMembre}</td>
-              <td className="td text-gray-500">N°{s.numReunion}</td>
+              <td className="td text-gray-500">{reu ? `N°${reu.numero} — ${fmtDate(reu.date)}` : (s.numReunion ? '—' : '—')}</td>
               <td className="td"><Badge variant={typeV[s.typeSanction]}>{typeSancLabel[s.typeSanction]||s.typeSanction}</Badge></td>
+              <td className="td text-gray-500 max-w-[220px] truncate" title={s.motif}>{s.motif || '—'}</td>
+              <td className="td"><Badge variant={s.estAutomatique ? 'amber' : 'gray'}>{s.estAutomatique ? 'Automatique' : 'Manuelle'}</Badge></td>
               <td className="td font-bold text-red-600">{fmt(s.montant)}</td>
               <td className="td text-gray-500">{fmtDate(s.dateSanction)}</td>
               <td className="td"><Badge variant={s.statut==='payee'?'green':'red'}>{s.statut==='payee'?'Payée':'Impayée'}</Badge></td>
@@ -215,7 +219,7 @@ export default function Sanctions() {
                 )}
               </td>
             </tr>
-          ))}
+          );})}
         </Table>
       </div>
 

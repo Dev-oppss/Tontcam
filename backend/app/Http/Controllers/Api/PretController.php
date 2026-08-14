@@ -5,24 +5,24 @@ namespace App\Http\Controllers\Api;
 use App\Models\Caisse;
 use App\Models\Membre;
 use App\Models\Pret;
-use App\Models\Reunion;
 use App\Services\AccessScopeService;
 use App\Services\PretService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use App\Http\Controllers\Controller;
-use App\Http\Controllers\Api\Concerns\AssertSeanceOuverte;
 
 class PretController extends Controller
 {
-    use AssertSeanceOuverte;
-
     public function __construct(private AccessScopeService $scope, private PretService $service) {}
 
     public function index(Request $request): JsonResponse
     {
         $this->authorize('viewAny', Pret::class);
-        $query = Pret::whereHas('caisse', fn ($q) => $this->scope->scopeAssociation($q))->with('emprunteur', 'caisse');
+        // 'echeances' est chargé ici aussi (pas seulement dans show()) car l'onglet
+        // Remboursement de la réunion a besoin, pour chaque prêt actif, de savoir
+        // quelle échéance précise (numéro, date, montant dû) est concernée par le
+        // remboursement — sans ça, l'écran ne peut afficher qu'un reste global.
+        $query = Pret::whereHas('caisse', fn ($q) => $this->scope->scopeAssociation($q))->with('emprunteur', 'caisse', 'echeances');
         if ($request->filled('statut')) {
             $query->where('statut', $request->statut);
         }
@@ -147,14 +147,7 @@ class PretController extends Controller
         $pret = $this->pretScope($id);
         $this->authorize('update', $pret);
 
-        $data = $request->validate(['reunion_id' => ['required', 'uuid']]);
-        $reunion = Reunion::where('association_id', $this->scope->associationId())->findOrFail($data['reunion_id']);
-
-        return $this->wrap(function () use ($pret, $reunion, $request) {
-            $this->assertSeanceOuverte($reunion);
-
-            return $this->service->decaisser($pret, $request->user(), $reunion);
-        });
+        return $this->wrap(fn () => $this->service->decaisser($pret, $request->user()));
     }
 
     public function rembourser(Request $request, string $id): JsonResponse

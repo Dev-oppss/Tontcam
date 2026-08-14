@@ -107,6 +107,9 @@ class ReunionController extends Controller
             'lieu' => ['sometimes', 'string'],
             'statut' => ['sometimes', 'in:planifiee,ouverte,tenue,cloturee,annulee'],
             'notes' => ['sometimes', 'nullable', 'string'],
+            'est_domicile_membre' => ['sometimes', 'boolean'],
+            // RG-REU-003 : un hôte est obligatoire si la réunion se tient au domicile d'un membre.
+            'hote_membre_id' => ['nullable', 'uuid', 'required_if:est_domicile_membre,true'],
         ]);
 
         // RG-REU-006 : un report n'est possible que si la réunion actuelle est encore à plus
@@ -121,11 +124,20 @@ class ReunionController extends Controller
             }
         }
 
+        // Un hôte est désigné (ou changé) pour la première fois lors de cette
+        // modification : notification dédiée, comme à la création (TC-24).
+        $nouvelHote = array_key_exists('hote_membre_id', $data)
+            && $data['hote_membre_id']
+            && $data['hote_membre_id'] !== $reunion->hote_membre_id;
+
         $reunion->update($data);
 
         if ($dateChangee) {
             // Renotification automatique des membres suite au report (RG-REU-006).
             app(\App\Services\NotificationService::class)->preparerEnvoi($reunion->fresh());
+        }
+        if ($nouvelHote) {
+            app(\App\Services\NotificationService::class)->notifierHote($reunion->fresh());
         }
 
         $reunion->load(['ordreDuJour.rubrique', 'ordreDuJour.rapporteur', 'presences.membre', 'signataires.membre']);

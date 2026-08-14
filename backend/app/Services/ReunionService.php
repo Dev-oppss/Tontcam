@@ -44,6 +44,9 @@ class ReunionService
             // à envoyer aux membres, ils n'ont rien à préparer pour un événement passé.
             if ($statutInitial === 'planifiee') {
                 app(NotificationService::class)->preparerEnvoi($reunion);
+                // Notification spéciale à l'hôte si la réunion se tient à son domicile
+                // (RG-REU-003 / TC-24) — distincte des rappels ordinaires envoyés à tous.
+                app(NotificationService::class)->notifierHote($reunion);
             }
 
             return $reunion;

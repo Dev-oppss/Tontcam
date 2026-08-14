@@ -76,6 +76,34 @@ class NotificationService
     }
 
     /**
+     * Notification spéciale à l'hôte d'une réunion tenue à son domicile
+     * (RG-REU-003 / TC-24). Distincte des rappels ordinaires J-7/J-3/J-1 :
+     * programmée immédiatement, avec un contenu et un sujet dédiés.
+     */
+    public function notifierHote(Reunion $reunion): ?Notification
+    {
+        if (! $reunion->est_domicile_membre || ! $reunion->hote_membre_id) {
+            return null;
+        }
+
+        $hote = $reunion->hote ?? Membre::find($reunion->hote_membre_id);
+        if (! $hote) {
+            return null;
+        }
+
+        return $this->journaliser(
+            $reunion->association_id,
+            $hote,
+            'sms',
+            'reunion_domicile_hote',
+            "Vous accueillez la réunion n°{$reunion->numero} du {$reunion->date_reunion->format('d/m/Y')} à {$reunion->heure_debut} chez vous. Merci de préparer l'accueil des membres.",
+            now(),
+            'Réunion à votre domicile',
+            $reunion
+        );
+    }
+
+    /**
      * Marque une notification comme échouée et incrémente le compteur de tentatives.
      * Après 2 échecs, la notification n'est plus retentée (à orchestrer via un Job scheduler).
      */
