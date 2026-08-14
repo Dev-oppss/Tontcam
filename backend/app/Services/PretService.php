@@ -144,7 +144,7 @@ class PretService
                 'montant' => $pret->montant_principal,
                 'libelle' => "Décaissement prêt — {$pret->emprunteur->nom} {$pret->emprunteur->prenom}",
                 'reference_pret_id' => $pret->id,
-                'caisse_id' => null,
+                'caisse_id' => $pret->caisse_id,
                 'created_by' => $tresorier->id,
             ]);
 

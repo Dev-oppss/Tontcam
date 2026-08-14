@@ -174,7 +174,7 @@ class AideSocialeController extends Controller
             'membre_id' => $evenement->membre_id,
             'montant' => $evenement->montant_accorde,
             'libelle' => "Aide sociale — {$evenement->membre->nom} {$evenement->membre->prenom}",
-            'caisse_id' => null,
+            'caisse_id' => $caisse->id,
             'created_by' => $request->user()->id,
         ]);
 
