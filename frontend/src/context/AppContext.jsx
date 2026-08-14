@@ -1100,7 +1100,9 @@ export const AppProvider = ({ children }) => {
   };
   const decaisserPret = async (id) => {
     try {
-      const p = await request(`/prets/${id}/decaisser`, { method: 'POST' });
+      const reunionOuverte = reunions.find((r) => r.statutReunion === 'en_cours');
+      if (!reunionOuverte) { showToast?.('Ouvrez une séance de réunion avant de décaisser un prêt.', 'error'); return; }
+      const p = await request(`/prets/${id}/decaisser`, { method: 'POST', body: { reunion_id: reunionOuverte.id } });
       setPrets((prev) => prev.map((x) => (x.id === id ? adapt.pretFromApi(p) : x)));
       showToast('Prêt décaissé');
     } catch (err) { return handleError(err); }
@@ -1196,7 +1198,10 @@ export const AppProvider = ({ children }) => {
   };
   const verserAideSociale = async (id, options = {}) => {
     try {
+      const reunionOuverte = reunions.find((r) => r.statutReunion === 'en_cours');
+      if (!reunionOuverte) { showToast?.('Ouvrez une séance de réunion avant de verser une aide sociale.', 'error'); return; }
       const a = await request(`/aides-sociales/${id}/verser`, { method: 'POST', body: {
+        reunion_id: reunionOuverte.id,
         mode_paiement: options.modePaiement, details_paiement: options.detailsPaiement,
       } });
       const aide = adapt.aideFromApi(a);

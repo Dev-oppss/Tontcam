@@ -13,6 +13,7 @@ class Pret extends Model
 
     protected $fillable = [
         'caisse_id',
+        'reunion_id',
         'emprunteur_id',
         'montant_principal',
         'taux_interet_mensuel',
@@ -55,6 +56,11 @@ class Pret extends Model
             'date_fin_prevue' => 'date',
             'date_solde' => 'date'
     ];
+
+    public function reunion()
+    {
+        return $this->belongsTo(Reunion::class);
+    }
 
     public function caisse()
     {

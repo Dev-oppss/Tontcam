@@ -9,9 +9,12 @@ use App\Services\AccessScopeService;
 use App\Services\DecisionAgService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use App\Http\Controllers\Api\Concerns\AssertSeanceOuverte;
 
 class DecisionAgController extends Controller
 {
+    use AssertSeanceOuverte;
+
     public function __construct(private AccessScopeService $scope, private DecisionAgService $service) {}
 
     public function index(Request $request): JsonResponse
@@ -42,6 +45,12 @@ class DecisionAgController extends Controller
         ]);
 
         $reunion = Reunion::where('association_id', $this->scope->associationId())->findOrFail($data['reunion_id']);
+
+        try {
+            $this->assertSeanceOuverte($reunion);
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
 
         $decision = $this->service->enregistrer($reunion, $data);
 

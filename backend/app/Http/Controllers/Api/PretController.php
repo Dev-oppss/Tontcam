@@ -5,14 +5,18 @@ namespace App\Http\Controllers\Api;
 use App\Models\Caisse;
 use App\Models\Membre;
 use App\Models\Pret;
+use App\Models\Reunion;
 use App\Services\AccessScopeService;
 use App\Services\PretService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use App\Http\Controllers\Controller;
+use App\Http\Controllers\Api\Concerns\AssertSeanceOuverte;
 
 class PretController extends Controller
 {
+    use AssertSeanceOuverte;
+
     public function __construct(private AccessScopeService $scope, private PretService $service) {}
 
     public function index(Request $request): JsonResponse
@@ -143,7 +147,14 @@ class PretController extends Controller
         $pret = $this->pretScope($id);
         $this->authorize('update', $pret);
 
-        return $this->wrap(fn () => $this->service->decaisser($pret, $request->user()));
+        $data = $request->validate(['reunion_id' => ['required', 'uuid']]);
+        $reunion = Reunion::where('association_id', $this->scope->associationId())->findOrFail($data['reunion_id']);
+
+        return $this->wrap(function () use ($pret, $reunion, $request) {
+            $this->assertSeanceOuverte($reunion);
+
+            return $this->service->decaisser($pret, $request->user(), $reunion);
+        });
     }
 
     public function rembourser(Request $request, string $id): JsonResponse

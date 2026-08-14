@@ -14,6 +14,7 @@ use App\Services\PretService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use App\Http\Controllers\Api\Concerns\AssertSeanceOuverte;
 
 /**
  * Journal des mouvements de caisse saisis en direct pendant une réunion
@@ -23,6 +24,8 @@ use Illuminate\Support\Facades\DB;
  */
 class SeanceTransactionController extends Controller
 {
+    use AssertSeanceOuverte;
+
     private const TYPES_SORTIE = ['attribution_tour', 'divers_sortie', 'pret_accorde', 'aide_sociale'];
 
     public function __construct(
@@ -43,6 +46,12 @@ class SeanceTransactionController extends Controller
     {
         $reunion = $this->scope->scopeAssociation(Reunion::query())->findOrFail($reunionId);
         $this->authorize('update', $reunion);
+
+        try {
+            $this->assertSeanceOuverte($reunion);
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
 
         $data = $request->validate([
             'type' => ['required', 'in:cotisation,remboursement_pret,paiement_sanction,amende,depot_banque,attribution_tour,divers_entree,divers_sortie,pret_accorde,aide_sociale'],

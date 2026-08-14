@@ -15,6 +15,7 @@ class EvenementSocial extends Model
         'association_id',
         'membre_id',
         'type_aide_id',
+        'reunion_id',
         'description',
         'date_evenement',
         'date_declaration',
@@ -44,6 +45,12 @@ class EvenementSocial extends Model
     public function association()
     {
         return $this->belongsTo(Association::class);
+    }
+
+
+    public function reunion()
+    {
+        return $this->belongsTo(Reunion::class);
     }
 
 

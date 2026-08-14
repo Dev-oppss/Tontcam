@@ -11,9 +11,12 @@ use App\Services\SanctionService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use App\Http\Controllers\Controller;
+use App\Http\Controllers\Api\Concerns\AssertSeanceOuverte;
 
 class SanctionController extends Controller
 {
+    use AssertSeanceOuverte;
+
     public function __construct(
         private AccessScopeService $scope,
         private SanctionService $service,
@@ -41,12 +44,18 @@ class SanctionController extends Controller
             'membre_id' => ['required', 'uuid'],
             'type_sanction_id' => ['required', 'uuid'],
             'motif' => ['required', 'string'],
-            'reunion_id' => ['nullable', 'uuid'],
+            'reunion_id' => ['required', 'uuid'],
         ]);
 
         $membre = Membre::where('association_id', $this->scope->associationId())->findOrFail($data['membre_id']);
         $type = TypeSanction::where('association_id', $this->scope->associationId())->findOrFail($data['type_sanction_id']);
-        $reunion = $data['reunion_id'] ?? null ? \App\Models\Reunion::findOrFail($data['reunion_id']) : null;
+        $reunion = \App\Models\Reunion::where('association_id', $this->scope->associationId())->findOrFail($data['reunion_id']);
+
+        try {
+            $this->assertSeanceOuverte($reunion);
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
 
         $sanction = $this->service->appliquerManuelle($membre, $type, $data['motif'], $request->user(), $reunion);
 
