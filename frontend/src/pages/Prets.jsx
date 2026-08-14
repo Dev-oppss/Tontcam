@@ -178,7 +178,7 @@ export default function Prets() {
     <div className="space-y-6">
       <PageHeader title="Prêts & Crédits"
         subtitle="Prêts ouverts uniquement depuis les caisses autorisées"
-        action={<button onClick={() => setAdd(true)} className="btn-primary"><Plus size={15}/> Nouveau prêt</button>}/>
+        action={<div className="text-xs text-gray-500">Les prêts se saisissent depuis la fiche Réunion (onglet Prêt) — lecture seule ici.</div>} />
 
       <div className="card border-l-4 border-l-primary-500">
         <div className="flex items-center justify-between gap-3">

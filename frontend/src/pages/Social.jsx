@@ -61,7 +61,7 @@ export default function Social() {
       <PageHeader
         title="Volet Social"
         subtitle="Barème des aides, déclaration et suivi (RG-SOC-001 à 010)"
-        action={<button onClick={() => setAdd(true)} className="btn-primary"><Plus size={15} />Déclarer un événement</button>}
+        action={<div className="text-xs text-gray-500">Les aides sociales se déclarent via la fiche Réunion (onglet Aide sociale) — lecture seule ici.</div>}
       />
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">

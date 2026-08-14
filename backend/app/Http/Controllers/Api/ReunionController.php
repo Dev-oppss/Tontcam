@@ -178,7 +178,12 @@ class ReunionController extends Controller
             );
         }
 
-        return response()->json($resultats);
+        // Récupère les sanctions éventuellement créées automatiquement
+        $sanctions = \App\Models\SanctionMembre::where('reunion_id', $reunion->id)
+            ->with(['membre', 'type'])
+            ->get();
+
+        return response()->json(['presences' => $resultats, 'sanctions' => $sanctions]);
     }
 
     public function ajouterRapport(Request $request, string $id): JsonResponse

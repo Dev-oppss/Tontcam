@@ -125,6 +125,21 @@ export const AppProvider = ({ children }) => {
     try {
       const res = await request('/portail/moi');
       setPortailMoi(res);
+
+      // Pour les comptes 'membre' qui n'effectuent pas le bootstrap complet,
+      // exposer les données principales (sanctions, prêts, membre) dans le
+      // state global afin que les pages (Sanctions, Prets, etc.) puissent
+      // afficher les informations en lecture seule.
+      try {
+        setSanctions((res.sanctions || []).map(adapt.sanctionFromApi));
+      } catch (e) { /* best-effort */ }
+      try {
+        setPrets((res.prets || []).map(adapt.pretFromApi));
+      } catch (e) { /* best-effort */ }
+      try {
+        if (res.membre) setMembres([adapt.membreFromApi(res.membre)]);
+      } catch (e) { /* best-effort */ }
+
       return res;
     } catch (err) {
       setPortailMoi(null);
@@ -640,7 +655,24 @@ export const AppProvider = ({ children }) => {
       const res = await request(`/reunions/${idReunion}/presences`, { method: 'POST', body: { presences: [{
         membre_id: idMembre, statut, heure_arrivee: heureArrivee || null, motif_absence: motifAbsence || null,
       }] } });
-      const p = res[0];
+
+      // supporte l'ancien format (array) et le nouveau format { presences: [...], sanctions: [...] }
+      const presencesResp = Array.isArray(res) ? res : (res.presences || []);
+      const p = presencesResp[0];
+
+      // Si le backend a retourné des sanctions créées automatiquement, on les intègre
+      const sanctionsResp = Array.isArray(res) ? [] : (res.sanctions || []);
+      if (sanctionsResp.length) {
+        const nouveaux = sanctionsResp.map(adapt.sanctionFromApi).filter(Boolean);
+        if (nouveaux.length) {
+          setSanctions((prev) => {
+            const existIds = new Set(prev.map((s) => s.id));
+            const toAdd = nouveaux.filter((s) => !existIds.has(s.id));
+            return toAdd.length ? [...prev, ...toAdd] : prev;
+          });
+        }
+      }
+
       const entry = { reunionId: idReunion, idMembre, statut: p?.statut || statut, heureArrivee: p?.heure_arrivee, motifAbsence: p?.motif_absence };
       setReunions((prev) => prev.map((r) => (r.id === idReunion
         ? { ...r, presencesReunion: [...(r.presencesReunion || []).filter((x) => x.idMembre !== idMembre), entry] }
@@ -1355,7 +1387,13 @@ export const AppProvider = ({ children }) => {
     try {
       const data = await request(`/bulletins/${idBulletin}/pdf`);
       return resolveBulletinUrl(data.pdf_url);
-    } catch (err) { return handleError(err); }
+    } catch (err) {
+      if (err?.status === 403) {
+        showToast('Accès refusé : génération du bulletin réservée (Trésorier/Président).', 'error');
+        return null;
+      }
+      return handleError(err);
+    }
   };
 
   // Retenue manuelle « priorité 5 » (frais d'organisation, décision d'AG...) — rien

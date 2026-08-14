@@ -74,7 +74,7 @@ const STATUT_COTIS = { non_defini: null, cotise: 'cotise', defaillant: 'defailla
 function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
   const {
     tontines, membres, membresParTontine,
-    addSeanceTransaction, addSanction, seanceTransactions,
+    addSeanceTransaction, addSanction, seanceTransactions, addPret, addAide,
     planningTours, ouvrirCycle, saisirCotisationCycle, designerGagnantCycle, cloturerCycle,
     encheres, cyclesTontine, ouvrirBulletinPdf, addEnchere, ajouterRetenueBulletin, payerBulletin, banques,
   } = useApp();
@@ -2238,18 +2238,44 @@ function PanneauRubrique({ reunion, types, titre, readOnly = false }) {
     );
   }
 
-  const handleSubmitTx = (form) => {
+  const handleSubmitTx = async (form) => {
     if (!form.montant || Number(form.montant) <= 0) return;
     const m = form.idMembre ? membres.find(x => x.id === form.idMembre) : null;
-    addSeanceTransaction(reunion.id, {
-      ...form,
-      idMembre:   form.idMembre   || null,
-      idSanction: form.idSanction || null,
-      idPret:     form.idPret     || null,
-      idBanque:   form.idBanque   || null,
-      nomMembre:  m ? `${m.nom} ${m.prenom}` : (form.nomMembre || ''),
-    });
-    if (types.length > 1) setSelectedType(null); else setSelectedType(types[0]);
+
+    try {
+      // Si on octroie un prêt depuis la séance, créez aussi l'objet Prêt réel
+      // afin qu'il apparaisse dans la page Prêts / barre latérale.
+      let pretCree = null;
+      if (form.type === 'pret_accorde') {
+        try {
+          pretCree = await addPret({ idMembre: form.idMembre, idCaisse: form.idBanque, montantPret: form.montant });
+        } catch (e) {
+          // Ne bloque pas l'enregistrement de la transaction si la création du prêt échoue,
+          // mais prévenons l'utilisateur.
+          console.error('Création prêt échouée', e);
+          // showToast est dans scope parent (FeuillePresenceTontine) — on peut produire un message via window.alert fallback
+        }
+      }
+
+      const txPayload = {
+        ...form,
+        idMembre:   form.idMembre   || null,
+        idSanction: form.idSanction || null,
+        idPret:     pretCree ? pretCree.id : (form.idPret || null),
+        idBanque:   form.idBanque   || null,
+        nomMembre:  m ? `${m.nom} ${m.prenom}` : (form.nomMembre || ''),
+      };
+
+      await addSeanceTransaction(reunion.id, txPayload);
+
+      // Après écriture, l'état global est mis à jour par les helpers appelés
+      // (ex: `addPret` mettra à jour `prets`). Si besoin, on peut étendre
+      // ici la synchronisation (best-effort) mais on évite les appels lourds.
+
+      if (types.length > 1) setSelectedType(null); else setSelectedType(types[0]);
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   return (

@@ -143,12 +143,7 @@ export default function Sanctions() {
   return (
     <div className="space-y-6">
       <PageHeader title="Sanctions" subtitle="Types de sanction paramétrables et pénalités des membres"
-        action={
-          <div className="flex gap-2">
-            <button onClick={()=>setAddType(true)} className="btn-secondary"><Settings2 size={15}/> Paramètres</button>
-            <button onClick={()=>setAdd(true)} className="btn-primary"><Plus size={15}/> Nouvelle sanction</button>
-          </div>
-        }/>
+        action={<div className="flex items-center gap-3"><div className="text-xs text-gray-500">Saisie depuis la fiche Réunion (onglet Sanctions) — lecture seule ici.</div><button onClick={()=>setAddType(true)} className="btn-secondary py-1 px-2 text-xs flex items-center gap-1"><Settings2 size={14}/>Paramètres</button></div>} />
 
       <div className="grid grid-cols-3 gap-4">
         <div className="card text-center border-t-4 border-t-red-400">
