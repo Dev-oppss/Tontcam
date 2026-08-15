@@ -1963,6 +1963,18 @@ function PanneauPresences({ reunion, membres }) {
   const presencesReunion = presences.filter(p => p.reunionId === reunion.id);
   const getPresence = (idMembre) => presencesReunion.find(p => p.idMembre === idMembre);
 
+  // Durée de retard = arrivée - (heure d'ouverture réelle de la séance).
+  const heureOuverture = reunion.ouverture?.heureOuverture;
+  const dureeRetard = (heureArrivee) => {
+    if (!heureOuverture || !heureArrivee) return null;
+    const [ho, mo] = heureOuverture.split(':').map(Number);
+    const [ha, ma] = heureArrivee.split(':').map(Number);
+    const diff = (ha * 60 + ma) - (ho * 60 + mo);
+    if (diff <= 0) return null;
+    const h = Math.floor(diff / 60), m = diff % 60;
+    return h > 0 ? `${h}h${String(m).padStart(2,'0')}` : `${m} min`;
+  };
+
   const membresActifs = membres.filter(m => m.statut === 'actif');
   const nbPresents = presencesReunion.filter(p => p.statut === 'present' || p.statut === 'en_retard').length;
   const nbAbsentsExcuses = presencesReunion.filter(p => p.statut === 'absent_excuse').length;
@@ -2046,7 +2058,12 @@ function PanneauPresences({ reunion, membres }) {
                   <p className="text-[11px] text-amber-600 truncate">Motif : {p.motifAbsence}</p>
                 )}
                 {(statut === 'present' || statut === 'en_retard') && p.heureArrivee && (
-                  <p className="text-[11px] text-gray-400">Arrivée : {p.heureArrivee}</p>
+                  <p className="text-[11px] text-gray-400">
+                    Arrivée : {p.heureArrivee}
+                    {statut === 'en_retard' && dureeRetard(p.heureArrivee) && (
+                      <span className="text-red-500 font-medium"> · Retard : {dureeRetard(p.heureArrivee)}</span>
+                    )}
+                  </p>
                 )}
               </div>
               {statut && (
