@@ -2590,7 +2590,7 @@ export function Reunions() {
               <button onClick={()=>{ setShowEdit(r); setFormReunion({date:r.date,lieu:r.lieu,numero:r.numero,observation:r.observation||''}); }} className="btn-secondary text-xs">
                 <Pencil size={13}/> Modifier
               </button>
-              <button onClick={()=>{ setShowOuverture(r); setFormOuv(EMPTY_OUVERTURE); }} className="btn-primary text-xs">
+              <button onClick={()=>{ setShowOuverture(r); setFormOuv({...EMPTY_OUVERTURE, heureOuverture: new Date().toTimeString().slice(0,5)}); }} className="btn-primary text-xs">
                 <PlayCircle size={13}/> Ouvrir la séance
               </button>
             </div>
@@ -2684,7 +2684,7 @@ export function Reunions() {
           <div className="space-y-4">
             <PageHeader
               title={`Réunion N°${r.numero}`}
-              subtitle={`${fmtDate(r.date)} · ${r.lieu}`}
+              subtitle={r.ouverture ? `${fmtDate(r.date)} · ${r.lieu} · Ouverte à ${r.ouverture.heureOuverture}${r.ouverture.presidentSeance ? ' par '+r.ouverture.presidentSeance : ''}` : `${fmtDate(r.date)} · ${r.lieu}`}
               action={<button onClick={()=>navigate('/reunions')} className="btn-secondary">
                 <ArrowLeft size={14}/> Retour aux réunions
               </button>}
@@ -2699,7 +2699,7 @@ export function Reunions() {
                       <button onClick={()=>{ setShowEdit(r); setFormReunion({date:r.date,lieu:r.lieu,numero:r.numero,observation:r.observation||''}); }} className="btn-secondary">
                         <Pencil size={13}/> Modifier
                       </button>
-                      <button onClick={()=>{ setShowOuverture(r); setFormOuv(EMPTY_OUVERTURE); }} className="btn-primary">
+                      <button onClick={()=>{ setShowOuverture(r); setFormOuv({...EMPTY_OUVERTURE, heureOuverture: new Date().toTimeString().slice(0,5)}); }} className="btn-primary">
                         <PlayCircle size={13}/> Ouvrir la séance
                       </button>
                     </>
@@ -3055,7 +3055,9 @@ export function Reunions() {
           <div className="p-3 bg-blue-50 rounded-xl text-sm text-blue-800">
             <strong>{fmtDate(showOuverture?.date)}</strong> — {showOuverture?.lieu}
           </div>
-          <FormField label="Heure d'ouverture" required><FO k="heureOuverture" placeholder="10h00"/></FormField>
+          <FormField label="Heure d'ouverture" required>
+            <input type="time" className="input" value={formOuv.heureOuverture||''} onChange={e=>setFormOuv(f=>({...f,heureOuverture:e.target.value}))}/>
+          </FormField>
           <div className="grid grid-cols-2 gap-3">
             <FormField label="Président de séance" required>
               <select className="select" value={formOuv.presidentSeance||''} onChange={e=>setFormOuv(f=>({...f,presidentSeance:e.target.value}))}>

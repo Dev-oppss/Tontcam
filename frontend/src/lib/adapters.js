@@ -216,6 +216,12 @@ export const reunionFromApi = (r) => !r ? null : ({
   heureDebut: r.heure_debut,
   lieu: r.lieu,
   statutReunion: { ouverte: 'en_cours', cloturee: 'cloturee', tenue: 'tenue', annulee: 'annulee' }[r.statut] || 'planifiee',
+  ouverture: r.heure_ouverture_reelle ? {
+    heureOuverture: r.heure_ouverture_reelle,
+    presidentSeance: r.president_seance,
+    secretaireSeance: r.secretaire_seance,
+    motOuverture: r.mot_ouverture,
+  } : null,
   verrouillee: r.statut === 'cloturee',
   quorumRequis: r.quorum_requis,
   quorumAtteint: r.quorum_atteint,

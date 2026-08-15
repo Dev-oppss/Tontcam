@@ -616,9 +616,14 @@ export const AppProvider = ({ children }) => {
       setReunions((prev) => prev.map((x) => (x.id === id ? adapt.reunionFromApi(r) : x)));
     } catch (err) { return handleError(err); }
   };
-  const ouvrirReunion = async (id) => {
+  const ouvrirReunion = async (id, details = {}) => {
     try {
-      const r = await request(`/reunions/${id}/ouvrir`, { method: 'POST' });
+      const r = await request(`/reunions/${id}/ouvrir`, { method: 'POST', body: {
+        heure_ouverture_reelle: details.heureOuverture || undefined,
+        president_seance: details.presidentSeance || undefined,
+        secretaire_seance: details.secretaireSeance || undefined,
+        mot_ouverture: details.motOuverture || undefined,
+      } });
       setReunions((prev) => prev.map((x) => (x.id === id ? adapt.reunionFromApi(r) : x)));
       showToast('Réunion ouverte');
     } catch (err) { return handleError(err); }
@@ -910,7 +915,7 @@ export const AppProvider = ({ children }) => {
       return c;
     } catch (err) { return handleError(err); }
   };
-  const ouvrirSeance = (id) => ouvrirReunion(id);
+  const ouvrirSeance = (id, details) => ouvrirReunion(id, details);
   const cloturerSeance = async (id, data) => {
     try {
       await request(`/reunions/${id}`, {
