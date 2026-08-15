@@ -100,8 +100,8 @@ export default function Tontines() {
   const [showEdit,        setShowEdit]        = useState(null);
   const [showMembres,     setShowMembres]     = useState(null);
   const [showBenef,       setShowBenef]       = useState(null);
-  const [showAddMembre,   setShowAddMembre]   = useState(false);
-  const [showEditMT,      setShowEditMT]      = useState(null);
+  const [bulkParts,       setBulkParts]       = useState({});
+  const [bulkAvalistes,   setBulkAvalistes]   = useState({});
   const [showTirage,      setShowTirage]      = useState(null);
   const [form,            setForm]            = useState(EMPTY_FORM);
   const [formMT,          setFormMT]          = useState(EMPTY_MT);
@@ -167,27 +167,45 @@ export default function Tontines() {
     return existants.length ? Math.max(...existants.map(mt => mt.numeroPart || 0)) + 1 : 1;
   };
 
-  const handleAddMembre = async () => {
-    if (!formMT.idMembre || !showMembres) return;
-    const idTontine = showMembres.id;
-    const nb = Math.max(1, Number(formMT.nombreParts) || 1);
+  // Liste unique "tous les membres + nombre de parts" (0 par défaut = pas dans la
+  // tontine). On applique la sauvegarde en une fois : pour chaque membre dont le
+  // nombre cible diffère de l'actuel, on ajoute ou retire les parts nécessaires.
+  const handleSaveBulkParts = async (idTontine) => {
+    const t = tontines.find(x => x.id === idTontine);
+    const actuels = new Map(membresDeTontine(idTontine).map(mt => [mt.idMembre, mt]));
     let numero = nextNumeroPart(idTontine);
-    // Chaque part est un enregistrement indépendant avec son propre numéro
-    // (RG-TON — parts multiples, cahier des charges 4.3) : la contrainte d'unicité
-    // côté serveur exige un numero_part distinct par part, jamais envoyé auparavant.
     try {
-      for (let i = 0; i < nb; i += 1) {
-        // eslint-disable-next-line no-await-in-loop
-        await addMembreTontine({
-          idTontine, idMembre: formMT.idMembre, numeroPart: numero,
-          dateAdhesion: formMT.dateAdhesion, idAvaliste: formMT.idAvaliste || null,
-        });
-        numero += 1;
+      for (const m of membres) {
+        const cible = Math.max(0, Number(bulkParts[m.id] ?? actuels.get(m.id)?.nombreParts ?? 0) || 0);
+        const actuelMt = actuels.get(m.id);
+        const actuel = actuelMt?.nombreParts || 0;
+        if (cible === actuel) continue;
+        if (cible > actuel) {
+          if (t?.avalisteRequis && !actuelMt && !bulkAvalistes[m.id]) {
+            showToast?.(`Avaliste requis pour ${m.nom} ${m.prenom}.`, 'error');
+            continue;
+          }
+          for (let i = 0; i < cible - actuel; i += 1) {
+            // eslint-disable-next-line no-await-in-loop
+            await addMembreTontine({
+              idTontine, idMembre: m.id, numeroPart: numero,
+              dateAdhesion: new Date().toISOString().split('T')[0],
+              idAvaliste: bulkAvalistes[m.id] || actuelMt?.idAvaliste || null,
+            });
+            numero += 1;
+          }
+        } else {
+          const aRetirer = (actuelMt?.partIds || []).slice(cible);
+          for (const pid of aRetirer) {
+            // eslint-disable-next-line no-await-in-loop
+            await removeMembreTontine(pid, idTontine);
+          }
+        }
       }
     } catch {
-      return; // le toast d'erreur est déjà affiché par handleError
+      return; // toast d'erreur déjà affiché par handleError
     }
-    setShowAddMembre(false); setFormMT(EMPTY_MT);
+    setBulkParts({}); setBulkAvalistes({});
   };
 
   const handleAddTour = (idTontine, nbTours) => {
@@ -392,7 +410,7 @@ export default function Tontines() {
               )}
 
               <div className="grid grid-cols-4 gap-2">
-                <button onClick={() => { setShowMembres(t); setShowAddMembre(false); }} className="btn-secondary text-xs py-1.5 justify-center">
+                <button onClick={() => { setShowMembres(t); setShowAddMembre(false); const init={}; membresDeTontine(t.id).forEach(mt=>{init[mt.idMembre]=String(mt.nombreParts);}); setBulkParts(init); setBulkAvalistes({}); }} className="btn-secondary text-xs py-1.5 justify-center">
                   <Users size={12}/> Membres ({nbActifs})
                 </button>
                 <button onClick={() => { setShowBenef(t); setAddTourMode(false); setFormTour({ idMembre:'', datePrevue:'', note:'' }); chargerPlanningTours(t.id); }}
@@ -720,125 +738,53 @@ export default function Tontines() {
         </Modal>
       )}
 
-      {/* Membres d'une tontine */}
+      {/* Membres d'une tontine — liste unique de tous les membres, nombre de parts
+          éditable par ligne. 0 = pas dans la tontine, 1+ = inscrit avec ce nombre
+          de parts. Une seule sauvegarde applique tous les changements. */}
       {showMembres && (() => {
         const t   = tontines.find(x=>x.id===showMembres.id)||showMembres;
         const cfg = TYPE_CONFIG[t.typeAttribution]||TYPE_CONFIG.rotation;
         const mtList = membresDeTontine(t.id);
         const pot = potTontine(t);
         return (
-          <Modal open={true} onClose={()=>{setShowMembres(null);setShowAddMembre(false);}} title={`${cfg.icon} Membres — ${t.nom}`}
-            footer={<div className="flex gap-2 w-full"><button onClick={()=>setShowAddMembre(true)} className="btn-primary"><UserPlus size={14}/> Inscrire</button><button onClick={()=>setShowMembres(null)} className="btn-secondary ml-auto">Fermer</button></div>}>
+          <Modal open={true} onClose={()=>{setShowMembres(null);setBulkParts({});setBulkAvalistes({});}} title={`${cfg.icon} Membres — ${t.nom}`}
+            footer={<div className="flex gap-2 w-full"><button onClick={async()=>{await handleSaveBulkParts(t.id);}} className="btn-primary"><Pencil size={14}/> Enregistrer</button><button onClick={()=>{setShowMembres(null);setBulkParts({});setBulkAvalistes({});}} className="btn-secondary ml-auto">Fermer</button></div>}>
             <div className="space-y-4">
               <div className="grid grid-cols-3 gap-2 text-center">
                 <div className="p-2.5 bg-gray-50 rounded-xl"><p className="text-sm font-bold text-primary-600">{fmt(pot)}</p><p className="text-xs text-gray-400">Pot/tour</p></div>
                 <div className="p-2.5 bg-gray-50 rounded-xl"><p className="text-sm font-bold text-gray-800">{Number(t.totalParts || 0)}</p><p className="text-xs text-gray-400">Parts</p></div>
                 <div className="p-2.5 bg-gray-50 rounded-xl"><p className="text-sm font-bold text-blue-600">{mtList.filter(m=>m.statut==='actif').length}</p><p className="text-xs text-gray-400">Actifs</p></div>
               </div>
-              {mtList.length===0 ? (
-                <div className="text-center py-8 text-gray-400"><Users size={28} className="mx-auto mb-2 text-gray-200"/><p className="text-sm">Aucun membre inscrit</p></div>
-              ) : (
-                <div className="space-y-2 max-h-64 overflow-y-auto">
-                  {mtList.map(mt=>(
-                    <div key={mt.id} className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl group hover:bg-white transition-all">
-                      <div className="w-9 h-9 rounded-xl gradient-primary flex items-center justify-center text-white text-sm font-bold shrink-0">{mt.nom?.[0]}{mt.prenom?.[0]}</div>
+              <p className="text-xs text-gray-400">Nombre de parts par membre. 0 = pas inscrit à la tontine.</p>
+              <div className="space-y-1.5 max-h-72 overflow-y-auto">
+                {membres.map(m=>{
+                  const enTontine = Number(bulkParts[m.id] ?? 0) > 0;
+                  const actuelMt = mtList.find(mt=>mt.idMembre===m.id);
+                  const besoinAvaliste = t?.avalisteRequis && enTontine && !actuelMt;
+                  return (
+                    <div key={m.id} className={`flex items-center gap-3 p-2.5 rounded-xl transition-colors ${enTontine?'bg-primary-50':'bg-gray-50'}`}>
+                      <div className="w-8 h-8 rounded-lg gradient-primary flex items-center justify-center text-white text-xs font-bold shrink-0">{m.nom?.[0]}{m.prenom?.[0]}</div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-gray-800">{mt.nom} {mt.prenom}</p>
-                        <p className="text-xs text-gray-400">{mt.nombreParts} part(s) · {fmt(Number(t.cotisation||0) * Number(mt.nombreParts||0))}/tour</p>
+                        <p className="text-sm font-medium text-gray-800 truncate">{m.nom} {m.prenom}</p>
+                        {enTontine && <p className="text-xs text-primary-600">{fmt(Number(t.cotisation||0) * Number(bulkParts[m.id]||0))}/tour</p>}
                       </div>
-                      <Badge variant={mt.statut==='actif'?'green':'gray'}>{mt.statut==='actif'?'Actif':'Suspendu'}</Badge>
-                      <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button onClick={()=>{setShowEditMT(mt);setFormMT({idMembre:mt.idMembre,nombreParts:mt.nombreParts});}} className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg"><Pencil size={12}/></button>
-                        <button onClick={()=>{if(confirm(`Retirer ${mt.nom} ${mt.prenom} de la tontine (${mt.nombreParts} part(s)) ?`)) (mt.partIds||[mt.id]).forEach(pid=>removeMembreTontine(pid, t.id));}} className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg"><Trash2 size={12}/></button>
-                      </div>
+                      {besoinAvaliste && (
+                        <select className="select !w-32 !py-1 text-xs" value={bulkAvalistes[m.id]||''} onChange={e=>setBulkAvalistes(a=>({...a,[m.id]:e.target.value}))}>
+                          <option value="">Avaliste…</option>
+                          {membres.filter(x=>x.id!==m.id&&x.statut==='actif').map(x=><option key={x.id} value={x.id}>{x.nom} {x.prenom}</option>)}
+                        </select>
+                      )}
+                      <input type="number" min="0" max="20" className="input !w-16 !py-1 text-center"
+                        value={bulkParts[m.id] ?? '0'}
+                        onChange={e=>setBulkParts(p=>({...p,[m.id]:e.target.value}))}/>
                     </div>
-                  ))}
-                </div>
-              )}
-              {mtList.length>0&&(
-                <div className="p-3 bg-amber-50 rounded-xl border border-amber-100">
-                  <p className="text-xs font-semibold text-amber-700 mb-2">Contribution par membre / tour</p>
-                  <div className="space-y-1">
-                    {mtList.map(mt=>(
-                      <div key={mt.id} className="flex justify-between text-xs">
-                        <span className="text-gray-600">{mt.nom} {mt.prenom} (x{mt.nombreParts})</span>
-                        <span className="font-bold text-amber-700">{fmt(Number(t.cotisation||0) * Number(mt.nombreParts||0))}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+                  );
+                })}
+              </div>
             </div>
           </Modal>
         );
       })()}
-
-      <Modal open={showAddMembre&&!!showMembres} onClose={()=>setShowAddMembre(false)} title={`Inscrire un membre — ${showMembres?.nom}`}
-        footer={<><button onClick={()=>setShowAddMembre(false)} className="btn-secondary">Annuler</button><button onClick={handleAddMembre} className="btn-primary"><UserPlus size={14}/>Inscrire</button></>}>
-        <div className="space-y-4">
-          {showMembres&&membresDisponibles(showMembres.id).length===0 ? (
-            <div className="p-4 bg-primary-50 rounded-xl text-center"><BadgeCheck size={24} className="mx-auto mb-2 text-primary-500"/><p className="text-sm font-medium text-primary-700">Tous les membres sont déjà inscrits</p></div>
-          ) : (
-            <>
-              <FormField label="Membre" required>
-                <select className="select" value={formMT.idMembre} onChange={e=>setFormMT(f=>({...f,idMembre:e.target.value}))}>
-                  <option value="">— Sélectionner —</option>
-                  {showMembres&&membresDisponibles(showMembres.id).map(m=><option key={m.id} value={m.id}>{m.nom} {m.prenom} ({m.statut})</option>)}
-                </select>
-              </FormField>
-              <div className="grid grid-cols-2 gap-3">
-                <FormField label="Parts"><input className="input" type="number" min="1" max="20" value={formMT.nombreParts} onChange={e=>setFormMT(f=>({...f,nombreParts:e.target.value}))}/></FormField>
-                <FormField label="Date inscription"><input className="input" type="date" value={formMT.dateAdhesion} onChange={e=>setFormMT(f=>({...f,dateAdhesion:e.target.value}))}/></FormField>
-              </div>
-              {formMT.nombreParts&&showMembres&&(
-                <div className="p-3 bg-primary-50 rounded-xl flex justify-between text-sm">
-                  <span className="text-gray-600">Cotisation / tour :</span>
-                  <span className="font-bold text-primary-700">{fmt(Number(showMembres.cotisation)*Number(formMT.nombreParts))}</span>
-                </div>
-              )}
-              {showMembres?.avalisteRequis && (
-                <FormField label="Avaliste" required hint="Requis par cette tontine — aucun gain ne peut être versé sans avaliste valide (RG-TON-006/011)">
-                  <select className="select" value={formMT.idAvaliste} onChange={e=>setFormMT(f=>({...f,idAvaliste:e.target.value}))}>
-                    <option value="">— Sélectionner —</option>
-                    {membres.filter(m=>m.id!==formMT.idMembre&&m.statut==='actif').map(m=><option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
-                  </select>
-                </FormField>
-              )}
-            </>
-          )}
-        </div>
-      </Modal>
-
-      <Modal open={!!showEditMT} onClose={()=>setShowEditMT(null)} title="Modifier les parts"
-        footer={<><button onClick={()=>setShowEditMT(null)} className="btn-secondary">Annuler</button><button onClick={async()=>{
-          const cible = Math.max(1, Number(formMT.nombreParts) || 1);
-          const actuel = showEditMT.nombreParts || 1;
-          const idTontine = showMembres?.id || showEditMT.idTontine;
-          try {
-            if (cible > actuel) {
-              let numero = nextNumeroPart(idTontine);
-              for (let i = 0; i < cible - actuel; i += 1) {
-                // eslint-disable-next-line no-await-in-loop
-                await addMembreTontine({ idTontine, idMembre: showEditMT.idMembre, numeroPart: numero, dateAdhesion: new Date().toISOString().split('T')[0], idAvaliste: showEditMT.idAvaliste || null });
-                numero += 1;
-              }
-            } else if (cible < actuel) {
-              const aRetirer = (showEditMT.partIds || []).slice(cible);
-              for (const pid of aRetirer) {
-                // eslint-disable-next-line no-await-in-loop
-                await removeMembreTontine(pid, idTontine);
-              }
-            }
-          } catch {
-            return;
-          }
-          setShowEditMT(null);
-        }} className="btn-primary"><Pencil size={14}/>Enregistrer</button></>}>
-        <div className="space-y-4">
-          <p className="text-sm text-gray-600">Parts de <strong>{showEditMT?.nom} {showEditMT?.prenom}</strong></p>
-          <FormField label="Nombre de parts"><input className="input" type="number" min="1" max="20" value={formMT.nombreParts} onChange={e=>setFormMT(f=>({...f,nombreParts:e.target.value}))}/></FormField>
-        </div>
-      </Modal>
 
       <Modal open={!!showBulletin} onClose={()=>setShowBulletin(null)} title={`Bulletin de gain — ${showBulletin?.nom || ''}`}
         footer={<><button onClick={()=>setShowBulletin(null)} className="btn-secondary">Annuler</button><button disabled={!bulletinForm.idCycle} onClick={async()=>{const b=await genererBulletin(bulletinForm.idCycle);if(b){ouvrirBulletinPdf(b.id);setShowBulletin(null);}}} className="btn-primary"><FileText size={14}/> Télécharger le PDF</button></>}>
