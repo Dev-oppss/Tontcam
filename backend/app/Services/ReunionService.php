@@ -55,16 +55,28 @@ class ReunionService
         if ($reunion->statut === 'cloturee') {
             throw new RuntimeException('Réunion clôturée : présences non modifiables.');
         }
+        // RG-SEA-001 : comme pour les cotisations, un membre ne peut être marqué présent
+        // ou absent que pendant que la séance est réellement ouverte — avant l'ouverture,
+        // il n'y a rien à constater. Exception : import historique, qui démarre directement
+        // en 'tenue' (réunion passée, jamais réellement "ouverte" dans l'app).
+        if (! in_array($reunion->statut, ['ouverte', 'tenue'], true)) {
+            throw new RuntimeException("La présence ne peut être enregistrée que pendant une séance ouverte (réunion actuellement : {$reunion->statut}).");
+        }
 
         // RG-REU-017 : "en retard" n'est jamais pris tel quel du client — recalculé serveur
-        // à partir de l'heure d'arrivée réelle comparée à heure_debut + 15 minutes. Un client
-        // ne peut ni forcer "en_retard" sans preuve, ni le contourner en omettant l'heure.
+        // à partir de l'heure d'arrivée réelle comparée à l'heure d'OUVERTURE RÉELLE de la
+        // séance (+ 15 minutes), pas l'heure planifiée. Un président peut ouvrir bien après
+        // l'heure prévue (quorum, retard du président…) ; comparer à l'heure planifiée
+        // marquerait à tort "en retard" des membres arrivés avant même que la séance ouvre.
         if ($statut === 'present' || $statut === 'en_retard') {
             if ($heureArrivee) {
+                // Import historique : jamais passé par ouvrir(), pas de vraie heure
+                // d'ouverture — on retombe sur l'heure planifiée dans ce seul cas.
+                $reference = $reunion->heure_ouverture_reelle ?? $reunion->heure_debut;
                 $date = $reunion->date_reunion->format('Y-m-d');
-                $debut = substr((string) $reunion->heure_debut, 0, 5);
+                $refCourte = substr((string) $reference, 0, 5);
                 $arriveeSaisie = substr($heureArrivee, 0, 5);
-                $limite = \Carbon\Carbon::createFromFormat('Y-m-d H:i', "{$date} {$debut}")->addMinutes(15);
+                $limite = \Carbon\Carbon::createFromFormat('Y-m-d H:i', "{$date} {$refCourte}")->addMinutes(15);
                 $arrivee = \Carbon\Carbon::createFromFormat('Y-m-d H:i', "{$date} {$arriveeSaisie}");
                 $statut = $arrivee->gt($limite) ? 'en_retard' : 'present';
             } else {
