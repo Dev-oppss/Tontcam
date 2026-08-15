@@ -99,11 +99,11 @@ Route::middleware(['auth:sanctum', 'association.context'])->group(function () {
     Route::delete('/cycles/{id}', [CycleTontineController::class, 'annulerCycle']);
     Route::get('/cycles/{id}/bulletin', [CycleTontineController::class, 'bulletin']);
     Route::get('/bulletins/{id}/pdf', [CycleTontineController::class, 'bulletinPdf']);
+    Route::get('/bulletins/{id}/pdf/fichier', [CycleTontineController::class, 'bulletinPdfFichier']);
     Route::post('/bulletins/{id}/signer', [CycleTontineController::class, 'signer']);
     Route::post('/bulletins/{id}/retenues', [CycleTontineController::class, 'ajouterRetenue']);
     Route::post('/bulletins/{id}/payer', [CycleTontineController::class, 'payerBulletin']);
     Route::post('/bulletins/{id}/annuler-versement', [CycleTontineController::class, 'annulerVersementBulletin']);
-    Route::post('/bulletins/{id}/annuler', [CycleTontineController::class, 'annulerBulletin']);
 
     // ── Finance ─────────────────────────────────────────────────
     // Routes littérales AVANT apiResource ET contrainte UUID sur {caisse} : ce

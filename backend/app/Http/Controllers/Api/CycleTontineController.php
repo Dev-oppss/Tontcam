@@ -234,6 +234,30 @@ class CycleTontineController extends Controller
     }
 
     /**
+     * Sert le PDF du bulletin directement via cette route authentifiée, au lieu de
+     * compter sur le disque public + le lien symbolique `public/storage`
+     * (`php artisan storage:link`). Ce lien est très souvent absent en production
+     * (jamais exécuté au déploiement, ou écrasé par un nouveau déploiement) : la
+     * requête vers /storage/bulletins/xxx.pdf tombe alors sur le serveur web
+     * lui-même, qui répond 403/404 au lieu du fichier — c'est l'erreur observée.
+     * Cette route contourne totalement le problème et, en prime, applique le même
+     * contrôle d'accès (scope association) que le reste de l'API au lieu de laisser
+     * le PDF accessible publiquement à quiconque devine l'URL de stockage.
+     */
+    public function bulletinPdfFichier(string $bulletinId)
+    {
+        $bulletin = \App\Models\BulletinGain::with('cycle.tontine')
+            ->whereHas('cycle.tontine', fn ($q) => $this->scope->scopeAssociation($q))
+            ->findOrFail($bulletinId);
+
+        $contenu = $this->bulletinService->genererPdfBytes($bulletin);
+
+        return response($contenu, 200)
+            ->header('Content-Type', 'application/pdf')
+            ->header('Content-Disposition', 'inline; filename="'.$bulletin->numero_bulletin.'.pdf"');
+    }
+
+    /**
      * RG-RPT-008 : signature numérique du bulletin. Chaque signataire (Trésorier,
      * Président, Bénéficiaire) horodate sa propre signature avec son compte
      * authentifié — impossible de signer à la place de quelqu'un d'autre.
@@ -365,31 +389,8 @@ class CycleTontineController extends Controller
     }
 
     /**
-     * POST /bulletins/{id}/annuler — annule un bulletin non versé (brouillon/genere),
-     * bloqué dès que le bénéficiaire a signé (voir BulletinGainService::annulerBulletin).
+     * POST /cycles/{id}/encheres — soumission d'une offre par un membre.
      */
-    public function annulerBulletin(Request $request, string $bulletinId): JsonResponse
-    {
-        if (! in_array($request->user()->role, ['tresorier', 'president', 'super_admin'], true)) {
-            return response()->json(['message' => 'Réservé au trésorier, au président ou au super_admin.'], 403);
-        }
-        $bulletin = \App\Models\BulletinGain::with('cycle.tontine')
-            ->whereHas('cycle.tontine', fn ($q) => $this->scope->scopeAssociation($q))->findOrFail($bulletinId);
-
-        $data = $request->validate([
-            'motif' => ['nullable', 'string', 'max:200'],
-        ]);
-
-        try {
-            $bulletin = $this->bulletinService->annulerBulletin($bulletin, $request->user(), $data['motif'] ?? null);
-        } catch (\RuntimeException $e) {
-            return response()->json(['message' => $e->getMessage()], 422);
-        }
-
-        return response()->json($bulletin);
-    }
-
-
     public function placerEnchere(Request $request, string $id): JsonResponse
     {
         $cycle = $this->cycleScope($id);

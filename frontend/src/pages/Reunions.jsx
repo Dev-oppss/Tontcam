@@ -8,6 +8,7 @@ import {
   ClipboardCheck, ShieldAlert, CheckSquare, XSquare, MinusSquare,
   BadgeDollarSign, TrendingUp, AlertTriangle, Banknote,
   Trophy, Dices, Gavel, RefreshCw, Star, HeartHandshake, ArrowLeft,
+  Calendar, User,
 } from 'lucide-react';
 import { fmtDate, typePointLabel, statutPointLabel, fmt, periodeLabel, ACTEUR_ROLES, acteurRoleLabel, roleLabel, STATUTS_PRESENCE, statutPresenceLabel, MODES_PAIEMENT, modePaiementConfig } from '../data/mockData';
 import { API_BASE, request } from '../lib/api';
@@ -62,11 +63,11 @@ const TAB_ACCESS = {
 };
 const ROLES_LECTURE_SEULE = ['president','controleur'];
 
-const EMPTY_REUNION   = { date:'', lieu:'', numero:'', observation:'', estDomicileMembre:false, idHote:'' };
+const EMPTY_REUNION   = { date:'', lieu:'', numero:'', observation:'' };
 const EMPTY_OUVERTURE = { heureOuverture:'', presidentSeance:'', secretaireSeance:'', motOuverture:'' };
 const EMPTY_CLOTURE   = { heureCloture:'', presents:'', absents:'', membresAbsents:'', observation:'' };
 const EMPTY_POINT     = { titre:'', rubriqueId:'', type:'administratif', description:'', acteurRole:'' };
-const EMPTY_TX        = { type:'cotisation', idMembre:'', montant:'', libelle:'', idSanction:'', idPret:'', idBanque:'', sousType:'', sousTypeLibre:'', note:'', modePaiement:'especes', detailsPaiement:'' };
+const EMPTY_TX        = { type:'cotisation', idMembre:'', montant:'', libelle:'', idSanction:'', idPret:'', idBanque:'', sousType:'', note:'', modePaiement:'especes', detailsPaiement:'' };
 
 // ── Feuille de présence / cotisation tontine ─────────────────
 const STATUT_COTIS = { non_defini: null, cotise: 'cotise', defaillant: 'defaillant' };
@@ -74,7 +75,7 @@ const STATUT_COTIS = { non_defini: null, cotise: 'cotise', defaillant: 'defailla
 function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
   const {
     tontines, membres, membresParTontine,
-    addSeanceTransaction, addSanction, seanceTransactions, addPret, addAide,
+    addSeanceTransaction, addSanction, seanceTransactions,
     planningTours, ouvrirCycle, saisirCotisationCycle, designerGagnantCycle, cloturerCycle,
     encheres, cyclesTontine, ouvrirBulletinPdf, addEnchere, ajouterRetenueBulletin, payerBulletin, banques,
   } = useApp();
@@ -111,8 +112,6 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
   const [enchereIdGagnant,  setEnchereIdGagnant]  = useState('');
   const [miseGagnante,      setMiseGagnante]      = useState('');
   const [tirageEffectue,    setTirageEffectue]    = useState(false);
-  const [tirageManuel,      setTirageManuel]      = useState(false); // mode « saisir le gagnant tiré hors application »
-  const [tirageManuelMembre, setTirageManuelMembre] = useState('');
   const [cycleActuelId,     setCycleActuelId]     = useState(null); // cycle ouvert à l'étape cotisation, réutilisé à l'étape bénéficiaire
   const [nouvelleEnchereMembre, setNouvelleEnchereMembre] = useState('');
   const [nouvelleEnchereMontant, setNouvelleEnchereMontant] = useState('');
@@ -285,22 +284,6 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
     setEtape('recap');
   };
 
-  // Tirage effectué physiquement par les membres en séance (boules, urne, etc.),
-  // hors application : on se contente ici de saisir le gagnant déjà désigné,
-  // via le même circuit que la désignation manuelle utilisée pour l'enchère.
-  const handleTirageManuel = async () => {
-    if (!cycleActuelId || !tirageManuelMembre) return;
-    const idPart = resolvePartId(tirageManuelMembre);
-    if (!idPart) return;
-    const apresDesignation = await designerGagnantCycle(cycleActuelId, idPart);
-    if (!apresDesignation) return;
-    const cycleFinal = await cloturerCycle(cycleActuelId);
-    if (!cycleFinal) return;
-    setGagnant({ nomMembre: cycleFinal.gagnantNom, montantPot: cycleFinal.montantCollecteReel, idBulletin: cycleFinal.idBulletin });
-    setTirageEffectue(true);
-    setEtape('recap');
-  };
-
   const handleAjouterEnchere = async () => {
     if (!cycleActuelId) return;
     const missing = [];
@@ -370,7 +353,6 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
     setIdTontineSelectee(''); setEtape('choix'); setStatutParMembre({}); setModeParMembre({});
     setValide(false); setSanctionMontant(''); setGagnant(null);
     setEnchereIdGagnant(''); setMiseGagnante(''); setTirageEffectue(false); setCycleActuelId(null);
-    setTirageManuel(false); setTirageManuelMembre('');
   };
 
   // ── Blocage si séance non ouverte ──
@@ -660,29 +642,6 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
                   <Dices size={18}/>  Lancer le tirage maintenant
                 </button>
               </div>
-
-              {!tirageManuel ? (
-                <button onClick={() => setTirageManuel(true)} className="text-xs text-blue-600 hover:underline w-full text-center">
-                  Le tirage a été fait par les membres eux-mêmes (hors application) — saisir le gagnant
-                </button>
-              ) : (
-                <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 space-y-3">
-                  <p className="text-xs font-semibold text-amber-700">Tirage effectué en séance par les membres — sélectionnez le membre désigné gagnant</p>
-                  <select className="select" value={tirageManuelMembre} onChange={e => setTirageManuelMembre(e.target.value)}>
-                    <option value="">— Sélectionner le gagnant —</option>
-                    {membresEligiblesGain.map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
-                  </select>
-                  <div className="flex gap-2">
-                    <button onClick={() => { setTirageManuel(false); setTirageManuelMembre(''); }} className="btn-secondary flex-1 justify-center text-sm">
-                      Annuler
-                    </button>
-                    <button onClick={handleTirageManuel} disabled={!tirageManuelMembre} className={clsx('btn-primary flex-1 justify-center text-sm', !tirageManuelMembre && 'opacity-40 cursor-not-allowed')}>
-                      <Trophy size={15}/> Confirmer ce gagnant
-                    </button>
-                  </div>
-                </div>
-              )}
-
               <button onClick={() => setEtape('recap')} className="text-xs text-gray-400 hover:text-gray-600 w-full text-center hover:underline">
                 Passer sans tirage
               </button>
@@ -1287,7 +1246,7 @@ function TypePicker({ onSelect }) {
 function SmartFormWrapper({ type, reunion, membres, banques, prets, sanctions, tontines, membresParTontine, soldeDisponible = Infinity, onSubmit, onCancel }) {
   const [form, setForm] = useState({
     type, montant: '', libelle: '', idMembre: '', idSanction: '', idPret: '',
-    idBanque: '', sousType: 'autre', sousTypeLibre: '',
+    idBanque: '', sousType: 'autre',
     modePaiement: 'especes', detailsPaiement: '',
     _idTontine: '',   // état partagé pour cotisation + attribution_tour
   });
@@ -1459,30 +1418,15 @@ function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, san
   };
   const onAideEventChange = (val) => {
     sf('sousType', val);
-    // Les montants suggérés ont été retirés (RG-AID revue) : le champ « Montant
-    // versé » existe déjà et reste toujours saisi manuellement, quel que soit
-    // l'événement choisi — on ne pré-remplit donc plus rien ici.
+    const def = AIDE_SOCIALE_MONTANTS[val] || 0;
+    if (def > 0) sf('montant', String(def));
     const m = membres.find(x => x.id === form.idMembre);
-    if (val === 'autre') {
-      if (m) sf('libelle', form.sousTypeLibre ? `Aide sociale — ${form.sousTypeLibre} — ${m.nom} ${m.prenom}` : `Aide sociale — ${m.nom} ${m.prenom}`);
-      return;
-    }
     if (m) sf('libelle', `Aide sociale — ${AIDE_SOCIALE_LABELS[val]} — ${m.nom} ${m.prenom}`);
-  };
-  const onAideLibreChange = (val) => {
-    sf('sousTypeLibre', val);
-    const m = membres.find(x => x.id === form.idMembre);
-    if (m) sf('libelle', val ? `Aide sociale — ${val} — ${m.nom} ${m.prenom}` : `Aide sociale — ${m.nom} ${m.prenom}`);
   };
   const onMembreAideChange = (val) => {
     sf('idMembre', val);
     const m = membres.find(x => x.id === val);
-    if (!m) return;
-    if (form.sousType === 'autre') {
-      sf('libelle', form.sousTypeLibre ? `Aide sociale — ${form.sousTypeLibre} — ${m.nom} ${m.prenom}` : `Aide sociale — ${m.nom} ${m.prenom}`);
-    } else if (form.sousType) {
-      sf('libelle', `Aide sociale — ${AIDE_SOCIALE_LABELS[form.sousType] || ''} — ${m.nom} ${m.prenom}`);
-    }
+    if (m && form.sousType) sf('libelle', `Aide sociale — ${AIDE_SOCIALE_LABELS[form.sousType] || ''} — ${m.nom} ${m.prenom}`);
   };
 
   // ── Rendu selon le type ─────────────────────────────────────
@@ -1559,23 +1503,102 @@ function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, san
     </div>
   );
 
-  if (type === 'remboursement_pret') return (
+  if (type === 'remboursement_pret') {
+    const echeancesTriees = pretChoisi ? [...(pretChoisi.echeances || [])].sort((a, b) => a.numero - b.numero) : [];
+    const prochaine = echeancesTriees.find(e => e.statut !== 'payee') || null;
+
+    return (
     <div className="space-y-3">
       <div className="flex items-center gap-2 p-2.5 bg-blue-50 rounded-xl border border-blue-100">
         <span className="text-lg"></span>
-        <div><p className="text-xs font-bold text-blue-800">Remboursement de prêt</p><p className="text-xs text-blue-600">Le montant restant est pré-rempli automatiquement</p></div>
+        <div><p className="text-xs font-bold text-blue-800">Remboursement de prêt</p><p className="text-xs text-blue-600">Choisissez qui rembourse, puis vérifiez le résumé avant de saisir le montant</p></div>
       </div>
+
+      {/* 1. Qui a une dette en cours — liste avant tout autre champ */}
       {pretsActifs.length === 0
         ? <div className="p-3 bg-gray-50 rounded-xl text-center text-xs text-gray-400">Aucun prêt actif en cours de remboursement</div>
         : (
-          <FormField label="Prêt à rembourser" required>
-            <select className="select" value={form.idPret} onChange={e => onPretChange(e.target.value)}>
-              <option value="">— Sélectionner un prêt —</option>
-              {pretsActifs.map(p => <option key={p.id} value={p.id}>{p.nomMembre} — Reste : {fmt(p.resteAPayer)} {p.statut === 'en_retard' ? '' : ''}</option>)}
-            </select>
-          </FormField>
+          <div className="space-y-1.5">
+            <p className="text-xs font-bold text-gray-500 uppercase">Qui rembourse ? — {pretsActifs.length} personne(s) endettée(s)</p>
+            {pretsActifs.map(p => (
+              <button key={p.id} type="button" onClick={() => onPretChange(p.id)}
+                className={clsx('w-full flex items-center gap-3 p-2.5 rounded-xl border-2 text-left transition-all',
+                  form.idPret === p.id ? 'border-blue-400 bg-blue-50' : 'border-gray-200 bg-white hover:border-blue-200')}>
+                <div className={clsx('w-8 h-8 rounded-full flex items-center justify-center shrink-0', p.statut === 'en_retard' ? 'bg-red-100 text-red-500' : 'bg-gray-100 text-gray-500')}>
+                  <User size={15}/>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-gray-800 truncate">{p.nomMembre}</p>
+                  <p className="text-xs text-gray-400">Prêt initial {fmt(p.montantPret)}{p.statut === 'en_retard' && <span className="text-red-500 font-semibold"> — en retard</span>}</p>
+                </div>
+                <span className="text-sm font-bold text-red-600 shrink-0">{fmt(p.resteAPayer)}</span>
+              </button>
+            ))}
+          </div>
         )
       }
+
+      {/* 2. Résumé « qui rembourse quoi, quand » — avant le champ montant */}
+      {pretChoisi && (
+        <div className="p-3 bg-blue-50 rounded-xl border border-blue-200 space-y-2">
+          <p className="text-xs font-bold text-blue-800 flex items-center gap-1.5"><Receipt size={13}/> Résumé du remboursement</p>
+          <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+            <span className="text-blue-500 flex items-center gap-1"><User size={11}/> Qui rembourse</span>
+            <span className="font-semibold text-blue-900 text-right">{pretChoisi.nomMembre}</span>
+            {prochaine ? (
+              <>
+                <span className="text-blue-500">Échéance concernée</span>
+                <span className="font-semibold text-blue-900 text-right">N°{prochaine.numero} / {pretChoisi.nbEcheances}</span>
+                <span className="text-blue-500 flex items-center gap-1"><Calendar size={11}/> Date d'échéance</span>
+                <span className="font-semibold text-blue-900 text-right">{fmtDate(prochaine.date)}</span>
+                <span className="text-blue-500">Montant dû sur cette échéance</span>
+                <span className="font-semibold text-blue-900 text-right">{fmt(prochaine.montantTotal - prochaine.montantVerse)}</span>
+                {prochaine.statut === 'en_retard' && <span className="col-span-2 text-red-600 font-semibold">- Échéance en retard</span>}
+              </>
+            ) : (
+              <span className="col-span-2 text-blue-500 italic">Détail des échéances non disponible pour ce prêt.</span>
+            )}
+            <span className="text-blue-500">Date du versement (aujourd'hui)</span>
+            <span className="font-semibold text-blue-900 text-right">{fmtDate(new Date().toISOString().split('T')[0])}</span>
+          </div>
+
+          {/* Tableau d'amortissement complet */}
+          {echeancesTriees.length > 0 && (
+            <details className="pt-1">
+              <summary className="text-xs text-blue-600 cursor-pointer hover:underline"> Voir le tableau d'amortissement complet ({echeancesTriees.length} échéances)</summary>
+              <div className="mt-2 rounded-lg overflow-hidden border border-blue-200">
+                <table className="w-full text-xs">
+                  <thead className="bg-blue-100 text-blue-700">
+                    <tr>
+                      <th className="p-1.5 text-left">N°</th>
+                      <th className="p-1.5 text-left">Date</th>
+                      <th className="p-1.5 text-right">Montant</th>
+                      <th className="p-1.5 text-right">Versé</th>
+                      <th className="p-1.5 text-center">Statut</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {echeancesTriees.map(e => (
+                      <tr key={e.id} className={clsx('border-t border-blue-100', prochaine && e.id === prochaine.id && 'bg-blue-50 font-semibold')}>
+                        <td className="p-1.5">{e.numero}</td>
+                        <td className="p-1.5">{fmtDate(e.date)}</td>
+                        <td className="p-1.5 text-right">{fmt(e.montantTotal)}</td>
+                        <td className="p-1.5 text-right">{fmt(e.montantVerse)}</td>
+                        <td className="p-1.5 text-center">
+                          <Badge variant={e.statut === 'payee' ? 'green' : e.statut === 'en_retard' ? 'red' : 'gray'}>
+                            {e.statut === 'payee' ? 'Payée' : e.statut === 'en_retard' ? 'En retard' : 'Due'}
+                          </Badge>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          )}
+        </div>
+      )}
+
       {pretChoisi && (
         <div className="grid grid-cols-3 gap-2 text-center">
           <div className="p-2 bg-gray-50 rounded-xl"><p className="text-xs text-gray-400">Prêt initial</p><p className="text-xs font-bold">{fmt(pretChoisi.montantPret)}</p></div>
@@ -1583,40 +1606,23 @@ function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, san
           <div className="p-2 bg-green-50 rounded-xl"><p className="text-xs text-green-400">Déjà remboursé</p><p className="text-xs font-bold text-green-700">{fmt(pretChoisi.montantRembourse)}</p></div>
         </div>
       )}
-      {/* Résumé « qui rembourse quoi » — échéance précise concernée, avant de
-          procéder à l'enregistrement. Sans ce résumé, on ne savait qu'un
-          reste global, jamais quelle échéance (numéro/date/montant dû) le
-          versement en cours vient réellement couvrir. */}
-      {pretChoisi && (() => {
-        const echeancesTriees = [...(pretChoisi.echeances || [])].sort((a, b) => a.numero - b.numero);
-        const prochaine = echeancesTriees.find(e => e.statut !== 'payee') || null;
-        return (
-          <div className="p-3 bg-blue-50 rounded-xl border border-blue-200 space-y-1.5">
-            <p className="text-xs font-bold text-blue-800 flex items-center gap-1.5"><Receipt size={12}/> Résumé du remboursement</p>
-            <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
-              <span className="text-blue-500">Qui rembourse</span><span className="font-semibold text-blue-900 text-right">{pretChoisi.nomMembre}</span>
-              {prochaine ? (
-                <>
-                  <span className="text-blue-500">Échéance concernée</span><span className="font-semibold text-blue-900 text-right">N°{prochaine.numero} / {pretChoisi.nbEcheances}</span>
-                  <span className="text-blue-500">Date d'échéance</span><span className="font-semibold text-blue-900 text-right">{fmtDate(prochaine.date)}</span>
-                  <span className="text-blue-500">Montant dû sur cette échéance</span><span className="font-semibold text-blue-900 text-right">{fmt(prochaine.montantTotal - prochaine.montantVerse)}</span>
-                  {prochaine.statut === 'en_retard' && <span className="col-span-2 text-red-600 font-semibold">- Échéance en retard</span>}
-                </>
-              ) : (
-                <span className="col-span-2 text-blue-500 italic">Détail des échéances non disponible pour ce prêt.</span>
-              )}
-              <span className="text-blue-500">Date du versement</span><span className="font-semibold text-blue-900 text-right">{fmtDate(new Date().toISOString().split('T')[0])}</span>
-            </div>
-          </div>
-        );
-      })()}
       {pretChoisi && (
         <div className="flex gap-2">
           <button type="button" onClick={() => sf('montant', String(pretChoisi.resteAPayer))} className="text-xs text-blue-600 hover:underline">
             - Rembourser la totalité ({fmt(pretChoisi.resteAPayer)})
           </button>
+          {prochaine && (
+            <button type="button" onClick={() => sf('montant', String(prochaine.montantTotal - prochaine.montantVerse))} className="text-xs text-blue-600 hover:underline">
+              - Rembourser cette échéance ({fmt(prochaine.montantTotal - prochaine.montantVerse)})
+            </button>
+          )}
         </div>
       )}
+
+      {/* 3. Enfin, la saisie du montant — uniquement une fois le débiteur choisi */}
+      {!pretChoisi ? (
+        <div className="p-3 bg-gray-50 rounded-xl text-center text-xs text-gray-400">Sélectionnez d'abord un membre ci-dessus pour saisir le remboursement.</div>
+      ) : (
       <div className="grid grid-cols-2 gap-2">
         <FormField label="Montant reçu (FCFA)" required>
           <input className="input" type="number" value={form.montant} onChange={e => sf('montant', e.target.value)}/>
@@ -1625,8 +1631,10 @@ function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, san
           <input className="input" value={form.libelle} onChange={e => sf('libelle', e.target.value)}/>
         </FormField>
       </div>
+      )}
     </div>
   );
+  }
 
   if (type === 'pret_accorde') return (
     <div className="space-y-3">
@@ -1656,7 +1664,7 @@ function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, san
     <div className="space-y-3">
       <div className="flex items-center gap-2 p-2.5 bg-pink-50 rounded-xl border border-pink-100">
         <span className="text-lg"></span>
-        <div><p className="text-xs font-bold text-pink-800">Aide sociale versée</p><p className="text-xs text-pink-600">Saisissez le montant réellement versé ci-dessous</p></div>
+        <div><p className="text-xs font-bold text-pink-800">Aide sociale versée</p><p className="text-xs text-pink-600">Les montants par défaut sont configurés selon l'événement</p></div>
       </div>
       <FormField label="Membre bénéficiaire" required>
         <select className="select" value={form.idMembre} onChange={e => onMembreAideChange(e.target.value)}>
@@ -1671,16 +1679,11 @@ function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, san
               className={clsx('p-2 rounded-xl border-2 text-center transition-all',
                 form.sousType === key ? 'border-pink-400 bg-pink-50' : 'border-gray-200 bg-white hover:border-pink-200')}>
               <p className="text-xs font-semibold text-gray-800 leading-tight">{label}</p>
+              {AIDE_SOCIALE_MONTANTS[key] > 0 && <p className="text-xs text-pink-600 font-bold mt-0.5">{fmt(AIDE_SOCIALE_MONTANTS[key])}</p>}
             </button>
           ))}
         </div>
       </FormField>
-      {form.sousType === 'autre' && (
-        <FormField label="Préciser l'autre type d'événement" required>
-          <input className="input" placeholder="Ex : Baptême, opération chirurgicale…"
-            value={form.sousTypeLibre} onChange={e => onAideLibreChange(e.target.value)} autoFocus/>
-        </FormField>
-      )}
       <div className="grid grid-cols-2 gap-2">
         <FormField label="Montant versé (FCFA)" required>
           <input className="input" type="number" value={form.montant} onChange={e => sf('montant', e.target.value)}/>
@@ -2213,12 +2216,6 @@ function PanneauRubrique({ reunion, types, titre, readOnly = false }) {
   const txs     = seanceTransactions.filter(t => t.idReunion === reunion.id && types.includes(t.type));
   const locked  = !!reunion.verrouillee || readOnly;
   const notOpen = reunion.statutReunion === 'planifiee';
-  // Sanctions (auto ou manuelles) rattachées à CETTE réunion — distinct des
-  // transactions de règlement ci-dessous : une sanction existe dès la saisie
-  // de présence (absence non excusée), qu'elle soit déjà réglée ou non.
-  const sanctionsReunion = types.includes('amende')
-    ? sanctions.filter(s => s.numReunion === reunion.id)
-    : [];
 
   // Un seul type -> formulaire direct. Plusieurs types (ex: Divers) -> petit choix parmi eux seulement.
   const [selectedType, setSelectedType] = useState(types.length === 1 ? types[0] : null);
@@ -2238,44 +2235,18 @@ function PanneauRubrique({ reunion, types, titre, readOnly = false }) {
     );
   }
 
-  const handleSubmitTx = async (form) => {
+  const handleSubmitTx = (form) => {
     if (!form.montant || Number(form.montant) <= 0) return;
     const m = form.idMembre ? membres.find(x => x.id === form.idMembre) : null;
-
-    try {
-      // Si on octroie un prêt depuis la séance, créez aussi l'objet Prêt réel
-      // afin qu'il apparaisse dans la page Prêts / barre latérale.
-      let pretCree = null;
-      if (form.type === 'pret_accorde') {
-        try {
-          pretCree = await addPret({ idMembre: form.idMembre, idCaisse: form.idBanque, montantPret: form.montant });
-        } catch (e) {
-          // Ne bloque pas l'enregistrement de la transaction si la création du prêt échoue,
-          // mais prévenons l'utilisateur.
-          console.error('Création prêt échouée', e);
-          // showToast est dans scope parent (FeuillePresenceTontine) — on peut produire un message via window.alert fallback
-        }
-      }
-
-      const txPayload = {
-        ...form,
-        idMembre:   form.idMembre   || null,
-        idSanction: form.idSanction || null,
-        idPret:     pretCree ? pretCree.id : (form.idPret || null),
-        idBanque:   form.idBanque   || null,
-        nomMembre:  m ? `${m.nom} ${m.prenom}` : (form.nomMembre || ''),
-      };
-
-      await addSeanceTransaction(reunion.id, txPayload);
-
-      // Après écriture, l'état global est mis à jour par les helpers appelés
-      // (ex: `addPret` mettra à jour `prets`). Si besoin, on peut étendre
-      // ici la synchronisation (best-effort) mais on évite les appels lourds.
-
-      if (types.length > 1) setSelectedType(null); else setSelectedType(types[0]);
-    } catch (err) {
-      console.error(err);
-    }
+    addSeanceTransaction(reunion.id, {
+      ...form,
+      idMembre:   form.idMembre   || null,
+      idSanction: form.idSanction || null,
+      idPret:     form.idPret     || null,
+      idBanque:   form.idBanque   || null,
+      nomMembre:  m ? `${m.nom} ${m.prenom}` : (form.nomMembre || ''),
+    });
+    if (types.length > 1) setSelectedType(null); else setSelectedType(types[0]);
   };
 
   return (
@@ -2291,28 +2262,6 @@ function PanneauRubrique({ reunion, types, titre, readOnly = false }) {
             <p className="text-base font-bold text-red-500">{fmt(totalSorties)}</p>
             <p className="text-xs text-gray-500">Sorties</p>
           </div>
-        </div>
-      )}
-
-      {/* Sanctions rattachées à cette réunion (auto absence + manuelles) */}
-      {sanctionsReunion.length > 0 && (
-        <div className="p-3 bg-red-50 rounded-xl border border-red-200 space-y-2">
-          <p className="text-xs font-bold text-red-700 flex items-center gap-1.5">
-            <ShieldAlert size={13}/> {sanctionsReunion.length} sanction(s) appliquée(s) pour cette réunion
-          </p>
-          {sanctionsReunion.map(s => (
-            <div key={s.id} className="flex items-center gap-3 p-2.5 bg-white rounded-lg border border-red-100">
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-gray-800 truncate">{s.nomMembre}</p>
-                <p className="text-xs text-gray-500 truncate">{s.motif}</p>
-              </div>
-              <Badge variant={s.estAutomatique ? 'amber' : 'gray'}>{s.estAutomatique ? 'Automatique' : 'Manuelle'}</Badge>
-              <Badge variant={s.statut === 'payee' ? 'green' : s.statut === 'annulee' ? 'gray' : 'red'}>
-                {s.statut === 'payee' ? 'Payée' : s.statut === 'annulee' ? 'Annulée' : 'Impayée'}
-              </Badge>
-              <span className="text-sm font-bold text-red-600 shrink-0">{fmt(s.montant)}</span>
-            </div>
-          ))}
         </div>
       )}
 
@@ -2596,7 +2545,6 @@ export function Reunions() {
     if (missing.length) { showToast?.(`Champ(s) requis manquant(s) : ${missing.join(', ')}`, 'error'); return; }
     if (formReunion.date < dateMinReunion) { showToast?.("La date doit être au moins 24h après aujourd'hui.", "error"); return; }
     if (reunions.some(r => r.date === formReunion.date)) { showToast?.("Une réunion est déjà planifiée ce jour-là.", "error"); return; } // RG-REU-005
-    if (formReunion.estDomicileMembre && !formReunion.idHote) { showToast?.("Sélectionnez le membre hôte pour une réunion au domicile d'un membre (RG-REU-003).", "error"); return; }
     addReunion({ ...formReunion });
     setShowAdd(false); setFormReunion(EMPTY_REUNION);
   };
@@ -2608,7 +2556,6 @@ export function Reunions() {
     ]);
     if (missing.length) { showToast?.(`Champ(s) requis manquant(s) : ${missing.join(', ')}`, 'error'); return; }
     if (reunions.some(r => r.date === formReunion.date && r.id !== showEdit.id)) { showToast?.("Une réunion est déjà planifiée ce jour-là.", "error"); return; }
-    if (formReunion.estDomicileMembre && !formReunion.idHote) { showToast?.("Sélectionnez le membre hôte pour une réunion au domicile d'un membre (RG-REU-003).", "error"); return; }
     updateReunion({ ...showEdit, ...formReunion });
     setShowEdit(null);
   };
@@ -2732,7 +2679,7 @@ export function Reunions() {
               <p className="text-sm text-gray-500">{fmtDate(r.date)} · <span className="inline-flex items-center gap-1"><MapPin size={11}/>{r.lieu}</span></p>
             </div>
             <div className="flex gap-2">
-              <button onClick={()=>{ setShowEdit(r); setFormReunion({date:r.date,lieu:r.lieu,numero:r.numero,observation:r.observation||'',estDomicileMembre:!!r.estDomicileMembre,idHote:r.idHote||''}); }} className="btn-secondary text-xs">
+              <button onClick={()=>{ setShowEdit(r); setFormReunion({date:r.date,lieu:r.lieu,numero:r.numero,observation:r.observation||''}); }} className="btn-secondary text-xs">
                 <Pencil size={13}/> Modifier
               </button>
               <button onClick={()=>{ setShowOuverture(r); setFormOuv(EMPTY_OUVERTURE); }} className="btn-primary text-xs">
@@ -2829,7 +2776,7 @@ export function Reunions() {
           <div className="space-y-4">
             <PageHeader
               title={`Réunion N°${r.numero}`}
-              subtitle={`${fmtDate(r.date)} · ${r.lieu}${r.estDomicileMembre ? ` (domicile de ${r.nomHote || 'l\u2019hôte'})` : ''}`}
+              subtitle={`${fmtDate(r.date)} · ${r.lieu}`}
               action={<button onClick={()=>navigate('/reunions')} className="btn-secondary">
                 <ArrowLeft size={14}/> Retour aux réunions
               </button>}
@@ -2841,7 +2788,7 @@ export function Reunions() {
                 <div className="flex gap-2 flex-wrap">
                   {r.statutReunion==='planifiee' && (
                     <>
-                      <button onClick={()=>{ setShowEdit(r); setFormReunion({date:r.date,lieu:r.lieu,numero:r.numero,observation:r.observation||'',estDomicileMembre:!!r.estDomicileMembre,idHote:r.idHote||''}); }} className="btn-secondary">
+                      <button onClick={()=>{ setShowEdit(r); setFormReunion({date:r.date,lieu:r.lieu,numero:r.numero,observation:r.observation||''}); }} className="btn-secondary">
                         <Pencil size={13}/> Modifier
                       </button>
                       <button onClick={()=>{ setShowOuverture(r); setFormOuv(EMPTY_OUVERTURE); }} className="btn-primary">
@@ -3128,23 +3075,6 @@ export function Reunions() {
             <FR k="lieu" placeholder="Ex : Salle Akwa Palace, Douala"/>
           </FormField>
 
-          {/* Domicile d'un membre (RG-REU-003 : hôte obligatoire si coché) */}
-          <div className="p-3 rounded-xl border border-gray-200 bg-gray-50 space-y-2">
-            <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-              <input type="checkbox" checked={!!formReunion.estDomicileMembre}
-                onChange={e => setFormReunion(f => ({ ...f, estDomicileMembre: e.target.checked, idHote: e.target.checked ? f.idHote : '' }))}/>
-              Réunion au domicile d'un membre
-            </label>
-            {formReunion.estDomicileMembre && (
-              <FormField label="Membre hôte" required>
-                <select className="select" value={formReunion.idHote} onChange={e => setFormReunion(f => ({ ...f, idHote: e.target.value }))}>
-                  <option value="">— Sélectionner l'hôte —</option>
-                  {membres.map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
-                </select>
-              </FormField>
-            )}
-          </div>
-
           {/* Lieux récents comme suggestions rapides */}
           {(() => {
             const lieuxRecents = [...new Set(reunions.slice(-5).map(r => r.lieu).filter(Boolean))];
@@ -3204,21 +3134,6 @@ export function Reunions() {
             <FormField label="N° de réunion"><FR k="numero" type="number"/></FormField>
           </div>
           <FormField label="Lieu" required><FR k="lieu"/></FormField>
-          <div className="p-3 rounded-xl border border-gray-200 bg-gray-50 space-y-2">
-            <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-              <input type="checkbox" checked={!!formReunion.estDomicileMembre}
-                onChange={e => setFormReunion(f => ({ ...f, estDomicileMembre: e.target.checked, idHote: e.target.checked ? f.idHote : '' }))}/>
-              Réunion au domicile d'un membre
-            </label>
-            {formReunion.estDomicileMembre && (
-              <FormField label="Membre hôte" required>
-                <select className="select" value={formReunion.idHote} onChange={e => setFormReunion(f => ({ ...f, idHote: e.target.value }))}>
-                  <option value="">— Sélectionner l'hôte —</option>
-                  {membres.map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
-                </select>
-              </FormField>
-            )}
-          </div>
           <FormField label="Observation">
             <textarea className="input h-20 resize-none" value={formReunion.observation||''} onChange={e=>setFormReunion(f=>({...f,observation:e.target.value}))}/>
           </FormField>

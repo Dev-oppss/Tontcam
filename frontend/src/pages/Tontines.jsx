@@ -55,7 +55,7 @@ function calcDateFin(dateDebut, nbTours, periode) {
   return d.toISOString().split('T')[0];
 }
 
-const EMPTY_FORM = { nom:'', cotisation:'', idCaisse:'', periode:'mensuel', nbTours:12, dureeSeances:12, typeAttribution:'rotation', dateDebut:'', dateFin:'' };
+const EMPTY_FORM = { nom:'', cotisation:'', idCaisse:'', periode:'mensuel', nbTours:12, dureeSeances:12, typeAttribution:'rotation', miseMinEnchere:'', dateDebut:'', dateFin:'' };
 const EMPTY_MT   = { idMembre:'', nombreParts:'1', dateAdhesion: new Date().toISOString().split('T')[0], idAvaliste:'' };
 
 export default function Tontines() {
@@ -331,7 +331,7 @@ export default function Tontines() {
                     </div>
                   </div>
                 </div>
-                <button onClick={() => { setShowEdit(t); setForm({ nom:t.nom, cotisation:t.cotisation, idCaisse:t.idCaisse||'', periode:t.periode, nbTours:t.nbTours, dureeSeances:t.dureeSeances||t.nbTours, typeAttribution:t.typeAttribution, dateDebut:t.dateDebut||'', dateFin:t.dateFin||'' }); }}
+                <button onClick={() => { setShowEdit(t); setForm({ nom:t.nom, cotisation:t.cotisation, idCaisse:t.idCaisse||'', periode:t.periode, nbTours:t.nbTours, dureeSeances:t.dureeSeances||t.nbTours, typeAttribution:t.typeAttribution, miseMinEnchere:t.miseMinEnchere||'', dateDebut:t.dateDebut||'', dateFin:t.dateFin||'' }); }}
                   className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg">
                   <Pencil size={13}/>
                 </button>
@@ -888,6 +888,11 @@ export default function Tontines() {
               ))}
             </div>
             <p className="text-xs text-gray-400 italic">{TYPE_CONFIG[form.typeAttribution]?.desc}</p>
+            {form.typeAttribution === 'enchere' && (
+              <FormField label="Mise minimum (FCFA)" required hint="Obligatoire pour une tontine à enchère : offre plancher acceptée pour remporter le tour.">
+                <F k="miseMinEnchere" type="number" min="0" placeholder="Ex : 400 000"/>
+              </FormField>
+            )}
           </div>
           <div className="p-3 bg-gray-50 rounded-xl space-y-3">
             <p className="text-xs font-bold text-gray-500 uppercase">Paramètres</p>

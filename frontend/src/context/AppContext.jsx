@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { request, getApiToken, setApiToken, clearApiToken, API_BASE } from '../lib/api';
+import { request, requestBlob, getApiToken, setApiToken, clearApiToken, API_BASE } from '../lib/api';
 import * as adapt from '../lib/adapters';
 import * as mock from '../data/mockData';
 
@@ -125,21 +125,6 @@ export const AppProvider = ({ children }) => {
     try {
       const res = await request('/portail/moi');
       setPortailMoi(res);
-
-      // Pour les comptes 'membre' qui n'effectuent pas le bootstrap complet,
-      // exposer les données principales (sanctions, prêts, membre) dans le
-      // state global afin que les pages (Sanctions, Prets, etc.) puissent
-      // afficher les informations en lecture seule.
-      try {
-        setSanctions((res.sanctions || []).map(adapt.sanctionFromApi));
-      } catch (e) { /* best-effort */ }
-      try {
-        setPrets((res.prets || []).map(adapt.pretFromApi));
-      } catch (e) { /* best-effort */ }
-      try {
-        if (res.membre) setMembres([adapt.membreFromApi(res.membre)]);
-      } catch (e) { /* best-effort */ }
-
       return res;
     } catch (err) {
       setPortailMoi(null);
@@ -655,24 +640,7 @@ export const AppProvider = ({ children }) => {
       const res = await request(`/reunions/${idReunion}/presences`, { method: 'POST', body: { presences: [{
         membre_id: idMembre, statut, heure_arrivee: heureArrivee || null, motif_absence: motifAbsence || null,
       }] } });
-
-      // supporte l'ancien format (array) et le nouveau format { presences: [...], sanctions: [...] }
-      const presencesResp = Array.isArray(res) ? res : (res.presences || []);
-      const p = presencesResp[0];
-
-      // Si le backend a retourné des sanctions créées automatiquement, on les intègre
-      const sanctionsResp = Array.isArray(res) ? [] : (res.sanctions || []);
-      if (sanctionsResp.length) {
-        const nouveaux = sanctionsResp.map(adapt.sanctionFromApi).filter(Boolean);
-        if (nouveaux.length) {
-          setSanctions((prev) => {
-            const existIds = new Set(prev.map((s) => s.id));
-            const toAdd = nouveaux.filter((s) => !existIds.has(s.id));
-            return toAdd.length ? [...prev, ...toAdd] : prev;
-          });
-        }
-      }
-
+      const p = res[0];
       const entry = { reunionId: idReunion, idMembre, statut: p?.statut || statut, heureArrivee: p?.heure_arrivee, motifAbsence: p?.motif_absence };
       setReunions((prev) => prev.map((r) => (r.id === idReunion
         ? { ...r, presencesReunion: [...(r.presencesReunion || []).filter((x) => x.idMembre !== idMembre), entry] }
@@ -1132,9 +1100,7 @@ export const AppProvider = ({ children }) => {
   };
   const decaisserPret = async (id) => {
     try {
-      const reunionOuverte = reunions.find((r) => r.statutReunion === 'en_cours');
-      if (!reunionOuverte) { showToast?.('Ouvrez une séance de réunion avant de décaisser un prêt.', 'error'); return; }
-      const p = await request(`/prets/${id}/decaisser`, { method: 'POST', body: { reunion_id: reunionOuverte.id } });
+      const p = await request(`/prets/${id}/decaisser`, { method: 'POST' });
       setPrets((prev) => prev.map((x) => (x.id === id ? adapt.pretFromApi(p) : x)));
       showToast('Prêt décaissé');
     } catch (err) { return handleError(err); }
@@ -1230,10 +1196,7 @@ export const AppProvider = ({ children }) => {
   };
   const verserAideSociale = async (id, options = {}) => {
     try {
-      const reunionOuverte = reunions.find((r) => r.statutReunion === 'en_cours');
-      if (!reunionOuverte) { showToast?.('Ouvrez une séance de réunion avant de verser une aide sociale.', 'error'); return; }
       const a = await request(`/aides-sociales/${id}/verser`, { method: 'POST', body: {
-        reunion_id: reunionOuverte.id,
         mode_paiement: options.modePaiement, details_paiement: options.detailsPaiement,
       } });
       const aide = adapt.aideFromApi(a);
@@ -1383,17 +1346,15 @@ export const AppProvider = ({ children }) => {
     const origin = API_BASE.replace(/\/api\/?$/, '');
     return `${origin}${pdfUrl.startsWith('/') ? '' : '/'}${pdfUrl}`;
   };
+  // Sert désormais le PDF via la route authentifiée /bulletins/{id}/pdf/fichier
+  // (voir requestBlob) au lieu de résoudre l'ancienne URL /storage/... : cette
+  // dernière dépendait du lien symbolique public/storage (`php artisan storage:link`),
+  // absent en production dans la plupart des cas → erreur 403/404 à l'ouverture
+  // du bulletin. La blob URL retournée ici s'utilise exactement pareil en src d'iframe.
   const ouvrirBulletinPdf = async (idBulletin) => {
     try {
-      const data = await request(`/bulletins/${idBulletin}/pdf`);
-      return resolveBulletinUrl(data.pdf_url);
-    } catch (err) {
-      if (err?.status === 403) {
-        showToast('Accès refusé : génération du bulletin réservée (Trésorier/Président).', 'error');
-        return null;
-      }
-      return handleError(err);
-    }
+      return await requestBlob(`/bulletins/${idBulletin}/pdf/fichier`);
+    } catch (err) { return handleError(err); }
   };
 
   // Retenue manuelle « priorité 5 » (frais d'organisation, décision d'AG...) — rien

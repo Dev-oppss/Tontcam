@@ -35,3 +35,22 @@ export async function request(path, { method = "GET", body, auth = true, headers
   }
   return data;
 }
+
+// Pour les fichiers binaires (PDF...) servis par une route authentifiée : `request()`
+// ne peut pas servir ici, il parse toujours la réponse en JSON. On récupère le blob
+// et on retourne une object URL, utilisable directement en src d'iframe — sans jamais
+// dépendre du lien symbolique public/storage (souvent absent en production).
+export async function requestBlob(path, { auth = true } = {}) {
+  const init = { headers: {} };
+  const token = auth ? getApiToken() : null;
+  if (token) init.headers.Authorization = `Bearer ${token}`;
+
+  const res = await fetch(`${API_BASE}${path}`, init);
+  if (!res.ok) {
+    let data = null;
+    try { data = await res.json(); } catch { /* corps non-JSON, on ignore */ }
+    throw Object.assign(new Error(data?.message || `HTTP ${res.status}`), { status: res.status, data });
+  }
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+}

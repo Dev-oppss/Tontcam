@@ -18,10 +18,9 @@ class PretController extends Controller
     public function index(Request $request): JsonResponse
     {
         $this->authorize('viewAny', Pret::class);
-        // 'echeances' est chargé ici aussi (pas seulement dans show()) car l'onglet
-        // Remboursement de la réunion a besoin, pour chaque prêt actif, de savoir
-        // quelle échéance précise (numéro, date, montant dû) est concernée par le
-        // remboursement — sans ça, l'écran ne peut afficher qu'un reste global.
+        // 'echeances' est nécessaire à l'onglet Remboursement de la réunion, qui doit
+        // afficher — avant toute saisie — un résumé « qui rembourse quoi, quand »
+        // (échéance précise concernée, date, montant dû), pas seulement un reste global.
         $query = Pret::whereHas('caisse', fn ($q) => $this->scope->scopeAssociation($q))->with('emprunteur', 'caisse', 'echeances');
         if ($request->filled('statut')) {
             $query->where('statut', $request->statut);

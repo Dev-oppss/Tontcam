@@ -400,46 +400,34 @@ class BulletinGainService
     }
 
     /**
-     * Annulation d'un bulletin non encore versé (statut brouillon/genere), tant que
-     * le bénéficiaire n'a pas signé. Le paiement déjà effectué doit d'abord être
-     * retourné via annulerVersement() (statut 'paye' non accepté ici).
-     */
-    public function annulerBulletin(BulletinGain $bulletin, Utilisateur $auteur, ?string $motif = null): BulletinGain
-    {
-        if ($bulletin->statut === 'paye') {
-            throw new \RuntimeException('Ce bulletin est déjà versé : utilisez d’abord le retour des fonds.');
-        }
-        if ($bulletin->statut === 'annule') {
-            throw new \RuntimeException('Ce bulletin est déjà annulé.');
-        }
-        if ($bulletin->signe_beneficiaire_at) {
-            throw new \RuntimeException('Ce bulletin a déjà été signé par le bénéficiaire, annulation impossible.');
-        }
-
-        $bulletin->update([
-            'statut' => 'annule',
-            'annule_par' => $auteur->id,
-            'annule_at' => now(),
-            'motif_annulation' => $motif ?: "Annulation bulletin {$bulletin->numero_bulletin}",
-        ]);
-
-        return $bulletin->fresh();
-    }
-
-    /**
      * Génération du PDF officiel (en-tête, retenues, signatures).
      * Nécessite : composer require barryvdh/laravel-dompdf
      */
     public function genererPdf(BulletinGain $bulletin): string
     {
+        $this->genererPdfBytes($bulletin);
+
+        return $bulletin->pdf_url;
+    }
+
+    /**
+     * Rend le PDF et retourne directement les octets — utilisé par la nouvelle route
+     * authentifiée bulletinPdfFichier() qui sert le fichier sans dépendre du lien
+     * symbolique public/storage. On conserve quand même une copie sur le disque
+     * public (et pdf_url) pour l'archivage/l'historique, sans que ce soit le chemin
+     * utilisé pour l'affichage.
+     */
+    public function genererPdfBytes(BulletinGain $bulletin): string
+    {
         $bulletin->loadMissing('retenues', 'gagnant', 'part', 'cycle.tontine.association');
 
         $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('pdf.bulletin-gain', ['bulletin' => $bulletin]);
-        $chemin = "bulletins/{$bulletin->numero_bulletin}.pdf";
-        \Illuminate\Support\Facades\Storage::disk('public')->put($chemin, $pdf->output());
+        $contenu = $pdf->output();
 
+        $chemin = "bulletins/{$bulletin->numero_bulletin}.pdf";
+        \Illuminate\Support\Facades\Storage::disk('public')->put($chemin, $contenu);
         $bulletin->update(['pdf_url' => \Illuminate\Support\Facades\Storage::url($chemin)]);
 
-        return $bulletin->pdf_url;
+        return $contenu;
     }
 }
