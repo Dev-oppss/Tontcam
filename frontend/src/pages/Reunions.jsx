@@ -149,10 +149,20 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
     }).filter(Boolean);
   }, [tontineSelectee, membresParTontine, membres]);
 
-  const membresEligiblesGain = useMemo(() => membresParTontine
-    .filter(mt => mt.idTontine === tontineSelectee?.id && mt.statut === 'actif')
-    .map(mt => membres.find(m => m.id === mt.idMembre)).filter(Boolean),
-  [tontineSelectee, membresParTontine, membres]);
+  const membresEligiblesGain = useMemo(() => {
+    // Un membre avec plusieurs parts apparaît plusieurs fois dans membresParTontine
+    // (une ligne = une part côté serveur) — on regroupe pour n'afficher qu'une seule
+    // fois chaque membre, avec son nombre de parts entre parenthèses.
+    const partsParMembre = new Map();
+    membresParTontine
+      .filter(mt => mt.idTontine === tontineSelectee?.id && mt.statut === 'actif')
+      .forEach(mt => partsParMembre.set(mt.idMembre, (partsParMembre.get(mt.idMembre) || 0) + 1));
+    return [...partsParMembre.entries()]
+      .map(([idMembre, nombreParts]) => {
+        const membre = membres.find(m => m.id === idMembre);
+        return membre ? { ...membre, nombreParts } : null;
+      }).filter(Boolean);
+  }, [tontineSelectee, membresParTontine, membres]);
 
   const montantPot     = tontineSelectee ? tontineSelectee.cotisation * tontineSelectee.totalParts : 0;
   const totalAttendu   = membresDeLatontine.reduce((s, m) => s + m.montantDu, 0);
@@ -659,7 +669,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
                     <option value="">— Membre —</option>
                     {membresEligiblesGain
                       .filter(m => !encheresEnAttente.some(e => e.idMembre === m.id))
-                      .map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
+                      .map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}{m.nombreParts > 1 ? ` (${m.nombreParts} parts)` : ''}</option>)}
                   </select>
                   <input type="number" min="0" max={cycleActuel?.montantCollecteReel || cycleActuel?.montantCollectePrevu || undefined} className="input text-sm" placeholder="Montant (FCFA)"
                     value={nouvelleEnchereMontant} onChange={e => setNouvelleEnchereMontant(e.target.value)}/>
@@ -717,7 +727,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
                   <p className="text-xs font-semibold text-amber-700">Aucune offre saisie — enregistrer puis désigner manuellement une offre (dérogation)</p>
                   <select className="select" value={enchereIdGagnant} onChange={e => setEnchereIdGagnant(e.target.value)}>
                     <option value="">— Sélectionner le gagnant —</option>
-                    {membresEligiblesGain.map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
+                    {membresEligiblesGain.map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}{m.nombreParts > 1 ? ` (${m.nombreParts} parts)` : ''}</option>)}
                   </select>
                   <input type="number" className="input" placeholder="Montant de la mise gagnante (FCFA)"
                     value={miseGagnante} onChange={e => setMiseGagnante(e.target.value)}/>
