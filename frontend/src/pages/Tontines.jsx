@@ -446,8 +446,20 @@ export default function Tontines() {
         const prochain  = getProchainTour(t.id, t.nbTours);
         const partsActives = partsDeTontine(t.id).filter(p => p.statut === 'actif' || p.statut === 'disponible' || p.statut === 'reservee');
         const membresActifs = getMembresActifs(t.id).map(mt=>{const m=membres.find(x=>x.id===mt.idMembre);return m?{...m,parts:mt.nombreParts}:null;}).filter(Boolean);
-        const dejaBenef = new Set(planning.filter(p=>p.statut!=='saute').map(p=>p.idMembre));
+        // BUGFIX RG-TON : chaque part a son propre cycle de gain (un membre avec
+        // plusieurs parts peut encore bénéficier tant qu'il lui reste au moins une
+        // part non consommée). `dejaBenefPart` (par part) est la seule source fiable ;
+        // `dejaBenef` (par membre) n'en est dérivé que pour ne marquer "déjà bénéficié"
+        // un membre que lorsque TOUTES ses parts sont consommées — jamais dès la première.
         const dejaBenefPart = new Set(planning.filter(p=>p.statut!=='saute').map(p=>p.idPart));
+        const dejaBenef = new Set(
+          membresActifs
+            .filter(m => {
+              const partsDuMembre = partsActives.filter(p => p.idMembre === m.id);
+              return partsDuMembre.length > 0 && partsDuMembre.every(p => dejaBenefPart.has(p.id));
+            })
+            .map(m => m.id)
+        );
         const enCoursEnch = getEncheresDuTour(t.id);
 
         return (

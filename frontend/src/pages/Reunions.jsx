@@ -116,6 +116,10 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
   const [nouvelleEnchereMontant, setNouvelleEnchereMontant] = useState('');
   const [nouvelleEnchereCaisseId, setNouvelleEnchereCaisseId] = useState('');
   const [miseGagnanteCaisseId, setMiseGagnanteCaisseId] = useState('');
+  // Choix manuel du bénéficiaire — disponible pour rotation ET tirage au sort,
+  // comme pour l'enchère (dérogation possible à l'ordre planifié / au hasard).
+  const [choixManuel,          setChoixManuel]          = useState(false);
+  const [beneficiaireManuelId, setBeneficiaireManuelId]  = useState('');
   const [retenueModal, setRetenueModal] = useState(false);
   const [retenueLibelle, setRetenueLibelle] = useState('');
   const [retenueMontant, setRetenueMontant] = useState('');
@@ -307,6 +311,25 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
     setEtape('recap');
   };
 
+  // Choix manuel du bénéficiaire — utilisable en mode rotation (dérogation à
+  // l'ordre planifié) et en mode tirage (le serveur accepte part_id pour tout
+  // mode, voir TontineCycleService::designerGagnant). Un membre avec plusieurs
+  // parts peut être choisi tant qu'il lui reste au moins une part disponible ;
+  // resolvePartId() se charge de prendre une part encore 'actif' de ce membre.
+  const handleDesignationManuelle = async () => {
+    if (!cycleActuelId || !beneficiaireManuelId) return;
+    const idPart = resolvePartId(beneficiaireManuelId);
+    if (!idPart) return;
+    const apresDesignation = await designerGagnantCycle(cycleActuelId, idPart);
+    if (!apresDesignation) return;
+    const cycleFinal = await cloturerCycle(cycleActuelId);
+    if (!cycleFinal) return;
+    setGagnant({ nomMembre: cycleFinal.gagnantNom, montantPot: cycleFinal.montantCollecteReel, idBulletin: cycleFinal.idBulletin });
+    setChoixManuel(false);
+    setBeneficiaireManuelId('');
+    setEtape('recap');
+  };
+
   const handleAjouterEnchere = async () => {
     if (!cycleActuelId) return;
     const missing = [];
@@ -376,6 +399,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
     setIdTontineSelectee(''); setEtape('choix'); setStatutParMembre({}); setModeParMembre({});
     setValide(false); setSanctionMontant(''); setGagnant(null);
     setEnchereIdGagnant(''); setMiseGagnante(''); setTirageEffectue(false); setCycleActuelId(null);
+    setChoixManuel(false); setBeneficiaireManuelId('');
   };
 
   // ── Blocage si séance non ouverte ──
@@ -630,44 +654,93 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
 
           {/* ROTATION */}
           {typeAttr === 'rotation' && (
-            tourPlanifieProchain ? (
-              <div className="space-y-3">
-                <div className="p-4 bg-white rounded-2xl border-2 border-primary-400 text-center shadow-sm">
-                  <p className="text-xs text-gray-400 mb-1">Bénéficiaire planifié — Tour N°{tourPlanifieProchain.numeroTour}</p>
-                  <p className="text-2xl font-black text-gray-800 mt-1">{tourPlanifieProchain.nomMembre}</p>
-                  <p className="text-sm font-bold text-primary-600 mt-1">{fmt(montantPot)}</p>
+            <div className="space-y-3">
+              {tourPlanifieProchain && !choixManuel ? (
+                <>
+                  <div className="p-4 bg-white rounded-2xl border-2 border-primary-400 text-center shadow-sm">
+                    <p className="text-xs text-gray-400 mb-1">Bénéficiaire planifié — Tour N°{tourPlanifieProchain.numeroTour}</p>
+                    <p className="text-2xl font-black text-gray-800 mt-1">{tourPlanifieProchain.nomMembre}</p>
+                    <p className="text-sm font-bold text-primary-600 mt-1">{fmt(montantPot)}</p>
+                  </div>
+                  <button onClick={handleConfirmerRotation} className="btn-primary w-full justify-center">
+                    <Trophy size={15}/> Confirmer et encaisser le tour
+                  </button>
+                  <p className="text-xs text-gray-400 text-center">L'ordre a été défini au préalable dans le module Tontines.</p>
+                  <button onClick={() => { setChoixManuel(true); setBeneficiaireManuelId(''); }}
+                    className="text-xs text-gray-400 hover:text-gray-600 w-full text-center hover:underline">
+                    Choisir un autre bénéficiaire manuellement (dérogation)
+                  </button>
+                </>
+              ) : (
+                <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 space-y-3">
+                  {!tourPlanifieProchain && (
+                    <>
+                      <AlertCircle size={24} className="mx-auto text-amber-500"/>
+                      <p className="font-semibold text-amber-800 text-sm text-center">Aucun tour planifié</p>
+                      <p className="text-xs text-amber-600 text-center">Allez dans Tontines - Bénéficiaires pour définir l'ordre de rotation, ou désignez un bénéficiaire manuellement ci-dessous.</p>
+                    </>
+                  )}
+                  <p className="text-xs font-semibold text-amber-700">Désignation manuelle — un membre avec plusieurs parts reste éligible tant qu'il lui en reste une disponible.</p>
+                  <select className="select" value={beneficiaireManuelId} onChange={e => setBeneficiaireManuelId(e.target.value)}>
+                    <option value="">— Sélectionner un membre —</option>
+                    {membresEligiblesGain.map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}{m.nombreParts > 1 ? ` (${m.nombreParts} parts)` : ''}</option>)}
+                  </select>
+                  <button onClick={handleDesignationManuelle} disabled={!beneficiaireManuelId} className="btn-primary w-full justify-center">
+                    <Trophy size={15}/> Confirmer ce bénéficiaire
+                  </button>
+                  <div className="flex justify-between">
+                    {tourPlanifieProchain && (
+                      <button onClick={() => { setChoixManuel(false); setBeneficiaireManuelId(''); }} className="text-xs text-gray-400 hover:text-gray-600 hover:underline">
+                        Revenir au tour planifié
+                      </button>
+                    )}
+                    <button onClick={() => setEtape('recap')} className="text-xs text-gray-400 hover:text-gray-600 hover:underline ml-auto">
+                      Passer sans bénéficiaire
+                    </button>
+                  </div>
                 </div>
-                <button onClick={handleConfirmerRotation} className="btn-primary w-full justify-center">
-                  <Trophy size={15}/> Confirmer et encaisser le tour
-                </button>
-                <p className="text-xs text-gray-400 text-center">L'ordre a été défini au préalable dans le module Tontines.</p>
-              </div>
-            ) : (
-              <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 text-center space-y-2">
-                <AlertCircle size={24} className="mx-auto text-amber-500"/>
-                <p className="font-semibold text-amber-800 text-sm">Aucun tour planifié</p>
-                <p className="text-xs text-amber-600">Allez dans Tontines - Bénéficiaires pour définir l'ordre de rotation de tous les membres.</p>
-                <button onClick={() => setEtape('recap')} className="btn-secondary text-xs">
-                  Passer sans bénéficiaire
-                </button>
-              </div>
-            )
+              )}
+            </div>
           )}
 
           {/* TIRAGE AU SORT */}
           {typeAttr === 'tirage' && (
             <div className="space-y-3">
-              <div className="p-4 bg-white rounded-2xl border-2 border-blue-300 text-center">
-                <Dices size={40} className="mx-auto text-blue-400 mb-3"/>
-                <p className="text-sm text-gray-600 mb-1">Désignation aléatoire en séance</p>
-                <p className="text-xs text-gray-400 mb-4">Seuls les membres n'ayant pas encore bénéficié sont éligibles.</p>
-                <button onClick={handleTirage} className="btn-primary w-full justify-center text-base py-3">
-                  <Dices size={18}/>  Lancer le tirage maintenant
-                </button>
-              </div>
-              <button onClick={() => setEtape('recap')} className="text-xs text-gray-400 hover:text-gray-600 w-full text-center hover:underline">
-                Passer sans tirage
-              </button>
+              {!choixManuel ? (
+                <>
+                  <div className="p-4 bg-white rounded-2xl border-2 border-blue-300 text-center">
+                    <Dices size={40} className="mx-auto text-blue-400 mb-3"/>
+                    <p className="text-sm text-gray-600 mb-1">Désignation aléatoire en séance</p>
+                    <p className="text-xs text-gray-400 mb-4">Seuls les membres n'ayant plus aucune part disponible sont exclus.</p>
+                    <button onClick={handleTirage} className="btn-primary w-full justify-center text-base py-3">
+                      <Dices size={18}/>  Lancer le tirage maintenant
+                    </button>
+                  </div>
+                  <div className="flex justify-between">
+                    <button onClick={() => { setChoixManuel(true); setBeneficiaireManuelId(''); }}
+                      className="text-xs text-gray-400 hover:text-gray-600 hover:underline">
+                      Choisir le bénéficiaire manuellement
+                    </button>
+                    <button onClick={() => setEtape('recap')} className="text-xs text-gray-400 hover:text-gray-600 hover:underline">
+                      Passer sans tirage
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 space-y-3">
+                  <p className="text-xs font-semibold text-amber-700">Désignation manuelle (dérogation au tirage aléatoire)</p>
+                  <select className="select" value={beneficiaireManuelId} onChange={e => setBeneficiaireManuelId(e.target.value)}>
+                    <option value="">— Sélectionner un membre —</option>
+                    {membresEligiblesGain.map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}{m.nombreParts > 1 ? ` (${m.nombreParts} parts)` : ''}</option>)}
+                  </select>
+                  <button onClick={handleDesignationManuelle} disabled={!beneficiaireManuelId} className="btn-primary w-full justify-center">
+                    <Trophy size={15}/> Confirmer ce bénéficiaire
+                  </button>
+                  <button onClick={() => { setChoixManuel(false); setBeneficiaireManuelId(''); }} className="text-xs text-gray-400 hover:text-gray-600 w-full text-center hover:underline">
+                    Revenir au tirage aléatoire
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
