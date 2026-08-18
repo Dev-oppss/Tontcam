@@ -202,11 +202,11 @@ class CycleTontineController extends Controller
     }
 
     /** Annule un bénéficiaire/cycle non payé avant la clôture de la réunion. */
-    public function annulerCycle(string $id): JsonResponse
+    public function annulerCycle(Request $request, string $id): JsonResponse
     {
         $cycle = $this->cycleScope($id);
         try {
-            $this->service->annulerCycleAvantVersement($cycle);
+            $this->service->annulerCycleAvantVersement($cycle, $request->user());
         } catch (\RuntimeException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
         }

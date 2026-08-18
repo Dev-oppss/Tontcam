@@ -9,6 +9,7 @@ use App\Models\PlanningTour;
 use App\Models\Reunion;
 use App\Models\Tontine;
 use App\Models\TontinePart;
+use App\Models\Transaction;
 use App\Models\Utilisateur;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
@@ -459,7 +460,14 @@ class TontineCycleService
                 $surplusRedistribue = $surplus;
             } else {
                 $surplusCaisse = $surplus;
-                app(CaisseService::class)->entree($tontine->caisse, $surplus, "Surplus enchère cycle n°{$cycle->numero_cycle}");
+                // BUGFIX : sans reference_type/reference_id, cette transaction est
+                // orpheline — annulerCycleAvantVersement() ne peut alors ni la
+                // retrouver ni la contre-passer, et l'argent reste visible en
+                // caisse/rapport PV même après annulation du cycle.
+                app(CaisseService::class)->entree($tontine->caisse, $surplus, "Surplus enchère cycle n°{$cycle->numero_cycle}", [
+                    'reference_type' => 'cycle_tontine_surplus',
+                    'reference_id' => $cycle->id,
+                ]);
             }
         }
 
@@ -524,8 +532,13 @@ class TontineCycleService
      * Retour contrôlé avant la clôture de séance. Un bulletin non payé ne porte
      * encore aucun décaissement : on peut donc défaire le bénéficiaire et les
      * cotisations du cycle sans altérer le livre de caisse.
+     *
+     * Exception : le surplus d'enchère mis en caisse (designerParEnchere) EST
+     * un vrai encaissement, déjà effectif dès la désignation du gagnant (avant
+     * même la clôture/le versement). Il doit donc être contre-passé ici — sans
+     * ça, la transaction reste orpheline en caisse après l'annulation du cycle.
      */
-    public function annulerCycleAvantVersement(CycleTontine $cycle): void
+    public function annulerCycleAvantVersement(CycleTontine $cycle, ?Utilisateur $auteur = null): void
     {
         $cycle->loadMissing('reunion', 'bulletin.retenues', 'gagnant');
         if (in_array($cycle->reunion->statut, ['cloturee', 'annulee'], true)) {
@@ -535,7 +548,21 @@ class TontineCycleService
             throw new RuntimeException('Le gain a déjà été versé : enregistrez d’abord le retour des fonds avant d’annuler le cycle.');
         }
 
-        DB::transaction(function () use ($cycle) {
+        DB::transaction(function () use ($cycle, $auteur) {
+            if ((float) $cycle->surplus_mis_en_caisse > 0) {
+                if (! $auteur) {
+                    throw new RuntimeException('Un surplus d’enchère a été mis en caisse pour ce cycle : l’annulation doit être effectuée par un utilisateur authentifié pour être contre-passée.');
+                }
+                $transactionSurplus = Transaction::where('reference_type', 'cycle_tontine_surplus')
+                    ->where('reference_id', $cycle->id)
+                    ->where('annulee', false)
+                    ->latest('created_at')
+                    ->first();
+                if ($transactionSurplus) {
+                    app(CaisseService::class)->annuler($transactionSurplus, $auteur, "Annulation cycle n°{$cycle->numero_cycle}");
+                }
+            }
+
             if ($cycle->gagnant) {
                 $cycle->gagnant->update(['statut' => 'disponible', 'date_attribution' => null]);
             }
