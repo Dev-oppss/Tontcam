@@ -197,7 +197,7 @@ export const AppProvider = ({ children }) => {
       try {
         const [mRes, tRes, rRes, cRes, pRes, sRes, paramRes, aRes, uRes, typeSancRes, typeAideRes, comptesRes, postesRes, decAgRes, reglRes, rapproRes, transfRes] = await Promise.all([
           request('/membres?per_page=200'),
-          request('/tontines'),
+          request('/tontines?with_details=1'),
           request('/reunions?per_page=100'),
           request('/caisses'),
           request('/prets?per_page=200'),
@@ -208,7 +208,7 @@ export const AppProvider = ({ children }) => {
           request('/types-sanction').catch(() => []),
           request('/types-aide-sociale').catch(() => []),
           request('/comptes-bancaires').catch(() => []),
-          request('/postes').catch(() => []),
+          request('/postes?with_history=1').catch(() => []),
           request('/decisions-ag?per_page=200').catch(() => ({ data: [] })),
           request('/reglements').catch(() => []),
           request('/rapprochements').catch(() => []),
@@ -237,33 +237,36 @@ export const AppProvider = ({ children }) => {
 
         const postesAdapted = (postesRes || []).map(adapt.posteFromApi);
         setPostes(postesAdapted);
-        const histories = await Promise.all(
-          postesAdapted.map((p) => request(`/postes/${p.id}/mandats`).catch(() => []))
-        );
-        setMandats(histories.flatMap((h) => h.map(adapt.mandatFromApi)));
+        // Optimisation N+1 : les mandats de TOUS les postes sont déjà inclus dans
+        // /postes?with_history=1 (voir ci-dessus) — plus besoin d'une requête
+        // GET /postes/{id}/mandats par poste (jusqu'à 30s de latence en plus au
+        // démarrage sur hébergement mutualisé avec peu de workers PHP-FPM).
+        setMandats((postesRes || []).flatMap((p) => (p.mandats || []).map(adapt.mandatFromApi)));
 
         setDecisionsAG((decAgRes.data || decAgRes).map(adapt.decisionAgFromApi));
         setReglements((reglRes || []).map(adapt.reglementFromApi));
         setRapprochements((rapproRes || []).map(adapt.rapprochementFromApi));
         setTransfertsCaisse((transfRes || []).map(transfertDepuisApi));
 
-        // Parts de tontine : agrégées depuis le détail de chaque tontine
-        const tontinesDetail = await Promise.all(
-          (tRes.data || tRes).map((t) => request(`/tontines/${t.id}`))
-        );
-        const parts = tontinesDetail.flatMap((t) => (t.parts || []).map(adapt.partFromApi));
+        // Optimisation N+1 : parts + cycles de TOUTES les tontines sont déjà inclus
+        // dans /tontines?with_details=1 (voir ci-dessus) — plus besoin d'une requête
+        // GET /tontines/{id} par tontine.
+        const tontinesBrutes = tRes.data || tRes;
+        const parts = tontinesBrutes.flatMap((t) => (t.parts || []).map(adapt.partFromApi));
         setMembresParTontine(parts);
 
         // Cycles de tontine : chargés ici une fois pour toutes (Rotations, Encheres, Caisse,
         // Tontines en dépendent tous) plutôt que de dépendre de la page visitée en premier —
-        // /tontines/{id} charge déjà 'cycles.encherites.membre, cycles.gagnant.membre'.
-        const cycles = tontinesDetail.flatMap((t) => (t.cycles || []).map(adapt.cycleFromApi));
+        // /tontines?with_details=1 charge déjà 'cycles.encherites.membre, cycles.gagnant.membre'.
+        const cycles = tontinesBrutes.flatMap((t) => (t.cycles || []).map(adapt.cycleFromApi));
         setCyclesTontine(cycles);
         setRotations(cycles.map(adapt.cycleToRotation));
 
         // Tours planifiés (rotation) : même logique — Reunions.jsx les lit (bénéficiaire
         // planifié pour la tontine sélectionnée) sans jamais déclencher leur chargement.
-        (tRes.data || tRes).filter((t) => t.mode_attribution === 'rotation').forEach((t) => chargerPlanningTours(t.id));
+        await Promise.all(
+          (tRes.data || tRes).filter((t) => t.mode_attribution === 'rotation').map((t) => chargerPlanningTours(t.id))
+        );
       } catch (err) {
         showToast(err.message || 'Impossible de charger les données', 'error');
       }

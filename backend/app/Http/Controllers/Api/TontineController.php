@@ -20,9 +20,20 @@ class TontineController extends Controller
     public function index(Request $request): JsonResponse
     {
         $this->authorize('viewAny', Tontine::class);
-        return response()->json(
-            $this->scope->scopeAssociation(Tontine::query())->withCount('parts')->get()
-        );
+        $query = $this->scope->scopeAssociation(Tontine::query())->withCount('parts');
+
+        // Optimisation N+1 (RG-PERF-001) : le bootstrap de l'app chargeait avant
+        // parts+cycles via UNE requête GET /tontines/{id} PAR tontine. Avec ?with_details=1
+        // tout est chargé ici en une seule requête (même eager-loading que show()).
+        if ($request->boolean('with_details')) {
+            $query->with([
+                'parts.membre', 'parts.avaliste',
+                'cycles' => fn ($q) => $q->orderByDesc('numero_cycle'),
+                'cycles.encherites.membre', 'cycles.gagnant.membre', 'cycles.bulletin',
+            ]);
+        }
+
+        return response()->json($query->get());
     }
 
     public function store(Request $request): JsonResponse

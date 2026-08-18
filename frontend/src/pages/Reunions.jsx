@@ -223,24 +223,38 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
   // ── Valider la feuille de cotisation ──
   const handleValiderFeuille = async () => {
     if (!tontineSelectee) return;
-    cotises.forEach(m => {
-      const mode = modeParMembre[m.id] || { modePaiement:'especes', detailsPaiement:'' };
-      addSeanceTransaction(reunion.id, {
-        type: 'cotisation', idMembre: m.id, montant: m.montantDu,
-        libelle: `Cotisation ${tontineSelectee.nom} — ${m.nombreParts} part(s)`,
-        idTontine: tontineSelectee.id, idBanque: tontineSelectee.idCaisse,
-        modePaiement: mode.modePaiement, detailsPaiement: mode.detailsPaiement,
-      });
-    });
-    defaillants.forEach(m => {
-      addSanction({
-        idMembre: m.id, nomMembre: `${m.nom} ${m.prenom}`,
-        typeSanction: 'non_paiement',
-        motif: `Défaillance cotisation — ${tontineSelectee.nom} — Séance N°${reunion.numero}`,
-        montant: sanctionMontant ? Number(sanctionMontant) : Math.round(m.montantDu * 0.1),
-        date: reunion.date, reunionId: reunion.id,
-      });
-    });
+    // Bug critique corrigé : forEach n'attendait jamais les appels async ci-dessous.
+    // Si une cotisation échouait (ex: aucune caisse assignée à la tontine → "caisse_id
+    // field is required"), l'erreur était totalement ignorée et le code enchaînait quand
+    // même sur l'ouverture du cycle — la cotisation ratée disparaissait silencieusement,
+    // mais le cycle avançait comme si de rien n'était ("cycle déjà effectué" au retour).
+    try {
+      for (const m of cotises) {
+        const mode = modeParMembre[m.id] || { modePaiement:'especes', detailsPaiement:'' };
+        // eslint-disable-next-line no-await-in-loop
+        await addSeanceTransaction(reunion.id, {
+          type: 'cotisation', idMembre: m.id, montant: m.montantDu,
+          libelle: `Cotisation ${tontineSelectee.nom} — ${m.nombreParts} part(s)`,
+          idTontine: tontineSelectee.id, idBanque: tontineSelectee.idCaisse,
+          modePaiement: mode.modePaiement, detailsPaiement: mode.detailsPaiement,
+        });
+      }
+      for (const m of defaillants) {
+        // eslint-disable-next-line no-await-in-loop
+        await addSanction({
+          idMembre: m.id, nomMembre: `${m.nom} ${m.prenom}`,
+          typeSanction: 'non_paiement',
+          motif: `Défaillance cotisation — ${tontineSelectee.nom} — Séance N°${reunion.numero}`,
+          montant: sanctionMontant ? Number(sanctionMontant) : Math.round(m.montantDu * 0.1),
+          date: reunion.date, reunionId: reunion.id,
+        });
+      }
+    } catch (err) {
+      // Le toast d'erreur est déjà affiché par addSeanceTransaction/addSanction (handleError).
+      // On arrête ici : pas de cycle ouvert tant que les cotisations n'ont pas réellement
+      // été enregistrées, pour ne jamais avancer un cycle "fantôme".
+      return;
+    }
 
     // Ouvre un vrai cycle et y rattache les cotisations réellement saisies ci-dessus —
     // sans ça, designerGagnant/cloturerCycle ne « voient » aucune cotisation et le
@@ -1362,10 +1376,19 @@ function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, san
   const sanctionsImpayees = sanctions.filter(s => s.statut === 'impayee');
 
   const membresEligiblesCotis = tontineChoisie
-    ? membresParTontine
-        .filter(mt => mt.idTontine === tontineChoisie.id && mt.statut === 'actif')
-        .map(mt => { const m = membres.find(x => x.id === mt.idMembre); return m ? { ...m, parts: mt.nombreParts, montantDu: tontineChoisie.cotisation * mt.nombreParts } : null; })
-        .filter(Boolean)
+    ? (() => {
+        // Même bug que les enchères : une ligne par PART côté serveur, il faut
+        // regrouper par membre sinon un membre à N parts apparaît N fois.
+        const partsParMembre = new Map();
+        membresParTontine
+          .filter(mt => mt.idTontine === tontineChoisie.id && mt.statut === 'actif')
+          .forEach(mt => partsParMembre.set(mt.idMembre, (partsParMembre.get(mt.idMembre) || 0) + mt.nombreParts));
+        return [...partsParMembre.entries()]
+          .map(([idMembre, parts]) => {
+            const m = membres.find(x => x.id === idMembre);
+            return m ? { ...m, parts, montantDu: tontineChoisie.cotisation * parts } : null;
+          }).filter(Boolean);
+      })()
     : membres;
 
   const membreDansTontine = tontineChoisie && form.idMembre
