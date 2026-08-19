@@ -881,7 +881,12 @@ export const AppProvider = ({ children }) => {
         body: {
           type: data.type, membre_id: data.idMembre || undefined, montant: Number(data.montant),
           libelle: data.libelle || undefined, reference_sanction_id: data.idSanction || undefined,
-          reference_pret_id: data.idPret || undefined, caisse_id: data.idBanque || undefined, note: data.note || undefined,
+          reference_pret_id: data.idPret || undefined, caisse_id: data.idBanque || undefined,
+          // BUGFIX : sans ce lien, une transaction de cotisation saisie en Feuille
+          // de cotisation reste orpheline vis-à-vis du cycle qui la motive — voir
+          // TontineCycleService::annulerCycleAvantVersement.
+          cycle_tontine_id: data.idCycle || undefined,
+          note: data.note || undefined,
         },
       });
       const item = {
@@ -1394,8 +1399,15 @@ export const AppProvider = ({ children }) => {
   const annulerCycle = async (idCycle, idBulletin) => {
     try {
       await request(`/cycles/${idCycle}`, { method: 'DELETE' });
+      // BUGFIX : le backend contre-passe désormais aussi les transactions de
+      // cotisation liées au cycle (cycle_tontine_id) et le surplus d'enchère,
+      // mais côté client seanceTransactionsState garde encore ces entrées en
+      // mémoire tant qu'on ne recharge pas — elles restaient visibles dans
+      // Caisse, l'historique et le rapport PV malgré l'annulation.
+      const cycleAnnule = cyclesTontine.find((cycle) => cycle.id === idCycle);
       setCyclesTontine((prev) => prev.filter((cycle) => cycle.id !== idCycle));
       setRotations((prev) => prev.filter((rotation) => rotation.id !== idCycle));
+      if (cycleAnnule?.idReunion) await chargerSeanceTransactions(cycleAnnule.idReunion);
       showToast('Cycle annulé : le bénéficiaire et la feuille peuvent être saisis à nouveau');
       return true;
     } catch (err) {

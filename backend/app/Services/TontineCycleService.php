@@ -7,6 +7,7 @@ use App\Models\CycleTontine;
 use App\Models\Encherite;
 use App\Models\PlanningTour;
 use App\Models\Reunion;
+use App\Models\SeanceTransaction;
 use App\Models\Tontine;
 use App\Models\TontinePart;
 use App\Models\Transaction;
@@ -530,13 +531,21 @@ class TontineCycleService
 
     /**
      * Retour contrôlé avant la clôture de séance. Un bulletin non payé ne porte
-     * encore aucun décaissement : on peut donc défaire le bénéficiaire et les
-     * cotisations du cycle sans altérer le livre de caisse.
+     * encore aucun décaissement propre au bulletin : on peut donc défaire le
+     * bénéficiaire et les cotisations du cycle sans laisser d'écriture de
+     * caisse orpheline, à condition de contre-passer les deux mouvements qui,
+     * eux, sont déjà effectifs en caisse dès avant le versement du bulletin :
      *
-     * Exception : le surplus d'enchère mis en caisse (designerParEnchere) EST
-     * un vrai encaissement, déjà effectif dès la désignation du gagnant (avant
-     * même la clôture/le versement). Il doit donc être contre-passé ici — sans
-     * ça, la transaction reste orpheline en caisse après l'annulation du cycle.
+     * 1. Le surplus d'enchère mis en caisse (designerParEnchere), tracé via
+     *    reference_type='cycle_tontine_surplus'.
+     * 2. Les cotisations saisies en séance (Feuille de cotisation), qui créent
+     *    une vraie Transaction de caisse via SeanceTransactionController::store
+     *    — indépendamment des lignes CotisationTontine du cycle, et tracées
+     *    ici via seance_transactions.cycle_tontine_id.
+     *
+     * Sans cette contre-passation, l'argent et les transactions restaient
+     * visibles en caisse, dans l'historique et dans le rapport PV malgré
+     * l'annulation du cycle.
      */
     public function annulerCycleAvantVersement(CycleTontine $cycle, ?Utilisateur $auteur = null): void
     {
@@ -548,19 +557,43 @@ class TontineCycleService
             throw new RuntimeException('Le gain a déjà été versé : enregistrez d’abord le retour des fonds avant d’annuler le cycle.');
         }
 
-        DB::transaction(function () use ($cycle, $auteur) {
+        $seancesCotisation = SeanceTransaction::where('cycle_tontine_id', $cycle->id)
+            ->where('annulee', false)->get();
+
+        DB::transaction(function () use ($cycle, $auteur, $seancesCotisation) {
+            $besoinContrePassation = (float) $cycle->surplus_mis_en_caisse > 0 || $seancesCotisation->isNotEmpty();
+            if ($besoinContrePassation && ! $auteur) {
+                throw new RuntimeException('De l’argent a déjà été mouvementé en caisse pour ce cycle (cotisations et/ou surplus) : l’annulation doit être effectuée par un utilisateur authentifié pour être contre-passée.');
+            }
+
+            $caisseService = app(CaisseService::class);
+
             if ((float) $cycle->surplus_mis_en_caisse > 0) {
-                if (! $auteur) {
-                    throw new RuntimeException('Un surplus d’enchère a été mis en caisse pour ce cycle : l’annulation doit être effectuée par un utilisateur authentifié pour être contre-passée.');
-                }
                 $transactionSurplus = Transaction::where('reference_type', 'cycle_tontine_surplus')
                     ->where('reference_id', $cycle->id)
                     ->where('annulee', false)
                     ->latest('created_at')
                     ->first();
                 if ($transactionSurplus) {
-                    app(CaisseService::class)->annuler($transactionSurplus, $auteur, "Annulation cycle n°{$cycle->numero_cycle}");
+                    $caisseService->annuler($transactionSurplus, $auteur, "Annulation cycle n°{$cycle->numero_cycle}");
                 }
+            }
+
+            foreach ($seancesCotisation as $seance) {
+                $transactionCotisation = Transaction::where('reference_type', 'seance_transaction')
+                    ->where('reference_id', $seance->id)
+                    ->where('annulee', false)
+                    ->latest('created_at')
+                    ->first();
+                if ($transactionCotisation) {
+                    $caisseService->annuler($transactionCotisation, $auteur, "Annulation cycle n°{$cycle->numero_cycle}");
+                }
+                $seance->update([
+                    'annulee' => true,
+                    'annulee_at' => now(),
+                    'annulee_par' => $auteur?->id,
+                    'motif_annulation' => "Annulation cycle n°{$cycle->numero_cycle}",
+                ]);
             }
 
             if ($cycle->gagnant) {

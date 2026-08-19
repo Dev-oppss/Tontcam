@@ -232,6 +232,15 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
     // field is required"), l'erreur était totalement ignorée et le code enchaînait quand
     // même sur l'ouverture du cycle — la cotisation ratée disparaissait silencieusement,
     // mais le cycle avançait comme si de rien n'était ("cycle déjà effectué" au retour).
+    //
+    // Le cycle doit être ouvert AVANT de créer les transactions de cotisation, pour
+    // pouvoir les rattacher via cycle_tontine_id (idCycle). Sans ce lien, annuler le
+    // cycle plus tard ne pouvait pas retrouver ces transactions pour les contre-passer :
+    // l'argent et la ligne restaient visibles en caisse/historique/PV malgré l'annulation.
+    const cycle = await ouvrirCycle(tontineSelectee.id, reunion.id);
+    if (!cycle) return; // ouvrirCycle a déjà affiché l'erreur (ex: plus aucune part disponible)
+    setCycleActuelId(cycle.id);
+
     try {
       for (const m of cotises) {
         const mode = modeParMembre[m.id] || { modePaiement:'especes', detailsPaiement:'' };
@@ -239,7 +248,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
         await addSeanceTransaction(reunion.id, {
           type: 'cotisation', idMembre: m.id, montant: m.montantDu,
           libelle: `Cotisation ${tontineSelectee.nom} — ${m.nombreParts} part(s)`,
-          idTontine: tontineSelectee.id, idBanque: tontineSelectee.idCaisse,
+          idCycle: cycle.id, idBanque: tontineSelectee.idCaisse,
           modePaiement: mode.modePaiement, detailsPaiement: mode.detailsPaiement,
         });
       }
@@ -255,17 +264,11 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
       }
     } catch (err) {
       // Le toast d'erreur est déjà affiché par addSeanceTransaction/addSanction (handleError).
-      // On arrête ici : pas de cycle ouvert tant que les cotisations n'ont pas réellement
-      // été enregistrées, pour ne jamais avancer un cycle "fantôme".
+      // Le cycle est déjà ouvert (aucune cotisation dedans n'a pu bloquer son ouverture),
+      // donc on ne le referme pas ici — mais on n'avance pas non plus à l'étape bénéficiaire :
+      // l'utilisateur peut annuler le cycle (bouton dédié) puis recommencer proprement.
       return;
     }
-
-    // Ouvre un vrai cycle et y rattache les cotisations réellement saisies ci-dessus —
-    // sans ça, designerGagnant/cloturerCycle ne « voient » aucune cotisation et le
-    // bulletin final sort à montant brut nul, quoi que le secrétaire ait coché.
-    const cycle = await ouvrirCycle(tontineSelectee.id, reunion.id);
-    if (!cycle) return; // ouvrirCycle a déjà affiché l'erreur (ex: plus aucune part disponible)
-    setCycleActuelId(cycle.id);
 
     for (const m of cotises) {
       const cotisationsMembre = cycle.cotisations.filter(co => co.idMembre === m.id);
