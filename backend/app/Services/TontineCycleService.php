@@ -379,19 +379,17 @@ class TontineCycleService
     private function designerParRotation(CycleTontine $cycle, Tontine $tontine, ?string $partIdForcee = null): TontinePart
     {
         // Lorsqu'un ordre est planifié, la réunion applique strictement le tour
-        // correspondant au numéro du cycle. Une part réservée reste donc éligible
-        // uniquement pour son propre tour, jamais pour un autre.
+        // correspondant au numéro du cycle par défaut. Une dérogation manuelle reste
+        // possible (comme pour l'enchère) : le président peut désigner explicitement
+        // un autre membre, tant que sa part est réellement disponible/réservée.
         $tour = PlanningTour::where('tontine_id', $tontine->id)
             ->where('numero_tour', $cycle->numero_cycle)
             ->where('statut', 'planifie')
             ->first();
-        if ($tour) {
-            if ($partIdForcee && $partIdForcee !== $tour->tontine_part_id) {
-                throw new RuntimeException('Le bénéficiaire sélectionné ne correspond pas à l’ordre de rotation planifié.');
-            }
+        if ($partIdForcee) {
+            $part = $tontine->parts()->whereKey($partIdForcee)->whereIn('statut', ['disponible', 'reservee'])->first();
+        } elseif ($tour) {
             $part = $tontine->parts()->whereKey($tour->tontine_part_id)->where('statut', 'reservee')->first();
-        } elseif ($partIdForcee) {
-            $part = $tontine->parts()->whereKey($partIdForcee)->where('statut', 'disponible')->first();
         } else {
             $part = $tontine->parts()->where('statut', 'disponible')->orderBy('ordre_rotation')->first();
         }

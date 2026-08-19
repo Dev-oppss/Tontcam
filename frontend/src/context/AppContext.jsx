@@ -1295,6 +1295,19 @@ export const AppProvider = ({ children }) => {
     } catch (err) { return handleError(err); }
   };
 
+  // Recharge les parts d'UNE tontine (statut disponible/réservée/gagnée) — nécessaire
+  // après la clôture d'un cycle : la part gagnante passe à 'gagnee' en base, mais
+  // membresParTontine restait figé en mémoire jusqu'au prochain F5 complet, ce qui
+  // pouvait faire réapparaître (ou disparaître à tort) un membre selon un état obsolète.
+  const rechargerPartsTontine = async (idTontine) => {
+    try {
+      const t = await request(`/tontines/${idTontine}`);
+      const parts = (t.parts || []).map(adapt.partFromApi);
+      setMembresParTontine((prev) => [...prev.filter((p) => p.idTontine !== idTontine), ...parts]);
+      return parts;
+    } catch (err) { return handleError(err); }
+  };
+
   // ── Cycle de tontine — écran 4 « Saisie d'un cycle » ────────────
   // Ces quatre routes existaient côté backend mais n'étaient appelées nulle part
   // côté frontend : impossible d'ouvrir un cycle, de saisir une cotisation ou de
@@ -1342,6 +1355,7 @@ export const AppProvider = ({ children }) => {
       const cycle = await chargerCycle(idCycle);
       await chargerCycles(cycle.idTontine);
       await chargerPlanningTours(cycle.idTontine);
+      await rechargerPartsTontine(cycle.idTontine);
       return cycle;
     } catch (err) { return handleError(err); }
   };
@@ -1510,7 +1524,7 @@ export const AppProvider = ({ children }) => {
     // de transactions par réunion distinct du journal de caisse) — exposés vides pour éviter
     // les crashs sur Membres.jsx/Rapports.jsx ; à construire côté backend si le besoin est confirmé.
     comptesBanque: [], operationsBanque: [], seanceTransactions: seanceTransactionsState, transfertsCaisse, chargerJournalCaisse, chargerJournalGlobal,
-    utilisateurs, planningTours, cyclesTontine, chargerCycles, dashboardStats, repartitionBanques, evolutionCaisse: mock.evolutionCaisse,
+    utilisateurs, planningTours, cyclesTontine, chargerCycles, rechargerPartsTontine, dashboardStats, repartitionBanques, evolutionCaisse: mock.evolutionCaisse,
     portailMoi, chargerPortailMoi,
     showToast, importerHistorique,
     login, logout, changePassword, updateMonProfil, register, updateAssociation, uploadStatutsAssociation, updateParametres,
