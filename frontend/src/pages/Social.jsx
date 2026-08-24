@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react';
-import { HeartHandshake, Plus, Paperclip, CheckCircle2, XCircle, Clock, Wallet } from 'lucide-react';
+import { useState } from 'react';
+import { HeartHandshake, Plus, Paperclip, CheckCircle2, XCircle, Clock, Wallet, Settings2 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { fmt, fmtDate } from '../data/mockData';
 import { PageHeader, SectionCard, Table, Badge, Modal, FormField } from '../components/ui/index';
@@ -11,14 +11,19 @@ const CATEGORIES = [
   { code: 'maladie',        label: 'Maladie',                delaiJours: 15, param: null },
   { code: 'deces_membre',   label: 'Décès (membre)',        delaiJours: 7,  param: 'aideDecesMembre' },
   { code: 'deces_famille',  label: 'Décès (famille proche)', delaiJours: 7,  param: 'aideDecesFamille' },
+  { code: 'scolarite',      label: 'Scolarité',              delaiJours: 30, param: null },
   { code: 'autre',          label: 'Autre',                  delaiJours: 30, param: null },
 ];
 
-const EMPTY = { idMembre: '', categorie: 'naissance', montant: '', description: '', justificatif: '', dateDeclaration: new Date().toISOString().split('T')[0] };
+const EMPTY_TYPE = { libelle: '', typeEvenement: 'naissance', montantFixe: '' };
+
+const EMPTY = { idMembre: '', categorie: '', montant: '', description: '', justificatif: '', dateDeclaration: new Date().toISOString().split('T')[0] };
 
 export default function Social() {
-  const { membres = [], aidesSociales = [], addAideSociale, validerAideSociale, verserAideSociale, parametres = {} } = useApp();
+  const { membres = [], aidesSociales = [], addAideSociale, validerAideSociale, verserAideSociale, typesAideSociale = [], addTypeAideSociale, parametres = {} } = useApp();
   const [add, setAdd] = useState(false);
+  const [addType, setAddType] = useState(false);
+  const [typeForm, setTypeForm] = useState(EMPTY_TYPE);
   const [verserModal, setVerserModal] = useState(null);
   const [verserMode, setVerserMode] = useState('especes');
   const [verserDetails, setVerserDetails] = useState('');
@@ -30,10 +35,11 @@ export default function Social() {
   const nbDejaAccorde = (idMembre, categorie) =>
     aidesSociales.filter((a) => a.idMembre === idMembre && a.categorie === categorie && new Date(a.dateDeclaration).getFullYear() === anneeEnCours).length;
 
-  const montantSuggere = useMemo(() => {
-    const cat = CATEGORIES.find((c) => c.code === form.categorie);
-    return cat?.param ? Number(parametres[cat.param] || 0) : '';
-  }, [form.categorie, parametres]);
+  // Le type sélectionné dans le formulaire EST désormais un vrai type paramétré
+  // (typesAideSociale), pas juste un code de catégorie brut — cohérent avec le
+  // barème réellement configuré (RG-SOC), et évite l'erreur "aucun barème configuré".
+  const typeSelectionne = typesAideSociale.find((t) => t.id === form.categorie);
+  const montantSuggere = Number(typeSelectionne?.montantFixe || 0) || '';
 
   const enAttente = aidesSociales.filter((a) => a.statut === 'demandee');
   const versees = aidesSociales.filter((a) => a.statut === 'versee');
@@ -41,7 +47,7 @@ export default function Social() {
 
   const handleAdd = () => {
     if (!form.idMembre || !form.categorie) return;
-    if (nbDejaAccorde(form.idMembre, form.categorie) >= maxParCategorieAn) return; // garde-fou RG-SOC-010
+    if (nbDejaAccorde(form.idMembre, typeSelectionne?.typeEvenement) >= maxParCategorieAn) return; // garde-fou RG-SOC-010
     const m = membres.find((x) => x.id === form.idMembre);
     addAideSociale?.({
       ...form,
@@ -54,14 +60,19 @@ export default function Social() {
     setForm(EMPTY);
   };
 
-  const limiteAtteinte = form.idMembre && nbDejaAccorde(form.idMembre, form.categorie) >= maxParCategorieAn;
+  const limiteAtteinte = form.idMembre && form.categorie && nbDejaAccorde(form.idMembre, typeSelectionne?.typeEvenement) >= maxParCategorieAn;
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Volet Social"
         subtitle="Barème des aides, déclaration et suivi (RG-SOC-001 à 010)"
-        action={<button onClick={() => setAdd(true)} className="btn-primary"><Plus size={15} />Déclarer un événement</button>}
+        action={
+          <div className="flex gap-2">
+            <button onClick={() => setAddType(true)} className="btn-secondary"><Settings2 size={15} />Paramètres</button>
+            <button onClick={() => setAdd(true)} className="btn-primary"><Plus size={15} />Déclarer un événement</button>
+          </div>
+        }
       />
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
@@ -79,16 +90,22 @@ export default function Social() {
         </div>
       </div>
 
-      <SectionCard title="Barème par catégorie" subtitle="Défini en AG, modifiable dans Paramètres → Social">
-        <div className="grid sm:grid-cols-3 gap-3">
-          {CATEGORIES.map((c) => (
-            <div key={c.code} className="rounded-xl bg-white/40 border border-white/50 p-3">
-              <p className="text-sm font-semibold text-ink-900">{c.label}</p>
-              <p className="text-xs text-ink-600/50 mt-1">Délai max : {c.delaiJours}j · Max {maxParCategorieAn}/an</p>
-              {c.param && <p className="font-mono text-sm font-semibold text-indigo-700 mt-1">{fmt(parametres[c.param] || 0)}</p>}
-            </div>
-          ))}
-        </div>
+      <SectionCard title="Barème par type d'aide" subtitle="Paramétré une fois, réutilisé ensuite lors de chaque déclaration">
+        {typesAideSociale.length === 0 ? (
+          <div className="text-center py-6 text-ink-600/40 text-sm">
+            Aucun type d'aide paramétré. Clique sur « Paramètres » pour en créer un (ex : « Mariage — 5 000 »).
+          </div>
+        ) : (
+          <div className="grid sm:grid-cols-3 gap-3">
+            {typesAideSociale.map((t) => (
+              <div key={t.id} className="rounded-xl bg-white/40 border border-white/50 p-3">
+                <p className="text-sm font-semibold text-ink-900">{t.libelle}</p>
+                <p className="text-xs text-ink-600/50 mt-1">{CATEGORIES.find((c) => c.code === t.typeEvenement)?.label || t.typeEvenement} · Max {maxParCategorieAn}/an</p>
+                <p className="font-mono text-sm font-semibold text-indigo-700 mt-1">{fmt(t.montantFixe)}</p>
+              </div>
+            ))}
+          </div>
+        )}
       </SectionCard>
 
       <SectionCard title="Demandes" className="p-0 overflow-hidden">
@@ -170,9 +187,10 @@ export default function Social() {
               {membres.map((m) => <option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
             </select>
           </FormField>
-          <FormField label="Catégorie" required>
+          <FormField label="Type d'aide" required hint={typesAideSociale.length === 0 ? "Aucun type paramétré — clique sur « Paramètres » d'abord." : undefined}>
             <select className="select" value={form.categorie} onChange={(e) => setForm((f) => ({ ...f, categorie: e.target.value }))}>
-              {CATEGORIES.map((c) => <option key={c.code} value={c.code}>{c.label}</option>)}
+              <option value="">Sélectionner…</option>
+              {typesAideSociale.map((t) => <option key={t.id} value={t.id}>{t.libelle} — {fmt(t.montantFixe)}</option>)}
             </select>
           </FormField>
           {limiteAtteinte && (
@@ -191,6 +209,29 @@ export default function Social() {
           </FormField>
           <FormField label="Date de déclaration">
             <input type="date" className="input" value={form.dateDeclaration} onChange={(e) => setForm((f) => ({ ...f, dateDeclaration: e.target.value }))} />
+          </FormField>
+        </div>
+      </Modal>
+      <Modal open={addType} onClose={() => setAddType(false)} title="Paramétrer un type d'aide sociale"
+        footer={<>
+          <button onClick={() => setAddType(false)} className="btn-secondary">Annuler</button>
+          <button onClick={async () => {
+            if (!typeForm.libelle.trim()) return;
+            const created = await addTypeAideSociale({ libelle: typeForm.libelle.trim(), typeEvenement: typeForm.typeEvenement, montantFixe: Number(typeForm.montantFixe || 0) });
+            if (created) { setAddType(false); setTypeForm(EMPTY_TYPE); }
+          }} className="btn-primary"><Settings2 size={14}/>Enregistrer</button>
+        </>}>
+        <div className="space-y-4">
+          <FormField label="Libellé" required hint="Ex : « Mariage », « Naissance jumeaux », « Rentrée scolaire »">
+            <input className="input" value={typeForm.libelle} onChange={(e) => setTypeForm((f) => ({ ...f, libelle: e.target.value }))} />
+          </FormField>
+          <FormField label="Catégorie d'événement" required>
+            <select className="select" value={typeForm.typeEvenement} onChange={(e) => setTypeForm((f) => ({ ...f, typeEvenement: e.target.value }))}>
+              {CATEGORIES.map((c) => <option key={c.code} value={c.code}>{c.label}</option>)}
+            </select>
+          </FormField>
+          <FormField label="Montant (FCFA)" required>
+            <input type="number" className="input" value={typeForm.montantFixe} onChange={(e) => setTypeForm((f) => ({ ...f, montantFixe: e.target.value }))} />
           </FormField>
         </div>
       </Modal>

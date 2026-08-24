@@ -27,7 +27,7 @@ const slugify = (value) => String(value || '')
   .replace(/^_+|_+$/g, '');
 
 export default function Sanctions() {
-  const { membres, sanctions, addSanction, payerSanction, typesSanction, addTypeSanction, showToast } = useApp();
+  const { membres, sanctions, addSanction, payerSanction, typesSanction, addTypeSanction, reunions = [], showToast } = useApp();
   const [add, setAdd] = useState(false);
   const [addType, setAddType] = useState(false);
   const [form, setForm] = useState({
@@ -35,7 +35,7 @@ export default function Sanctions() {
     nomMembre: '',
     typeSanction: 'retard_cotisation',
     montant: 2500,
-    numReunion: '',
+    idReunion: '',
     dateSanction: new Date().toISOString().split('T')[0],
   });
   const [customTypeForm, setCustomTypeForm] = useState(emptyCustomType());
@@ -53,8 +53,14 @@ export default function Sanctions() {
 
   const impayees = sanctions.filter(s=>s.statut==='impayee');
   const payees   = sanctions.filter(s=>s.statut==='payee');
+  const reunionsOuvertes = reunions.filter(r => r.statutReunion === 'en_cours');
   const typeV    = { retard_cotisation:'amber', absence_non_excusee:'red', insubordination:'red', insulte:'red', autre:'gray' };
-  const montantsParType = Object.fromEntries(PRESET_TYPES.map((t) => [t.code, t.montantFixe]));
+  // Les types réellement paramétrés (association) priment toujours ; PRESET_TYPES
+  // ne sert plus que de suggestions de démarrage si rien n'a encore été paramétré.
+  const typesDisponibles = typesSanction.length
+    ? typesSanction.map((t) => ({ code: t.code, libelle: t.libelle, montantFixe: Number(t.montantFixe || 0) }))
+    : PRESET_TYPES;
+  const montantsParType = Object.fromEntries(typesDisponibles.map((t) => [t.code, t.montantFixe]));
 
   const resetForm = () => {
     setForm({
@@ -62,7 +68,7 @@ export default function Sanctions() {
       nomMembre: '',
       typeSanction: 'retard_cotisation',
       montant: 2500,
-      numReunion: '',
+      idReunion: '',
       dateSanction: new Date().toISOString().split('T')[0],
     });
     setCustomTypeForm(emptyCustomType());
@@ -97,12 +103,12 @@ export default function Sanctions() {
   };
 
   const handleAdd = async () => {
-    const missing = getMissingFields(form, [{ key: 'idMembre', label: 'Membre' }]);
+    const missing = getMissingFields(form, [{ key: 'idMembre', label: 'Membre' }, { key: 'idReunion', label: 'Réunion' }]);
     if (form.typeSanction === 'autre' && !customTypeForm.libelle.trim()) missing.push('Libellé de la sanction');
     if (missing.length) { showToast?.(`Champ(s) requis manquant(s) : ${missing.join(', ')}`, 'error'); return; }
     const m = membres.find(x=>x.id===form.idMembre);
     let typeCode = form.typeSanction;
-    let motif = typeSancLabel[typeCode] || typeCode;
+    let motif = typesDisponibles.find((t) => t.code === typeCode)?.libelle || typeSancLabel[typeCode] || typeCode;
     let montant = Number(form.montant || 0);
 
     if (typeCode === 'autre') {
@@ -119,7 +125,7 @@ export default function Sanctions() {
       typeSanction: typeCode,
       motif,
       montant,
-      numReunion: form.numReunion,
+      numReunion: form.idReunion,
       dateSanction: form.dateSanction,
     });
     setAdd(false);
@@ -197,7 +203,7 @@ export default function Sanctions() {
           {sanctions.map(s=>(
             <tr key={s.id} className="hover:bg-gray-50 transition-colors">
               <td className="td font-medium text-gray-800">{s.nomMembre}</td>
-              <td className="td text-gray-500">N°{s.numReunion}</td>
+              <td className="td text-gray-500">{reunions.find(r => r.id === s.numReunion)?.numero ? `N°${reunions.find(r => r.id === s.numReunion).numero}` : '—'}</td>
               <td className="td"><Badge variant={typeV[s.typeSanction]}>{typeSancLabel[s.typeSanction]||s.typeSanction}</Badge></td>
               <td className="td font-bold text-red-600">{fmt(s.montant)}</td>
               <td className="td text-gray-500">{fmtDate(s.dateSanction)}</td>
@@ -230,8 +236,8 @@ export default function Sanctions() {
           </FormField>
           <FormField label="Type de sanction" required>
             <select className="select" value={form.typeSanction} onChange={e=>handleSelectType(e.target.value)}>
-              {PRESET_TYPES.map((type) => <option key={type.code} value={type.code}>{type.libelle}</option>)}
-              <option value="autre">Autre</option>
+              {typesDisponibles.map((type) => <option key={type.code} value={type.code}>{type.libelle} — {fmt(type.montantFixe)}</option>)}
+              <option value="autre">Autre (créer un nouveau type)</option>
             </select>
           </FormField>
           {form.typeSanction === 'autre' && (
@@ -255,15 +261,21 @@ export default function Sanctions() {
               <FormField label="Montant (FCFA)">
                 <input type="number" className="input" value={form.montant} onChange={e=>setForm(f=>({...f,montant:e.target.value}))}/>
               </FormField>
-              <FormField label="N° Réunion concernée">
-                <input type="number" className="input" placeholder="7" value={form.numReunion} onChange={e=>setForm(f=>({...f,numReunion:e.target.value}))}/>
+              <FormField label="Réunion concernée" required hint={reunionsOuvertes.length === 0 ? 'Aucune séance ouverte actuellement.' : undefined}>
+                <select className="select" value={form.idReunion} onChange={e=>setForm(f=>({...f,idReunion:e.target.value}))}>
+                  <option value="">— Sélectionner —</option>
+                  {reunionsOuvertes.map(r => <option key={r.id} value={r.id}>N°{r.numero} — {fmtDate(r.date)}</option>)}
+                </select>
               </FormField>
             </div>
           )}
           {form.typeSanction === 'autre' && (
             <div className="grid grid-cols-2 gap-3">
-              <FormField label="N° Réunion concernée">
-                <input type="number" className="input" placeholder="7" value={form.numReunion} onChange={e=>setForm(f=>({...f,numReunion:e.target.value}))}/>
+              <FormField label="Réunion concernée" required hint={reunionsOuvertes.length === 0 ? 'Aucune séance ouverte actuellement.' : undefined}>
+                <select className="select" value={form.idReunion} onChange={e=>setForm(f=>({...f,idReunion:e.target.value}))}>
+                  <option value="">— Sélectionner —</option>
+                  {reunionsOuvertes.map(r => <option key={r.id} value={r.id}>N°{r.numero} — {fmtDate(r.date)}</option>)}
+                </select>
               </FormField>
               <div className="hidden md:block" />
             </div>
