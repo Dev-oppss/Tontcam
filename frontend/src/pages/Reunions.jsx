@@ -2283,9 +2283,80 @@ function AppliquerSanctionPanel({ reunion, membres, typesSanction, addSanction, 
   );
 }
 
+// Déclare une aide sociale à partir d'un type déjà paramétré (Paramètres →
+// Aide sociale) pendant la séance — symétrique à AppliquerSanctionPanel.
+// La déclaration crée une demande "en attente" (RG-SOC) ; validation puis
+// versement (avec choix de caisse si besoin) se font ensuite depuis l'onglet
+// « Aide sociale » (Social.jsx).
+function DeclarerAideSocialePanel({ membres, typesAideSociale, addAide, showToast }) {
+  const [open, setOpen] = useState(false);
+  const [idMembre, setIdMembre] = useState('');
+  const [idType, setIdType] = useState('');
+  const [description, setDescription] = useState('');
+  const [justificatif, setJustificatif] = useState('');
+
+  const typeChoisi = typesAideSociale.find(t => t.id === idType);
+
+  const submit = async () => {
+    if (!idMembre || !idType || !description.trim() || !justificatif.trim()) {
+      showToast?.('Membre, type, description et justificatif sont requis.', 'error');
+      return;
+    }
+    await addAide({
+      idMembre, categorie: idType, description: description.trim(),
+      dateDeclaration: new Date().toISOString().split('T')[0],
+      montant: typeChoisi?.montantFixe, justificatif: justificatif.trim(),
+    });
+    setIdMembre(''); setIdType(''); setDescription(''); setJustificatif(''); setOpen(false);
+  };
+
+  if (!open) return (
+    <button onClick={() => setOpen(true)} className="btn-secondary w-full justify-center text-sm">
+      <HeartHandshake size={14}/> Déclarer une aide sociale pour un membre
+    </button>
+  );
+
+  if (typesAideSociale.length === 0) return (
+    <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-700">
+      Aucun type d'aide paramétré. Rendez-vous dans <strong>Aide sociale → Paramètres</strong> pour en créer un (ex : « Mariage — 5000 »), puis revenez ici.
+      <button onClick={() => setOpen(false)} className="block mt-2 text-xs text-primary-600 hover:underline">Fermer</button>
+    </div>
+  );
+
+  return (
+    <div className="p-4 bg-white rounded-xl border border-gray-200 shadow-sm space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-bold text-gray-800"><HeartHandshake size={14} className="inline mr-1"/>Déclarer une aide sociale</p>
+        <button onClick={() => setOpen(false)} className="text-xs text-primary-600 hover:underline">Annuler</button>
+      </div>
+      <FormField label="Membre bénéficiaire" required>
+        <select className="select" value={idMembre} onChange={e => setIdMembre(e.target.value)}>
+          <option value="">— Sélectionner —</option>
+          {membres.map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
+        </select>
+      </FormField>
+      <FormField label="Type d'aide (paramétré)" required>
+        <select className="select" value={idType} onChange={e => setIdType(e.target.value)}>
+          <option value="">— Sélectionner —</option>
+          {typesAideSociale.map(t => <option key={t.id} value={t.id}>{t.libelle} — {fmt(t.montantFixe || 0)}</option>)}
+        </select>
+      </FormField>
+      <FormField label="Description" required>
+        <input className="input" value={description} onChange={e => setDescription(e.target.value)} placeholder="Ex : Naissance du 2e enfant"/>
+      </FormField>
+      <FormField label="Justificatif" required hint="Référence ou lien du document — obligatoire (RG-SOC-006)">
+        <input className="input" value={justificatif} onChange={e => setJustificatif(e.target.value)}/>
+      </FormField>
+      <button onClick={submit} className="btn-primary w-full justify-center text-sm"><HeartHandshake size={14}/>Déclarer l'aide</button>
+      <p className="text-xs text-gray-400">La demande sera ensuite à valider puis verser depuis l'onglet « Aide sociale ».</p>
+    </div>
+  );
+}
+
 function PanneauRubrique({ reunion, types, titre, readOnly = false }) {
   const {
     membres, banques, prets, sanctions, typesSanction, addSanction,
+    typesAideSociale, addAide,
     seanceTransactions, addSeanceTransaction, deleteSeanceTransaction,
     tontines, membresParTontine, showToast,
   } = useApp();
@@ -2360,6 +2431,12 @@ function PanneauRubrique({ reunion, types, titre, readOnly = false }) {
           C'est ici qu'on utilise les types créés/modifiés dans Paramètres → Sanctions. */}
       {!locked && types.includes('amende') && (
         <AppliquerSanctionPanel reunion={reunion} membres={membres} typesSanction={typesSanction} addSanction={addSanction} showToast={showToast}/>
+      )}
+
+      {/* Symétrique côté aide sociale : déclarer une aide à partir d'un type
+          déjà paramétré dans Paramètres → Aide sociale. */}
+      {!locked && types.includes('aide_sociale') && (
+        <DeclarerAideSocialePanel membres={membres} typesAideSociale={typesAideSociale} addAide={addAide} showToast={showToast}/>
       )}
 
       {/* Zone formulaire */}
