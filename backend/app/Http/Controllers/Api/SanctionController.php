@@ -94,6 +94,59 @@ class SanctionController extends Controller
         return response()->json($sanction->load('type'), 201);
     }
 
+    /**
+     * Import via fichier CSV/XLSX, une ligne par sanction. Colonnes attendues :
+     * membre_id, type_sanction_id, motif, date_application, reunion_id
+     * (optionnel), paiement_caisse_id (optionnel - marque la sanction payee
+     * immediatement si renseigne), paiement_date (optionnel).
+     */
+    public function importHistoriqueFichier(Request $request, \App\Services\Import\TabularFileReader $reader): JsonResponse
+    {
+        if ($request->user()->role !== 'super_admin') {
+            return response()->json(['message' => "Réservé au super_admin."], 403);
+        }
+        $request->validate(['fichier' => ['required', 'file', 'mimes:csv,txt,xlsx', 'max:5120']]);
+
+        try {
+            $lignes = $reader->lire($request->file('fichier'));
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        $crees = 0;
+        $erreurs = [];
+        foreach ($lignes as $i => $ligne) {
+            try {
+                $validee = \Illuminate\Support\Facades\Validator::make($ligne, [
+                    'membre_id' => ['required', 'uuid'],
+                    'type_sanction_id' => ['required', 'uuid'],
+                    'motif' => ['required', 'string'],
+                    'date_application' => ['required', 'date'],
+                    'reunion_id' => ['nullable', 'uuid'],
+                    'paiement_caisse_id' => ['nullable', 'uuid'],
+                    'paiement_date' => ['nullable', 'date'],
+                ])->validate();
+
+                $m = Membre::where('association_id', $this->scope->associationId())->findOrFail($validee['membre_id']);
+                $t = TypeSanction::where('association_id', $this->scope->associationId())->findOrFail($validee['type_sanction_id']);
+                $r = ! empty($validee['reunion_id']) ? \App\Models\Reunion::findOrFail($validee['reunion_id']) : null;
+                $paiement = ! empty($validee['paiement_caisse_id'])
+                    ? ['caisse_id' => $validee['paiement_caisse_id'], 'date' => $validee['paiement_date'] ?? null]
+                    : null;
+
+                $this->service->importerHistorique($m, $t, $validee['motif'], $validee['date_application'], $request->user(), $r, $paiement);
+                $crees++;
+            } catch (\Throwable $e) {
+                $message = $e instanceof \Illuminate\Validation\ValidationException
+                    ? implode(' ', $e->validator->errors()->all())
+                    : $e->getMessage();
+                $erreurs[] = ['ligne' => $i + 2, 'donnees' => $ligne, 'erreur' => $message];
+            }
+        }
+
+        return response()->json(['crees' => $crees, 'erreurs' => $erreurs]);
+    }
+
     public function show(string $id): JsonResponse
     {
         return response()->json($this->scope->scopeAssociation(SanctionMembre::query())->with('membre', 'type')->findOrFail($id));

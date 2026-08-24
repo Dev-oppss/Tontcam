@@ -73,6 +73,85 @@ class CycleTontineController extends Controller
     }
 
     /**
+     * Import via fichier CSV/XLSX. Une ligne = une cotisation ; les colonnes
+     * du cycle (reunion_id, gagnant_part_id, dates...) sont répétées sur
+     * chaque ligne d'un même cycle et regroupées via la colonne "cycle_ref"
+     * (identifiant libre choisi par l'utilisateur, pas stocké en base).
+     * Un cycle sans aucune cotisation peut être importé avec une seule ligne
+     * où les colonnes cotisation_tontine_part_id/cotisation_montant_verse
+     * sont laissées vides.
+     */
+    public function importHistoriqueFichier(Request $request, string $tontineId, \App\Services\Import\TabularFileReader $reader): JsonResponse
+    {
+        if ($request->user()->role !== 'super_admin') {
+            return response()->json(['message' => "Réservé au super_admin."], 403);
+        }
+        $tontine = $this->scope->scopeAssociation(Tontine::query())->findOrFail($tontineId);
+        $request->validate(['fichier' => ['required', 'file', 'mimes:csv,txt,xlsx', 'max:5120']]);
+
+        try {
+            $lignes = $reader->lire($request->file('fichier'));
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        $groupes = [];
+        foreach ($lignes as $i => $ligne) {
+            $ref = trim((string) ($ligne['cycle_ref'] ?? ''));
+            if ($ref === '') {
+                $ref = "__ligne_seule_{$i}";
+            }
+            $groupes[$ref]['lignes_source'][] = $i + 2;
+            $groupes[$ref]['cycle'] ??= $ligne;
+            if (! empty($ligne['cotisation_tontine_part_id'])) {
+                $groupes[$ref]['cotisations'][] = $ligne;
+            }
+        }
+
+        $crees = 0;
+        $erreurs = [];
+        foreach ($groupes as $ref => $groupe) {
+            try {
+                $cycleLigne = $groupe['cycle'];
+                $data = \Illuminate\Support\Facades\Validator::make($cycleLigne, [
+                    'reunion_id' => ['required', 'uuid'],
+                    'gagnant_part_id' => ['required', 'uuid'],
+                    'date_ouverture' => ['required', 'date'],
+                    'date_cloture' => ['required', 'date'],
+                    'montant_enchere' => ['nullable', 'numeric', 'min:0'],
+                    'surplus_enchere' => ['nullable', 'numeric', 'min:0'],
+                    'gain_verse' => ['nullable', 'boolean'],
+                    'mode_versement' => ['nullable', 'in:especes,cheque,virement,mobile_money,carte_bancaire'],
+                    'reference_versement' => ['nullable', 'string', 'max:200'],
+                ])->validate();
+                $data['gain_verse'] = $data['gain_verse'] ?? true;
+
+                $data['cotisations'] = collect($groupe['cotisations'] ?? [])->map(function ($c) {
+                    return \Illuminate\Support\Facades\Validator::make($c, [
+                        'cotisation_tontine_part_id' => ['required', 'uuid'],
+                        'cotisation_montant_verse' => ['required', 'numeric', 'min:0'],
+                        'cotisation_date_versement' => ['nullable', 'date'],
+                    ])->validate();
+                })->map(fn ($c) => [
+                    'tontine_part_id' => $c['cotisation_tontine_part_id'],
+                    'montant_verse' => (float) $c['cotisation_montant_verse'],
+                    'date_versement' => $c['cotisation_date_versement'] ?? null,
+                ])->values()->all();
+
+                $this->service->importerHistorique($tontine, $data, $request->user());
+                $crees++;
+            } catch (\Throwable $e) {
+                $message = $e instanceof \Illuminate\Validation\ValidationException
+                    ? implode(' ', $e->validator->errors()->all())
+                    : $e->getMessage();
+                $erreurs[] = ['cycle_ref' => $ref, 'lignes' => $groupe['lignes_source'], 'erreur' => $message];
+            }
+        }
+
+        return response()->json(['crees' => $crees, 'erreurs' => $erreurs]);
+    }
+
+    /**
      * POST /tontines/{id}/cycles/ouvrir
      */
     public function ouvrir(Request $request, string $tontineId): JsonResponse

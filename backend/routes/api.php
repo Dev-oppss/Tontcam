@@ -89,6 +89,7 @@ Route::middleware(['auth:sanctum', 'association.context'])->group(function () {
     Route::delete('/tontines/{id}/planning/{tourId}', [PlanningTourController::class, 'destroy']);
     Route::post('/tontines/{id}/cycles/ouvrir', [CycleTontineController::class, 'ouvrir']);
     Route::post('/tontines/{id}/cycles/import-historique', [CycleTontineController::class, 'importHistorique']);
+    Route::post('/tontines/{id}/cycles/import-historique/fichier', [CycleTontineController::class, 'importHistoriqueFichier']);
     Route::post('/tontines/{id}/enregistrer-beneficiaire', [CycleTontineController::class, 'enregistrerBeneficiaire']);
     Route::get('/cycles/{id}', [CycleTontineController::class, 'show']);
     Route::post('/cycles/{id}/cotisations', [CycleTontineController::class, 'saisirCotisations']);
@@ -115,6 +116,7 @@ Route::middleware(['auth:sanctum', 'association.context'])->group(function () {
     Route::post('/caisses/transferts/{id}/approuver', [CaisseController::class, 'approuverTransfert']);
     Route::get('/caisses/journal-global', [CaisseController::class, 'journalGlobal']);
     Route::post('/caisses/import-historique', [CaisseController::class, 'importHistorique']);
+    Route::post('/caisses/import-historique/fichier', [CaisseController::class, 'importHistoriqueFichier']);
     Route::apiResource('caisses', CaisseController::class)->except(['destroy'])->whereUuid('caisse');
     Route::post('/caisses/{id}/transactions', [CaisseController::class, 'transaction']);
     Route::get('/caisses/{id}/journal', [CaisseController::class, 'journal']);
@@ -124,6 +126,7 @@ Route::middleware(['auth:sanctum', 'association.context'])->group(function () {
 
     Route::apiResource('prets', PretController::class)->except(['destroy'])->whereUuid('pret');
     Route::post('/prets/import-historique', [PretController::class, 'importHistorique']);
+    Route::post('/prets/import-historique/fichier', [PretController::class, 'importHistoriqueFichier']);
     Route::post('/prets/{id}/valider', [PretController::class, 'valider']);
     Route::post('/prets/{id}/approuver', [PretController::class, 'approuver']);
     Route::post('/prets/{id}/refuser', [PretController::class, 'refuser']);
@@ -134,7 +137,9 @@ Route::middleware(['auth:sanctum', 'association.context'])->group(function () {
     // ── Sanctions & Social ──────────────────────────────────────
     Route::apiResource('sanctions', SanctionController::class)->except(['destroy'])->whereUuid('sanction');
     Route::post('/sanctions/import-historique', [SanctionController::class, 'importHistorique']);
+    Route::post('/sanctions/import-historique/fichier', [SanctionController::class, 'importHistoriqueFichier']);
     Route::post('/decisions-ag/import-historique', [DecisionAgController::class, 'importHistorique']);
+    Route::post('/decisions-ag/import-historique/fichier', [DecisionAgController::class, 'importHistoriqueFichier']);
     Route::post('/sanctions/{id}/payer', [SanctionController::class, 'payer']);
     Route::get('/types-sanction', [TypeSanctionController::class, 'index']);
     Route::post('/types-sanction', [TypeSanctionController::class, 'store']);
