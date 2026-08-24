@@ -2288,26 +2288,50 @@ function AppliquerSanctionPanel({ reunion, membres, typesSanction, addSanction, 
 // La déclaration crée une demande "en attente" (RG-SOC) ; validation puis
 // versement (avec choix de caisse si besoin) se font ensuite depuis l'onglet
 // « Aide sociale » (Social.jsx).
-function DeclarerAideSocialePanel({ membres, typesAideSociale, addAide, showToast }) {
+function DeclarerAideSocialePanel({ membres, typesAideSociale, banques, addAide, validerAideSociale, verserAideSociale, showToast }) {
   const [open, setOpen] = useState(false);
   const [idMembre, setIdMembre] = useState('');
   const [idType, setIdType] = useState('');
   const [description, setDescription] = useState('');
   const [justificatif, setJustificatif] = useState('');
+  const [verserTout, setVerserTout] = useState(false);
+  const [idCaisse, setIdCaisse] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
   const typeChoisi = typesAideSociale.find(t => t.id === idType);
+  // Si le type a déjà une caisse par défaut (paramétrée), pas besoin de la
+  // redemander ici — sinon, on l'exige avant de verser immédiatement.
+  const caisseRequise = verserTout && !typeChoisi?.caisseSourceId;
+
+  const reset = () => { setIdMembre(''); setIdType(''); setDescription(''); setJustificatif(''); setVerserTout(false); setIdCaisse(''); setOpen(false); };
 
   const submit = async () => {
     if (!idMembre || !idType || !description.trim() || !justificatif.trim()) {
       showToast?.('Membre, type, description et justificatif sont requis.', 'error');
       return;
     }
-    await addAide({
-      idMembre, categorie: idType, description: description.trim(),
-      dateDeclaration: new Date().toISOString().split('T')[0],
-      montant: typeChoisi?.montantFixe, justificatif: justificatif.trim(),
-    });
-    setIdMembre(''); setIdType(''); setDescription(''); setJustificatif(''); setOpen(false);
+    if (caisseRequise && !idCaisse) {
+      showToast?.('Sélectionnez la caisse pour le versement immédiat.', 'error');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const aide = await addAide({
+        idMembre, categorie: idType, description: description.trim(),
+        dateDeclaration: new Date().toISOString().split('T')[0],
+        montant: typeChoisi?.montantFixe, justificatif: justificatif.trim(),
+      });
+      if (!aide) return; // erreur déjà affichée (ex: aucun barème configuré)
+      if (verserTout) {
+        // Enchaîne déclarer → approuver → verser en un clic — pour le cas où la
+        // caisse est là et que tout se règle sur place, dans la même réunion.
+        await validerAideSociale(aide.id, aide.montantDemande);
+        await verserAideSociale(aide.id, { idCaisse: idCaisse || undefined });
+      }
+      reset();
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   if (!open) return (
@@ -2347,8 +2371,28 @@ function DeclarerAideSocialePanel({ membres, typesAideSociale, addAide, showToas
       <FormField label="Justificatif" required hint="Référence ou lien du document — obligatoire (RG-SOC-006)">
         <input className="input" value={justificatif} onChange={e => setJustificatif(e.target.value)}/>
       </FormField>
-      <button onClick={submit} className="btn-primary w-full justify-center text-sm"><HeartHandshake size={14}/>Déclarer l'aide</button>
-      <p className="text-xs text-gray-400">La demande sera ensuite à valider puis verser depuis l'onglet « Aide sociale ».</p>
+
+      <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer select-none">
+        <input type="checkbox" checked={verserTout} onChange={e => setVerserTout(e.target.checked)} className="w-4 h-4"/>
+        Verser maintenant (la caisse est disponible sur place, en séance)
+      </label>
+      {caisseRequise && (
+        <FormField label="Caisse de versement" required>
+          <select className="select" value={idCaisse} onChange={e => setIdCaisse(e.target.value)}>
+            <option value="">— Sélectionner —</option>
+            {banques.map(b => <option key={b.id} value={b.id}>{b.nom}</option>)}
+          </select>
+        </FormField>
+      )}
+
+      <button onClick={submit} disabled={submitting} className="btn-primary w-full justify-center text-sm">
+        <HeartHandshake size={14}/>{submitting ? 'Traitement…' : verserTout ? "Déclarer et verser maintenant" : "Déclarer l'aide"}
+      </button>
+      <p className="text-xs text-gray-400">
+        {verserTout
+          ? "L'aide sera immédiatement approuvée et versée, ici même en séance."
+          : "La demande sera ensuite à valider puis verser depuis l'onglet « Aide sociale »."}
+      </p>
     </div>
   );
 }
@@ -2356,7 +2400,7 @@ function DeclarerAideSocialePanel({ membres, typesAideSociale, addAide, showToas
 function PanneauRubrique({ reunion, types, titre, readOnly = false }) {
   const {
     membres, banques, prets, sanctions, typesSanction, addSanction,
-    typesAideSociale, addAide,
+    typesAideSociale, addAide, validerAideSociale, verserAideSociale,
     seanceTransactions, addSeanceTransaction, deleteSeanceTransaction,
     tontines, membresParTontine, showToast,
   } = useApp();
@@ -2436,7 +2480,7 @@ function PanneauRubrique({ reunion, types, titre, readOnly = false }) {
       {/* Symétrique côté aide sociale : déclarer une aide à partir d'un type
           déjà paramétré dans Paramètres → Aide sociale. */}
       {!locked && types.includes('aide_sociale') && (
-        <DeclarerAideSocialePanel membres={membres} typesAideSociale={typesAideSociale} addAide={addAide} showToast={showToast}/>
+        <DeclarerAideSocialePanel membres={membres} typesAideSociale={typesAideSociale} banques={banques} addAide={addAide} validerAideSociale={validerAideSociale} verserAideSociale={verserAideSociale} showToast={showToast}/>
       )}
 
       {/* Zone formulaire */}
