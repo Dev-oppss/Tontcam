@@ -26,7 +26,7 @@ class TypeAideSocialeController extends Controller
 
         $data = $request->validate([
             'libelle' => ['required', 'string', 'max:150'],
-            'type_evenement' => ['required', 'in:naissance,mariage,maladie,deces_membre,deces_famille,autre'],
+            'type_evenement' => ['required', 'in:naissance,mariage,maladie,deces_membre,deces_famille,scolarite,autre'],
             'montant_fixe' => ['nullable', 'numeric', 'min:0'],
             'montant_min' => ['nullable', 'numeric', 'min:0'],
             'montant_max' => ['nullable', 'numeric', 'min:0'],
@@ -57,7 +57,7 @@ class TypeAideSocialeController extends Controller
 
         $type->update($request->validate([
             'libelle' => ['sometimes', 'string', 'max:150'],
-            'type_evenement' => ['sometimes', 'in:naissance,mariage,maladie,deces_membre,deces_famille,autre'],
+            'type_evenement' => ['sometimes', 'in:naissance,mariage,maladie,deces_membre,deces_famille,scolarite,autre'],
             'montant_fixe' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'montant_min' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'montant_max' => ['sometimes', 'nullable', 'numeric', 'min:0'],
