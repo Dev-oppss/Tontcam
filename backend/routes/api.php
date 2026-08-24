@@ -153,6 +153,7 @@ Route::middleware(['auth:sanctum', 'association.context'])->group(function () {
     Route::get('/types-aide-sociale', [TypeAideSocialeController::class, 'index']);
     Route::post('/types-aide-sociale', [TypeAideSocialeController::class, 'store']);
     Route::put('/types-aide-sociale/{id}', [TypeAideSocialeController::class, 'update']);
+    Route::delete('/types-aide-sociale/{id}', [TypeAideSocialeController::class, 'destroy']);
 
     // ── Postes & mandats ────────────────────────────────────────
     Route::get('/postes', [PosteController::class, 'index']);

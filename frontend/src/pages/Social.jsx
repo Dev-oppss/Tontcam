@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { HeartHandshake, Plus, Paperclip, CheckCircle2, XCircle, Clock, Wallet, Settings2 } from 'lucide-react';
+import { HeartHandshake, Plus, Paperclip, CheckCircle2, XCircle, Clock, Wallet, Settings2, Pencil, Trash2 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { fmt, fmtDate } from '../data/mockData';
 import { PageHeader, SectionCard, Table, Badge, Modal, FormField } from '../components/ui/index';
@@ -20,13 +20,19 @@ const EMPTY_TYPE = { libelle: '', typeEvenement: 'naissance', montantFixe: '' };
 const EMPTY = { idMembre: '', categorie: '', montant: '', description: '', justificatif: '', dateDeclaration: new Date().toISOString().split('T')[0] };
 
 export default function Social() {
-  const { membres = [], aidesSociales = [], addAideSociale, validerAideSociale, verserAideSociale, typesAideSociale = [], addTypeAideSociale, parametres = {} } = useApp();
+  const {
+    membres = [], aidesSociales = [], addAideSociale, validerAideSociale, verserAideSociale,
+    typesAideSociale = [], addTypeAideSociale, updateTypeAideSociale, deleteTypeAideSociale,
+    banques = [], parametres = {}, showToast,
+  } = useApp();
   const [add, setAdd] = useState(false);
   const [addType, setAddType] = useState(false);
+  const [editingTypeId, setEditingTypeId] = useState(null);
   const [typeForm, setTypeForm] = useState(EMPTY_TYPE);
   const [verserModal, setVerserModal] = useState(null);
   const [verserMode, setVerserMode] = useState('especes');
   const [verserDetails, setVerserDetails] = useState('');
+  const [verserCaisse, setVerserCaisse] = useState('');
   const [form, setForm] = useState(EMPTY);
 
   const maxParCategorieAn = Number(parametres.maxAidesParCategorieAn || 3);
@@ -62,6 +68,25 @@ export default function Social() {
 
   const limiteAtteinte = form.idMembre && form.categorie && nbDejaAccorde(form.idMembre, typeSelectionne?.typeEvenement) >= maxParCategorieAn;
 
+  const openEditType = (t) => {
+    setEditingTypeId(t.id);
+    setTypeForm({ libelle: t.libelle || '', typeEvenement: t.typeEvenement || 'naissance', montantFixe: t.montantFixe ?? '' });
+    setAddType(true);
+  };
+  const closeTypeModal = () => { setAddType(false); setEditingTypeId(null); setTypeForm(EMPTY_TYPE); };
+  const handleDeleteType = (t) => {
+    if (window.confirm(`Supprimer le type d'aide « ${t.libelle} » ?`)) deleteTypeAideSociale?.(t.id);
+  };
+
+  // Caisse de versement : celle configurée sur le type si présente, sinon à
+  // choisir ici (paramétrer un type n'exige plus de caisse, cf addTypeAideSociale).
+  const verserCaisseRequise = verserModal && !typesAideSociale.find((t) => t.id === verserModal.categorie)?.caisseSourceId;
+  const handleVerser = () => {
+    if (verserCaisseRequise && !verserCaisse) { showToast?.('Choisissez la caisse à débiter pour ce versement.', 'error'); return; }
+    verserAideSociale?.(verserModal.id, { modePaiement: verserMode, detailsPaiement: verserDetails, idCaisse: verserCaisse || undefined });
+    setVerserModal(null);
+  };
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -69,7 +94,7 @@ export default function Social() {
         subtitle="Barème des aides, déclaration et suivi (RG-SOC-001 à 010)"
         action={
           <div className="flex gap-2">
-            <button onClick={() => setAddType(true)} className="btn-secondary"><Settings2 size={15} />Paramètres</button>
+            <button onClick={() => { setEditingTypeId(null); setTypeForm(EMPTY_TYPE); setAddType(true); }} className="btn-secondary"><Settings2 size={15} />Paramètres</button>
             <button onClick={() => setAdd(true)} className="btn-primary"><Plus size={15} />Déclarer un événement</button>
           </div>
         }
@@ -98,10 +123,18 @@ export default function Social() {
         ) : (
           <div className="grid sm:grid-cols-3 gap-3">
             {typesAideSociale.map((t) => (
-              <div key={t.id} className="rounded-xl bg-white/40 border border-white/50 p-3">
-                <p className="text-sm font-semibold text-ink-900">{t.libelle}</p>
+              <div key={t.id} className="rounded-xl bg-white/40 border border-white/50 p-3 group relative">
+                <p className="text-sm font-semibold text-ink-900 pr-10">{t.libelle}</p>
                 <p className="text-xs text-ink-600/50 mt-1">{CATEGORIES.find((c) => c.code === t.typeEvenement)?.label || t.typeEvenement} · Max {maxParCategorieAn}/an</p>
                 <p className="font-mono text-sm font-semibold text-indigo-700 mt-1">{fmt(t.montantFixe)}</p>
+                <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button onClick={() => openEditType(t)} title="Modifier" className="p-1 hover:bg-white rounded-lg text-ink-600/50 hover:text-indigo-600">
+                    <Pencil size={12}/>
+                  </button>
+                  <button onClick={() => handleDeleteType(t)} title="Supprimer" className="p-1 hover:bg-white rounded-lg text-ink-600/50 hover:text-red-600">
+                    <Trash2 size={12}/>
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -138,7 +171,7 @@ export default function Social() {
                     </>
                   )}
                   {a.statut === 'approuvee' && (
-                    <button onClick={() => { setVerserModal(a); setVerserMode('especes'); setVerserDetails(''); }} className="btn-primary py-1 px-2.5 text-xs"><Wallet size={12} />Verser</button>
+                    <button onClick={() => { setVerserModal(a); setVerserMode('especes'); setVerserDetails(''); setVerserCaisse(''); }} className="btn-primary py-1 px-2.5 text-xs"><Wallet size={12} />Verser</button>
                   )}
                 </div>
               </td>
@@ -154,9 +187,9 @@ export default function Social() {
         footer={<>
           <button onClick={() => setVerserModal(null)} className="btn-secondary">Annuler</button>
           <button
-            onClick={() => { verserAideSociale?.(verserModal.id, { modePaiement: verserMode, detailsPaiement: verserDetails }); setVerserModal(null); }}
-            disabled={!isModePaiementValid(verserMode, verserDetails)}
-            className={`btn-primary ${!isModePaiementValid(verserMode, verserDetails) ? 'opacity-40 cursor-not-allowed' : ''}`}
+            onClick={handleVerser}
+            disabled={!isModePaiementValid(verserMode, verserDetails) || (verserCaisseRequise && !verserCaisse)}
+            className={`btn-primary ${(!isModePaiementValid(verserMode, verserDetails) || (verserCaisseRequise && !verserCaisse)) ? 'opacity-40 cursor-not-allowed' : ''}`}
           ><Wallet size={14}/>Confirmer le versement</button>
         </>}>
         {verserModal && (
@@ -165,6 +198,14 @@ export default function Social() {
               <p className="text-sm font-semibold text-indigo-800">{verserModal.nomMembre}</p>
               <p className="text-xs text-indigo-600 mt-0.5">{CATEGORIES.find((c) => c.code === verserModal.categorie)?.label} — <strong>{fmt(verserModal.montantAccorde ?? verserModal.montant)}</strong></p>
             </div>
+            {verserCaisseRequise && (
+              <FormField label="Caisse à débiter" required hint="Aucune caisse par défaut sur ce type d'aide — à choisir ici.">
+                <select className="select" value={verserCaisse} onChange={(e) => setVerserCaisse(e.target.value)}>
+                  <option value="">Sélectionner…</option>
+                  {banques.map((b) => <option key={b.id} value={b.id}>{b.nom || b.libelle}</option>)}
+                </select>
+              </FormField>
+            )}
             <ModePaiementFields
               modePaiement={verserMode}
               detailsPaiement={verserDetails}
@@ -212,13 +253,14 @@ export default function Social() {
           </FormField>
         </div>
       </Modal>
-      <Modal open={addType} onClose={() => setAddType(false)} title="Paramétrer un type d'aide sociale"
+      <Modal open={addType} onClose={closeTypeModal} title={editingTypeId ? "Modifier le type d'aide sociale" : "Paramétrer un type d'aide sociale"}
         footer={<>
-          <button onClick={() => setAddType(false)} className="btn-secondary">Annuler</button>
+          <button onClick={closeTypeModal} className="btn-secondary">Annuler</button>
           <button onClick={async () => {
             if (!typeForm.libelle.trim()) return;
-            const created = await addTypeAideSociale({ libelle: typeForm.libelle.trim(), typeEvenement: typeForm.typeEvenement, montantFixe: Number(typeForm.montantFixe || 0) });
-            if (created) { setAddType(false); setTypeForm(EMPTY_TYPE); }
+            const payload = { libelle: typeForm.libelle.trim(), typeEvenement: typeForm.typeEvenement, montantFixe: Number(typeForm.montantFixe || 0) };
+            const result = editingTypeId ? await updateTypeAideSociale?.(editingTypeId, payload) : await addTypeAideSociale(payload);
+            if (result) closeTypeModal();
           }} className="btn-primary"><Settings2 size={14}/>Enregistrer</button>
         </>}>
         <div className="space-y-4">

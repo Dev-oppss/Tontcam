@@ -2227,11 +2227,67 @@ function PanneauPresences({ reunion, membres }) {
 // Chaque rubrique métier (Remboursement, Prêt, Sanction, Aide sociale,
 // Banque, Divers) a maintenant sa propre interface dédiée au lieu d'un
 // unique onglet "Transactions" fourre-tout avec sélecteur de type.
+// Applique un type de sanction déjà paramétré (Paramètres → Sanctions) à un
+// membre pendant la séance — crée une nouvelle sanction (impayée par défaut,
+// réglable ensuite via le formulaire "Paiement d'amende" juste en dessous).
+function AppliquerSanctionPanel({ reunion, membres, typesSanction, addSanction, showToast }) {
+  const [open, setOpen] = useState(false);
+  const [idMembre, setIdMembre] = useState('');
+  const [idType, setIdType] = useState('');
+
+  const submit = async () => {
+    if (!idMembre || !idType) { showToast?.('Sélectionnez un membre et un type de sanction.', 'error'); return; }
+    const m = membres.find(x => x.id === idMembre);
+    const t = typesSanction.find(x => x.id === idType);
+    await addSanction({
+      idMembre, nomMembre: m ? `${m.nom} ${m.prenom}` : '',
+      typeSanction: idType, motif: t?.libelle, montant: t?.montantFixe || 0,
+      numReunion: reunion.id, dateSanction: new Date().toISOString().split('T')[0],
+    });
+    setIdMembre(''); setIdType(''); setOpen(false);
+  };
+
+  if (!open) return (
+    <button onClick={() => setOpen(true)} className="btn-secondary w-full justify-center text-sm">
+      <AlertTriangle size={14}/> Appliquer une sanction à un membre
+    </button>
+  );
+
+  if (typesSanction.length === 0) return (
+    <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-700">
+      Aucun type de sanction paramétré. Rendez-vous dans <strong>Sanctions → Paramètres</strong> pour en créer un (ex : « Bavardage — 1000 »), puis revenez ici.
+      <button onClick={() => setOpen(false)} className="block mt-2 text-xs text-primary-600 hover:underline">Fermer</button>
+    </div>
+  );
+
+  return (
+    <div className="p-4 bg-white rounded-xl border border-gray-200 shadow-sm space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-bold text-gray-800"><AlertTriangle size={14} className="inline mr-1"/>Appliquer une sanction</p>
+        <button onClick={() => setOpen(false)} className="text-xs text-primary-600 hover:underline">Annuler</button>
+      </div>
+      <FormField label="Membre" required>
+        <select className="select" value={idMembre} onChange={e => setIdMembre(e.target.value)}>
+          <option value="">— Sélectionner —</option>
+          {membres.map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
+        </select>
+      </FormField>
+      <FormField label="Type de sanction (paramétré)" required>
+        <select className="select" value={idType} onChange={e => setIdType(e.target.value)}>
+          <option value="">— Sélectionner —</option>
+          {typesSanction.map(t => <option key={t.id} value={t.id}>{t.libelle} — {fmt(t.montantFixe || 0)}</option>)}
+        </select>
+      </FormField>
+      <button onClick={submit} className="btn-primary w-full justify-center text-sm"><AlertTriangle size={14}/>Appliquer la sanction</button>
+    </div>
+  );
+}
+
 function PanneauRubrique({ reunion, types, titre, readOnly = false }) {
   const {
-    membres, banques, prets, sanctions,
+    membres, banques, prets, sanctions, typesSanction, addSanction,
     seanceTransactions, addSeanceTransaction, deleteSeanceTransaction,
-    tontines, membresParTontine,
+    tontines, membresParTontine, showToast,
   } = useApp();
 
   // BUG corrigé : soldeDisponibleCaisse se basait sur caisseJournal, un état qui
@@ -2297,6 +2353,13 @@ function PanneauRubrique({ reunion, types, titre, readOnly = false }) {
             <p className="text-xs text-gray-500">Sorties</p>
           </div>
         </div>
+      )}
+
+      {/* Appliquer un type de sanction déjà paramétré à un membre — distinct du
+          formulaire ci-dessous qui ne fait que RÉGLER une sanction déjà existante.
+          C'est ici qu'on utilise les types créés/modifiés dans Paramètres → Sanctions. */}
+      {!locked && types.includes('amende') && (
+        <AppliquerSanctionPanel reunion={reunion} membres={membres} typesSanction={typesSanction} addSanction={addSanction} showToast={showToast}/>
       )}
 
       {/* Zone formulaire */}

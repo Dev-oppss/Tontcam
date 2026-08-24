@@ -140,6 +140,9 @@ class AideSocialeController extends Controller
 
         $data = $request->validate([
             'reunion_id' => ['required', 'uuid'],
+            // La caisse n'est plus figée au paramétrage du type : si le type n'en a pas,
+            // on demande de la choisir ici, au moment réel du versement (RG-CAI-011).
+            'caisse_id' => ['sometimes', 'nullable', 'uuid'],
             'mode_paiement' => ['sometimes', 'nullable', 'string'],
             'details_paiement' => ['sometimes', 'nullable', 'string'],
         ]);
@@ -147,8 +150,11 @@ class AideSocialeController extends Controller
         $reunion = \App\Models\Reunion::where('association_id', $this->scope->associationId())->findOrFail($data['reunion_id']);
 
         $caisse = $evenement->typeAide->caisseSource;
+        if (! $caisse && ! empty($data['caisse_id'])) {
+            $caisse = \App\Models\Caisse::where('association_id', $this->scope->associationId())->find($data['caisse_id']);
+        }
         if (! $caisse) {
-            return response()->json(['message' => 'Aucune caisse source configurée pour cette catégorie d\'aide.'], 422);
+            return response()->json(['message' => 'Choisissez une caisse pour ce versement (aucune caisse par défaut configurée pour ce type d\'aide).'], 422);
         }
 
         try {

@@ -1065,6 +1065,13 @@ export const AppProvider = ({ children }) => {
       showToast('Type de sanction modifié');
     } catch (err) { return handleError(err); }
   };
+  const deleteTypeSanction = async (id) => {
+    try {
+      await request(`/types-sanction/${id}`, { method: 'DELETE' });
+      setTypesSanction((prev) => prev.filter((x) => x.id !== id));
+      showToast('Type de sanction supprimé');
+    } catch (err) { return handleError(err); }
+  };
 
   const addSanction = async (data) => {
     try {
@@ -1240,6 +1247,9 @@ export const AppProvider = ({ children }) => {
       if (!reunionOuverte) { showToast?.('Ouvrez une séance de réunion avant de verser une aide sociale.', 'error'); return; }
       const a = await request(`/aides-sociales/${id}/verser`, { method: 'POST', body: {
         reunion_id: reunionOuverte.id,
+        // Caisse choisie au moment du versement si le type n'en a pas une par défaut
+        // (paramétrage du type = barème, pas caisse ; cf addTypeAideSociale).
+        caisse_id: options.idCaisse || undefined,
         mode_paiement: options.modePaiement, details_paiement: options.detailsPaiement,
       } });
       const aide = adapt.aideFromApi(a);
@@ -1250,15 +1260,45 @@ export const AppProvider = ({ children }) => {
   };
   const addTypeAideSociale = async (data) => {
     try {
+      // La caisse N'EST PAS demandée ici : comme pour les sanctions, paramétrer un
+      // type d'aide (libellé + catégorie + montant) ne doit pas exiger de choisir une
+      // caisse -- ce choix a lieu plus tard, lors du versement réel en réunion
+      // (verserAideSociale). Si data.caisseSourceId est fourni malgré tout (caisse
+      // par défaut optionnelle), on le transmet, sinon on l'omet complètement.
       const t = await request('/types-aide-sociale', { method: 'POST', body: {
         libelle: data.libelle, type_evenement: data.typeEvenement, montant_fixe: data.montantFixe,
-        caisse_source_id: data.caisseSourceId, nb_max_par_an: data.nbMaxParAn || 3,
+        caisse_source_id: data.caisseSourceId || undefined, nb_max_par_an: data.nbMaxParAn || 3,
         justificatif_requis: data.justificatifRequis ?? true,
       } });
-      const type = { id: t.id, libelle: t.libelle, typeEvenement: t.type_evenement, montantFixe: Number(t.montant_fixe || 0) };
+      const type = {
+        id: t.id, libelle: t.libelle, typeEvenement: t.type_evenement,
+        montantFixe: Number(t.montant_fixe || 0), caisseSourceId: t.caisse_source_id, actif: t.actif,
+      };
       setTypesAideSociale((prev) => [...prev, type]);
       showToast('Type d\'aide sociale créé');
       return type;
+    } catch (err) { return handleError(err); }
+  };
+  const updateTypeAideSociale = async (id, data) => {
+    try {
+      const t = await request(`/types-aide-sociale/${id}`, { method: 'PUT', body: {
+        libelle: data.libelle, type_evenement: data.typeEvenement, montant_fixe: data.montantFixe,
+        caisse_source_id: data.caisseSourceId, actif: data.actif,
+      } });
+      const type = {
+        id: t.id, libelle: t.libelle, typeEvenement: t.type_evenement,
+        montantFixe: Number(t.montant_fixe || 0), caisseSourceId: t.caisse_source_id, actif: t.actif,
+      };
+      setTypesAideSociale((prev) => prev.map((x) => (x.id === id ? type : x)));
+      showToast('Type d\'aide sociale modifié');
+      return type;
+    } catch (err) { return handleError(err); }
+  };
+  const deleteTypeAideSociale = async (id) => {
+    try {
+      await request(`/types-aide-sociale/${id}`, { method: 'DELETE' });
+      setTypesAideSociale((prev) => prev.filter((x) => x.id !== id));
+      showToast('Type d\'aide sociale supprimé');
     } catch (err) { return handleError(err); }
   };
   const addCompteBancaire = async (data) => {
@@ -1562,9 +1602,9 @@ export const AppProvider = ({ children }) => {
     setPresenceMembre, signerPV,
     chargerRotations, tirerAuSort, addEnchere, attribuerTour, annulerEncheres, annulerCycle, annulerVersementBulletin,
     addBanque, addCaisse: addBanque, modifierBanque, modifierCaisse: modifierBanque, doOperation, addMembreBanque, transfererCaisse, approuverTransfertCaisse, addCompteBancaire, chargerTransferts,
-    addTypeSanction, updateTypeSanction, addSanction, payerSanction,
+    addTypeSanction, updateTypeSanction, deleteTypeSanction, addSanction, payerSanction,
     addPret, validerPret, approuverPret, refuserPret, decaisserPret, rembourserPret, distribuerInteretsPret,
-    addAide, addAideSociale: addAide, validerAideSociale, verserAideSociale, addTypeAideSociale, membreEligibleAssurance, addCaisseEntry, uploadFichier,
+    addAide, addAideSociale: addAide, validerAideSociale, verserAideSociale, addTypeAideSociale, updateTypeAideSociale, deleteTypeAideSociale, membreEligibleAssurance, addCaisseEntry, uploadFichier,
     addTourPlanning, marquerTourEncaisse, retirerTourPlanning, chargerPlanningTours,
     addSeanceTransaction, deleteSeanceTransaction, enregistrerBeneficiaireSeance, chargerSeanceTransactions,
     addUtilisateur, updateUtilisateur, desactiverUtilisateur, activerUtilisateur,

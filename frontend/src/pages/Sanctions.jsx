@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ShieldAlert, Plus, Settings2, CreditCard } from 'lucide-react';
+import { ShieldAlert, Plus, Settings2, CreditCard, Pencil, Trash2 } from 'lucide-react';
 import { fmt, fmtDate, typeSancLabel } from '../data/mockData';
 import { useApp } from '../context/AppContext';
 import { PageHeader, Table, Badge, Modal, FormField } from '../components/ui/index';
@@ -27,9 +27,10 @@ const slugify = (value) => String(value || '')
   .replace(/^_+|_+$/g, '');
 
 export default function Sanctions() {
-  const { membres, sanctions, addSanction, payerSanction, typesSanction, addTypeSanction, reunions = [], showToast } = useApp();
+  const { membres, sanctions, addSanction, payerSanction, typesSanction, addTypeSanction, updateTypeSanction, deleteTypeSanction, reunions = [], showToast } = useApp();
   const [add, setAdd] = useState(false);
   const [addType, setAddType] = useState(false);
+  const [editingTypeId, setEditingTypeId] = useState(null);
   const [form, setForm] = useState({
     idMembre: '',
     nomMembre: '',
@@ -132,18 +133,37 @@ export default function Sanctions() {
     resetForm();
   };
 
-  const handleAddType = () => {
+  const handleAddType = async () => {
     if (!customTypeForm.libelle.trim()) { showToast?.('Libellé requis.', 'error'); return; }
-    addTypeSanction({
-      libelle: customTypeForm.libelle.trim(),
-      code: slugify(customTypeForm.libelle),
-      montantFixe: Number(customTypeForm.montant || 0),
-      delaiReglementJours: 7,
-      estAutomatique: false,
-      modeCalcul: 'fixe',
-    });
+    if (editingTypeId) {
+      await updateTypeSanction(editingTypeId, {
+        libelle: customTypeForm.libelle.trim(),
+        montantFixe: Number(customTypeForm.montant || 0),
+      });
+    } else {
+      await addTypeSanction({
+        libelle: customTypeForm.libelle.trim(),
+        code: slugify(customTypeForm.libelle),
+        montantFixe: Number(customTypeForm.montant || 0),
+        delaiReglementJours: 7,
+        estAutomatique: false,
+        modeCalcul: 'fixe',
+      });
+    }
     setAddType(false);
+    setEditingTypeId(null);
     setCustomTypeForm(emptyCustomType());
+  };
+
+  const openEditType = (t) => {
+    setEditingTypeId(t.id);
+    setCustomTypeForm({ libelle: t.libelle || '', montant: t.montantFixe ?? '' });
+    setAddType(true);
+  };
+
+  const handleDeleteType = (t) => {
+    if (!t.id) return; // types PRESET (jamais paramétrés) n'ont pas d'id, rien à supprimer
+    if (window.confirm(`Supprimer le type de sanction « ${t.libelle} » ?`)) deleteTypeSanction(t.id);
   };
 
   return (
@@ -151,7 +171,7 @@ export default function Sanctions() {
       <PageHeader title="Sanctions" subtitle="Types de sanction paramétrables et pénalités des membres"
         action={
           <div className="flex gap-2">
-            <button onClick={()=>setAddType(true)} className="btn-secondary"><Settings2 size={15}/> Paramètres</button>
+            <button onClick={()=>{setEditingTypeId(null); setCustomTypeForm(emptyCustomType()); setAddType(true);}} className="btn-secondary"><Settings2 size={15}/> Paramètres</button>
             <button onClick={()=>setAdd(true)} className="btn-primary"><Plus size={15}/> Nouvelle sanction</button>
           </div>
         }/>
@@ -177,9 +197,19 @@ export default function Sanctions() {
         <h3 className="font-semibold text-gray-800 mb-3">Catalogue des sanctions</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           {(typesSanction.length ? typesSanction : PRESET_TYPES).map((t) => (
-            <div key={t.code || t.libelle} className="p-3 rounded-xl border border-surface-200 bg-surface-50">
-              <p className="text-sm font-semibold text-ink-800">{t.libelle}</p>
+            <div key={t.id || t.code || t.libelle} className="p-3 rounded-xl border border-surface-200 bg-surface-50 group relative">
+              <p className="text-sm font-semibold text-ink-800 pr-10">{t.libelle}</p>
               <p className="text-xs text-ink-600/50 mt-1">{fmt(t.montantFixe || 0)}</p>
+              {t.id && (
+                <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button onClick={() => openEditType(t)} title="Modifier" className="p-1 hover:bg-white rounded-lg text-ink-600/50 hover:text-primary-600">
+                    <Pencil size={12}/>
+                  </button>
+                  <button onClick={() => handleDeleteType(t)} title="Supprimer" className="p-1 hover:bg-white rounded-lg text-ink-600/50 hover:text-red-600">
+                    <Trash2 size={12}/>
+                  </button>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -286,8 +316,8 @@ export default function Sanctions() {
         </div>
       </Modal>
 
-      <Modal open={addType} onClose={()=>setAddType(false)} title="Paramétrer un type de sanction"
-        footer={<><button onClick={()=>setAddType(false)} className="btn-secondary">Annuler</button><button onClick={handleAddType} className="btn-primary"><Settings2 size={14}/>Enregistrer</button></>}>
+      <Modal open={addType} onClose={()=>{setAddType(false); setEditingTypeId(null); setCustomTypeForm(emptyCustomType());}} title={editingTypeId ? 'Modifier le type de sanction' : 'Paramétrer un type de sanction'}
+        footer={<><button onClick={()=>{setAddType(false); setEditingTypeId(null); setCustomTypeForm(emptyCustomType());}} className="btn-secondary">Annuler</button><button onClick={handleAddType} className="btn-primary"><Settings2 size={14}/>Enregistrer</button></>}>
         <div className="space-y-4">
           <FormField label="Libellé" required>
             <input className="input" value={customTypeForm.libelle} onChange={e=>setCustomTypeForm(f=>({...f,libelle:e.target.value}))} placeholder="Ex : Retard de cotisation" />
