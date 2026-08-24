@@ -179,6 +179,31 @@ export const AppProvider = ({ children }) => {
     } catch (err) { return handleError(err); }
   };
 
+  // Pendant CSV/XLSX : le backend traite chaque ligne/groupe independamment et renvoie
+  // {crees, erreurs}, pas de ressources completes comme en JSON — donc pas de mise a jour
+  // des listes locales ici, juste le compte-rendu (voir TabularFileReader, PR du 24/08).
+  const importerHistoriqueFichier = async (type, fichier, tontineId) => {
+    try {
+      const routes = {
+        transactions: '/caisses/import-historique/fichier',
+        decisions: '/decisions-ag/import-historique/fichier',
+        prets: '/prets/import-historique/fichier',
+        sanctions: '/sanctions/import-historique/fichier',
+      };
+      if (type === 'cycles' && !tontineId) {
+        showToast('Choisissez la tontine concernée par ce fichier.', 'error');
+        return;
+      }
+      const chemin = type === 'cycles' ? `/tontines/${tontineId}/cycles/import-historique/fichier` : routes[type];
+      const fd = new FormData();
+      fd.append('fichier', fichier);
+      const resultat = await request(chemin, { method: 'POST', body: fd });
+      const nbErreurs = resultat?.erreurs?.length || 0;
+      showToast(`${resultat.crees} ligne(s) importée(s)${nbErreurs ? `, ${nbErreurs} en erreur` : ''}`, nbErreurs ? 'info' : 'success');
+      return resultat;
+    } catch (err) { return handleError(err); }
+  };
+
   // ── Charge toutes les données de l'association une fois connecté ──
   useEffect(() => {
     if (!user || !currentAssociation) return;
@@ -1526,7 +1551,7 @@ export const AppProvider = ({ children }) => {
     comptesBanque: [], operationsBanque: [], seanceTransactions: seanceTransactionsState, transfertsCaisse, chargerJournalCaisse, chargerJournalGlobal,
     utilisateurs, planningTours, cyclesTontine, chargerCycles, rechargerPartsTontine, dashboardStats, repartitionBanques, evolutionCaisse: mock.evolutionCaisse,
     portailMoi, chargerPortailMoi,
-    showToast, importerHistorique,
+    showToast, importerHistorique, importerHistoriqueFichier,
     login, logout, changePassword, updateMonProfil, register, updateAssociation, uploadStatutsAssociation, updateParametres,
     addMembre, updateMembre, deleteMembre,
     addPoste, addMandat, cloturerMandat,
