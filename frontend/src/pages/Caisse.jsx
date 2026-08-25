@@ -67,26 +67,37 @@ export default function Caisse() {
   const banqueLibre = { id: 'global', nom: 'Trésorerie générale', totalSolde: soldeGlobal };
   const soldesBanques = banques.map(b => ({ ...b, comptes: comptesBanque.filter(c => c.idBanque === b.id) }));
 
+  // Le journal complet reste inchangé (piste d'audit : on doit pouvoir VOIR
+  // qu'une cotisation a été faite puis annulée), mais les totaux Entrées/Sorties
+  // excluent les lignes annulées et leur contre-passation — sinon annuler une
+  // cotisation gonflait artificiellement les Entrées au lieu de les laisser
+  // nettes (ex: 60000 cotisé + 60000 contre-passé = 120000 d'« Entrées »
+  // affichées pour une opération qui, au final, n'a rien rapporté).
+  const journalPourKpi = useMemo(
+    () => caisseJournal.filter((op) => !op.annulee && op.referenceType !== 'annulation_transaction'),
+    [caisseJournal]
+  );
+
   // ── Flux amendes ──
   const sanctionsPayees = sanctions.filter(s => s.statut === 'payee');
-  const totalAmendes    = caisseJournal.filter((x) => x.categorie === 'amende').reduce((s, x) => s + x.entree, 0);
+  const totalAmendes    = journalPourKpi.filter((x) => x.categorie === 'amende').reduce((s, x) => s + x.entree, 0);
   const sanctionsImpa   = sanctions.filter(s => s.statut === 'impayee');
 
   // ── Flux enchères ──
   const rotationsAvecEnchere = rotations.filter(r => r.enchere > 0);
-  const totalBenefEnchere    = caisseJournal.filter((x) => x.categorie === 'enchere').reduce((s, x) => s + x.entree, 0);
+  const totalBenefEnchere    = journalPourKpi.filter((x) => x.categorie === 'enchere').reduce((s, x) => s + x.entree, 0);
 
   // ── Flux prêts ──
-  const totalPretsAccordes    = caisseJournal.filter((x) => x.categorie === 'pret_accorde').reduce((s, x) => s + x.sortie, 0);
-  const totalRembourses       = caisseJournal.filter((x) => ['remboursement_pret', 'remboursement'].includes(x.categorie)).reduce((s, x) => s + x.entree, 0);
+  const totalPretsAccordes    = journalPourKpi.filter((x) => x.categorie === 'pret_accorde').reduce((s, x) => s + x.sortie, 0);
+  const totalRembourses       = journalPourKpi.filter((x) => ['remboursement_pret', 'remboursement'].includes(x.categorie)).reduce((s, x) => s + x.entree, 0);
   const totalInteretsEncaisses = totalRembourses;
   const pretEnCours            = prets.filter(p => ['en_cours','en_retard'].includes(p.statut));
   const totalRestantDu         = pretEnCours.reduce((s, p) => s + p.resteAPayer, 0);
 
   // ── Fond Assurance ──
-  const totalFondAssurance = caisseJournal.filter((x) => x.categorie === 'aide_sociale').reduce((s, x) => s + x.sortie, 0);
+  const totalFondAssurance = journalPourKpi.filter((x) => x.categorie === 'aide_sociale').reduce((s, x) => s + x.sortie, 0);
 
-  // ── Journal filtré ──
+  // ── Journal filtré (affichage complet, non filtré des annulations) ──
   const journalSansCotisations = useMemo(() => {
     return caisseJournal;
   }, [caisseJournal]);
@@ -96,8 +107,8 @@ export default function Caisse() {
     return journalSansCotisations.filter(op => op.categorie === filterCat);
   }, [journalSansCotisations, filterCat]);
 
-  const totalEntrees = journalSansCotisations.reduce((s, op) => s + (op.entree || 0), 0);
-  const totalSorties = journalSansCotisations.reduce((s, op) => s + (op.sortie || 0), 0);
+  const totalEntrees = journalPourKpi.reduce((s, op) => s + (op.entree || 0), 0);
+  const totalSorties = journalPourKpi.reduce((s, op) => s + (op.sortie || 0), 0);
   const soldeNet     = totalEntrees - totalSorties;
 
   // ── Opérations Banque Libre ──
