@@ -5,6 +5,7 @@ import { useApp } from '../context/AppContext';
 import { PageHeader, Table, Badge, Modal, FormField } from '../components/ui/index';
 import { ModePaiementFields, isModePaiementValid, ModePaiementBadge } from '../components/ui/ModePaiement';
 import { getMissingFields } from '../lib/validation';
+import { useAsyncGuard } from '../hooks/useAsyncGuard';
 
 const PRESET_TYPES = [
   { code: 'retard_cotisation', libelle: 'Retard de cotisation', montantFixe: 2500 },
@@ -44,13 +45,14 @@ export default function Sanctions() {
   const [payModePaiement, setPayModePaiement] = useState('especes');
   const [payDetailsPaiement, setPayDetailsPaiement] = useState('');
 
-  const handlePayer = () => {
+  const handlePayer = async () => {
     if (!isModePaiementValid(payModePaiement, payDetailsPaiement)) { showToast?.('Référence de paiement requise pour ce mode de versement.', 'error'); return; }
-    payerSanction(payModal.id, { modePaiement: payModePaiement, detailsPaiement: payDetailsPaiement });
+    await payerSanction(payModal.id, { modePaiement: payModePaiement, detailsPaiement: payDetailsPaiement });
     setPayModal(null);
     setPayModePaiement('especes');
     setPayDetailsPaiement('');
   };
+  const [guardedHandlePayer, payingAmende] = useAsyncGuard(handlePayer);
 
   const impayees = sanctions.filter(s=>s.statut==='impayee');
   const payees   = sanctions.filter(s=>s.statut==='payee');
@@ -132,6 +134,7 @@ export default function Sanctions() {
     setAdd(false);
     resetForm();
   };
+  const [guardedHandleAdd, addingSanction] = useAsyncGuard(handleAdd);
 
   const handleAddType = async () => {
     if (!customTypeForm.libelle.trim()) { showToast?.('Libellé requis.', 'error'); return; }
@@ -154,6 +157,7 @@ export default function Sanctions() {
     setEditingTypeId(null);
     setCustomTypeForm(emptyCustomType());
   };
+  const [guardedHandleAddType, savingType] = useAsyncGuard(handleAddType);
 
   const openEditType = (t) => {
     setEditingTypeId(t.id);
@@ -256,7 +260,7 @@ export default function Sanctions() {
       </div>
 
       <Modal open={add} onClose={()=>setAdd(false)} title="Nouvelle sanction"
-        footer={<><button onClick={()=>setAdd(false)} className="btn-secondary">Annuler</button><button onClick={handleAdd} className="btn-danger"><ShieldAlert size={14}/>Enregistrer</button></>}>
+        footer={<><button onClick={()=>setAdd(false)} disabled={addingSanction} className="btn-secondary">Annuler</button><button onClick={guardedHandleAdd} disabled={addingSanction} className="btn-danger"><ShieldAlert size={14}/>{addingSanction ? 'Enregistrement…' : 'Enregistrer'}</button></>}>
         <div className="space-y-4">
           <FormField label="Membre" required>
             <select className="select" value={form.idMembre} onChange={e=>setForm(f=>({...f,idMembre:e.target.value}))}>
@@ -317,7 +321,7 @@ export default function Sanctions() {
       </Modal>
 
       <Modal open={addType} onClose={()=>{setAddType(false); setEditingTypeId(null); setCustomTypeForm(emptyCustomType());}} title={editingTypeId ? 'Modifier le type de sanction' : 'Paramétrer un type de sanction'}
-        footer={<><button onClick={()=>{setAddType(false); setEditingTypeId(null); setCustomTypeForm(emptyCustomType());}} className="btn-secondary">Annuler</button><button onClick={handleAddType} className="btn-primary"><Settings2 size={14}/>Enregistrer</button></>}>
+        footer={<><button onClick={()=>{setAddType(false); setEditingTypeId(null); setCustomTypeForm(emptyCustomType());}} disabled={savingType} className="btn-secondary">Annuler</button><button onClick={guardedHandleAddType} disabled={savingType} className="btn-primary"><Settings2 size={14}/>{savingType ? 'Enregistrement…' : 'Enregistrer'}</button></>}>
         <div className="space-y-4">
           <FormField label="Libellé" required>
             <input className="input" value={customTypeForm.libelle} onChange={e=>setCustomTypeForm(f=>({...f,libelle:e.target.value}))} placeholder="Ex : Retard de cotisation" />
@@ -330,10 +334,10 @@ export default function Sanctions() {
 
       <Modal open={!!payModal} onClose={()=>setPayModal(null)} title="Régler la sanction"
         footer={<>
-          <button onClick={()=>setPayModal(null)} className="btn-secondary">Annuler</button>
-          <button onClick={handlePayer} disabled={!isModePaiementValid(payModePaiement, payDetailsPaiement)}
-            className={`btn-primary ${!isModePaiementValid(payModePaiement, payDetailsPaiement) ? 'opacity-40 cursor-not-allowed' : ''}`}>
-            <CreditCard size={14}/>Confirmer le paiement
+          <button onClick={()=>setPayModal(null)} disabled={payingAmende} className="btn-secondary">Annuler</button>
+          <button onClick={guardedHandlePayer} disabled={payingAmende || !isModePaiementValid(payModePaiement, payDetailsPaiement)}
+            className={`btn-primary ${(payingAmende || !isModePaiementValid(payModePaiement, payDetailsPaiement)) ? 'opacity-40 cursor-not-allowed' : ''}`}>
+            <CreditCard size={14}/>{payingAmende ? 'Paiement…' : 'Confirmer le paiement'}
           </button>
         </>}>
         {payModal && (

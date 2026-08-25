@@ -4,6 +4,7 @@ import { useApp } from '../context/AppContext';
 import { fmtDate } from '../data/mockData';
 import { PageHeader, Table, Badge, Modal, FormField } from '../components/ui/index';
 import { getMissingFields } from '../lib/validation';
+import { useAsyncGuard } from '../hooks/useAsyncGuard';
 
 const TYPES = [
   { value: 'financier', label: 'Financier' },
@@ -26,7 +27,7 @@ export default function DecisionsAG() {
 
   const adopte = (d) => Number(d.pour) > Number(d.contre);
 
-  const handleAdd = () => {
+  const handleAdd = async () => {
     const missing = getMissingFields(form, [
       { key: 'objet', label: 'Objet de la décision' },
       { key: 'idReunion', label: 'Réunion associée' },
@@ -34,10 +35,11 @@ export default function DecisionsAG() {
       { key: 'dateAG', label: "Date de l'AG" },
     ]);
     if (missing.length) { showToast?.(`Champ(s) requis manquant(s) : ${missing.join(', ')}`, 'error'); return; }
-    addDecisionAG?.(form);
+    await addDecisionAG?.(form);
     setAdd(false);
     setForm(EMPTY);
   };
+  const [guardedHandleAdd, addingDecision] = useAsyncGuard(handleAdd);
 
   return (
     <div className="space-y-6">
@@ -73,7 +75,7 @@ export default function DecisionsAG() {
       <Modal open={add} onClose={() => setAdd(false)} title="Nouvelle décision d'AG"
         footer={<>
           <button onClick={() => setAdd(false)} className="btn-secondary">Annuler</button>
-          <button onClick={handleAdd} className="btn-primary"><Gavel size={14} />Enregistrer</button>
+          <button onClick={guardedHandleAdd} disabled={addingDecision} className="btn-primary"><Gavel size={14} />{addingDecision ? 'Enregistrement…' : 'Enregistrer'}</button>
         </>}>
         <div className="space-y-4">
           <FormField label="Objet de la décision" required>

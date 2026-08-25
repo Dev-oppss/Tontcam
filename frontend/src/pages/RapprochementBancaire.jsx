@@ -4,6 +4,7 @@ import { useApp } from '../context/AppContext';
 import { fmt, fmtDate } from '../data/mockData';
 import { PageHeader, SectionCard, Table, Badge, Modal, FormField } from '../components/ui/index';
 import { getMissingFields } from '../lib/validation';
+import { useAsyncGuard } from '../hooks/useAsyncGuard';
 
 const EMPTY = { idCompteBancaire: '', idCaisse: '', soldeReleve: '', periodeDebut: new Date(new Date().setDate(1)).toISOString().split('T')[0], periodeFin: new Date().toISOString().split('T')[0] };
 
@@ -19,7 +20,7 @@ export default function RapprochementBancaire() {
   // Seules les caisses explicitement liées au compte bancaire choisi sont éligibles (RG-CAI-017)
   const caissesEligibles = caisses.filter((c) => c.compteBancaireId === form.idCompteBancaire);
 
-  const handleAdd = () => {
+  const handleAdd = async () => {
     const missing = getMissingFields(form, [
       { key: 'idCompteBancaire', label: 'Compte bancaire' },
       { key: 'idCaisse', label: 'Caisse liée à ce compte' },
@@ -27,18 +28,20 @@ export default function RapprochementBancaire() {
     ]);
     if (missing.length) { showToast?.(`Champ(s) requis manquant(s) : ${missing.join(', ')}`, 'error'); return; }
     if (form.periodeFin <= form.periodeDebut) { showToast?.('La période de fin doit être postérieure à la période de début.', 'error'); return; }
-    addRapprochement?.(form);
+    await addRapprochement?.(form);
     setAdd(false);
     setForm(EMPTY);
   };
+  const [guardedHandleAdd, comparing] = useAsyncGuard(handleAdd);
 
-  const handleJustifier = () => {
+  const handleJustifier = async () => {
     if (!justifModal) return;
     if (!motif.trim()) { showToast?.("Motif de l'écart requis.", 'error'); return; }
-    justifierEcart?.(justifModal.id, motif);
+    await justifierEcart?.(justifModal.id, motif);
     setJustifModal(null);
     setMotif('');
   };
+  const [guardedHandleJustifier, justifying] = useAsyncGuard(handleJustifier);
 
   return (
     <div className="space-y-6">
@@ -99,7 +102,7 @@ export default function RapprochementBancaire() {
       <Modal open={add} onClose={() => setAdd(false)} title="Importer un relevé bancaire"
         footer={<>
           <button onClick={() => setAdd(false)} className="btn-secondary">Annuler</button>
-          <button onClick={handleAdd} className="btn-primary"><Landmark size={14} />Comparer</button>
+          <button onClick={guardedHandleAdd} disabled={comparing} className="btn-primary"><Landmark size={14} />{comparing ? 'Comparaison…' : 'Comparer'}</button>
         </>}>
         <div className="space-y-4">
           <FormField label="Compte bancaire" required>
@@ -131,7 +134,7 @@ export default function RapprochementBancaire() {
       <Modal open={!!justifModal} onClose={() => setJustifModal(null)} title="Justifier l'écart"
         footer={<>
           <button onClick={() => setJustifModal(null)} className="btn-secondary">Annuler</button>
-          <button onClick={handleJustifier} className="btn-primary"><CheckCircle2 size={14} />Valider la justification</button>
+          <button onClick={guardedHandleJustifier} disabled={justifying} className="btn-primary"><CheckCircle2 size={14} />{justifying ? 'Validation…' : 'Valider la justification'}</button>
         </>}>
         <div className="space-y-4">
           <div className="rounded-xl bg-white/40 border border-white/50 p-3 text-sm">

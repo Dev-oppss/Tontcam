@@ -256,6 +256,18 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
   const setModePaiementMembre = (idMembre, patch) =>
     setModeParMembre(prev => ({ ...prev, [idMembre]: { ...(prev[idMembre]||{modePaiement:'especes',detailsPaiement:''}), ...patch } }));
 
+  // Anti double-clic : valider la feuille de cotisation, désigner un bénéficiaire
+  // (rotation/tirage/manuel/enchère) et ajouter une enchère sont des séquences
+  // d'appels serveur (parfois plusieurs cotisations puis ouverture/clôture de
+  // cycle) — un second clic pendant que la première séquence tourne encore
+  // pourrait dupliquer les cotisations ou désigner deux bénéficiaires.
+  const [busyCotisationBenef, setBusyCotisationBenef] = useState(false);
+  const runGuarded = async (fn) => {
+    if (busyCotisationBenef) return;
+    setBusyCotisationBenef(true);
+    try { await fn(); } finally { setBusyCotisationBenef(false); }
+  };
+
   // ── Valider la feuille de cotisation ──
   const handleValiderFeuille = async () => {
     if (!tontineSelectee) return;
@@ -669,10 +681,10 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
           )}
 
           {!locked && !readOnly && (
-            <button onClick={handleValiderFeuille}
-              disabled={cotises.length + defaillants.length === 0}
-              className={clsx('btn-primary w-full justify-center', cotises.length + defaillants.length === 0 && 'opacity-40 cursor-not-allowed')}>
-              <ClipboardCheck size={15}/> Valider et désigner le bénéficiaire {TYPE_ICONS[typeAttr]}
+            <button onClick={() => runGuarded(handleValiderFeuille)}
+              disabled={cotises.length + defaillants.length === 0 || busyCotisationBenef}
+              className={clsx('btn-primary w-full justify-center', (cotises.length + defaillants.length === 0 || busyCotisationBenef) && 'opacity-40 cursor-not-allowed')}>
+              <ClipboardCheck size={15}/> {busyCotisationBenef ? 'Enregistrement…' : <>Valider et désigner le bénéficiaire {TYPE_ICONS[typeAttr]}</>}
             </button>
           )}
         </div>
@@ -713,11 +725,11 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
                     <p className="text-2xl font-black text-gray-800 mt-1">{tourPlanifieProchain.nomMembre}</p>
                     <p className="text-sm font-bold text-primary-600 mt-1">{fmt(montantPot)}</p>
                   </div>
-                  <button onClick={handleConfirmerRotation} className="btn-primary w-full justify-center">
-                    <Trophy size={15}/> Confirmer et encaisser le tour
+                  <button onClick={() => runGuarded(handleConfirmerRotation)} disabled={busyCotisationBenef} className="btn-primary w-full justify-center">
+                    <Trophy size={15}/> {busyCotisationBenef ? 'Encaissement…' : 'Confirmer et encaisser le tour'}
                   </button>
                   <p className="text-xs text-gray-400 text-center">L'ordre a été défini au préalable dans le module Tontines.</p>
-                  <button onClick={() => { setChoixManuel(true); setBeneficiaireManuelId(''); }}
+                  <button onClick={() => { setChoixManuel(true); setBeneficiaireManuelId(''); }} disabled={busyCotisationBenef}
                     className="text-xs text-gray-400 hover:text-gray-600 w-full text-center hover:underline">
                     Choisir un autre bénéficiaire manuellement (dérogation)
                   </button>
@@ -736,8 +748,8 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
                     <option value="">— Sélectionner un membre —</option>
                     {membresEligiblesGain.map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}{m.nombreParts > 1 ? ` (${m.nombreParts} parts)` : ''}</option>)}
                   </select>
-                  <button onClick={handleDesignationManuelle} disabled={!beneficiaireManuelId} className="btn-primary w-full justify-center">
-                    <Trophy size={15}/> Confirmer ce bénéficiaire
+                  <button onClick={() => runGuarded(handleDesignationManuelle)} disabled={!beneficiaireManuelId || busyCotisationBenef} className="btn-primary w-full justify-center">
+                    <Trophy size={15}/> {busyCotisationBenef ? 'Confirmation…' : 'Confirmer ce bénéficiaire'}
                   </button>
                   <div className="flex justify-between">
                     {tourPlanifieProchain && (
@@ -763,8 +775,8 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
                     <Dices size={40} className="mx-auto text-blue-400 mb-3"/>
                     <p className="text-sm text-gray-600 mb-1">Désignation aléatoire en séance</p>
                     <p className="text-xs text-gray-400 mb-4">Seuls les membres n'ayant plus aucune part disponible sont exclus.</p>
-                    <button onClick={handleTirage} className="btn-primary w-full justify-center text-base py-3">
-                      <Dices size={18}/>  Lancer le tirage maintenant
+                    <button onClick={() => runGuarded(handleTirage)} disabled={busyCotisationBenef} className="btn-primary w-full justify-center text-base py-3">
+                      <Dices size={18}/>  {busyCotisationBenef ? 'Tirage en cours…' : 'Lancer le tirage maintenant'}
                     </button>
                   </div>
                   <div className="flex justify-between">
@@ -784,8 +796,8 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
                     <option value="">— Sélectionner un membre —</option>
                     {membresEligiblesGain.map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}{m.nombreParts > 1 ? ` (${m.nombreParts} parts)` : ''}</option>)}
                   </select>
-                  <button onClick={handleDesignationManuelle} disabled={!beneficiaireManuelId} className="btn-primary w-full justify-center">
-                    <Trophy size={15}/> Confirmer ce bénéficiaire
+                  <button onClick={() => runGuarded(handleDesignationManuelle)} disabled={!beneficiaireManuelId || busyCotisationBenef} className="btn-primary w-full justify-center">
+                    <Trophy size={15}/> {busyCotisationBenef ? 'Confirmation…' : 'Confirmer ce bénéficiaire'}
                   </button>
                   <button onClick={() => { setChoixManuel(false); setBeneficiaireManuelId(''); }} className="text-xs text-gray-400 hover:text-gray-600 w-full text-center hover:underline">
                     Revenir au tirage aléatoire
@@ -816,9 +828,9 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
                   <option value="">— Caisse bénéficiaire de l'enchère —</option>
                   {banques.filter(c => c.statut !== 'inactive').map(c => <option key={c.id} value={c.id}>{c.nom}</option>)}
                 </select>
-                <button onClick={handleAjouterEnchere} disabled={!nouvelleEnchereMembre || !nouvelleEnchereMontant || !nouvelleEnchereCaisseId}
+                <button onClick={() => runGuarded(handleAjouterEnchere)} disabled={!nouvelleEnchereMembre || !nouvelleEnchereMontant || !nouvelleEnchereCaisseId || busyCotisationBenef}
                   className="btn-secondary w-full justify-center text-sm">
-                  <Gavel size={14}/> Ajouter cette enchère
+                  <Gavel size={14}/> {busyCotisationBenef ? 'Ajout…' : 'Ajouter cette enchère'}
                 </button>
               </div>
 
@@ -840,8 +852,8 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
                       {meilleureEnchere?.id === e.id && <Badge variant="amber">Meilleure offre</Badge>}
                     </label>
                   ))}
-                  <button onClick={handleCloturerEncheres} className="btn-primary w-full justify-center">
-                    <Trophy size={15}/> Clôturer les enchères — attribuer au meilleur offrant
+                  <button onClick={() => runGuarded(handleCloturerEncheres)} disabled={busyCotisationBenef} className="btn-primary w-full justify-center">
+                    <Trophy size={15}/> {busyCotisationBenef ? 'Clôture…' : 'Clôturer les enchères — attribuer au meilleur offrant'}
                   </button>
                   {enchereIdGagnant && (
                     <>
@@ -852,9 +864,9 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
                       </div>
                       <button onClick={() => {
                         const enc = encheres.find(e => e.id === enchereIdGagnant);
-                        if (enc) handleConfirmerEnchere(enc.idPart);
-                      }} className="btn-secondary w-full justify-center">
-                        <Trophy size={15}/> Désigner manuellement cette offre
+                        if (enc) runGuarded(() => handleConfirmerEnchere(enc.idPart));
+                      }} disabled={busyCotisationBenef} className="btn-secondary w-full justify-center">
+                        <Trophy size={15}/> {busyCotisationBenef ? 'Désignation…' : 'Désigner manuellement cette offre'}
                       </button>
                     </>
                   )}
@@ -876,9 +888,9 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
                   {enchereIdGagnant && miseGagnante && (() => {
                     const m = membres.find(x => x.id === enchereIdGagnant);
                     return m ? (
-                      <button onClick={handleEnregistrerEtDesignerManuellement}
+                      <button onClick={() => runGuarded(handleEnregistrerEtDesignerManuellement)} disabled={busyCotisationBenef}
                         className="btn-primary w-full justify-center">
-                        <Trophy size={15}/> Enregistrer l'offre et désigner le gagnant
+                        <Trophy size={15}/> {busyCotisationBenef ? 'Enregistrement…' : "Enregistrer l'offre et désigner le gagnant"}
                       </button>
                     ) : null;
                   })()}
@@ -1895,6 +1907,7 @@ function BeneficiaireSeancePanel({ reunion }) {
   const [cotisationsCorrection, setCotisationsCorrection] = useState([]); // [{id, nomMembre, montantDu, montantVerse}]
   const [chargementCorrection, setChargementCorrection] = useState(false);
   const [enregistrementCorrection, setEnregistrementCorrection] = useState(false);
+  const [busyPaiement, setBusyPaiement] = useState(false); // anti double-clic : versement / retenue bulletin
 
   // Onglet purement informatif : affiche le(s) bénéficiaire(s) déjà désigné(s)
   // cette séance, quel que soit le mode d'attribution (rotation/tirage/enchère).
@@ -2011,11 +2024,15 @@ function BeneficiaireSeancePanel({ reunion }) {
 
       <Modal open={!!versementModal} onClose={() => setVersementModal(null)} title="Verser le gain au bénéficiaire"
         footer={<>
-          <button onClick={() => setVersementModal(null)} className="btn-secondary">Annuler</button>
+          <button onClick={() => setVersementModal(null)} disabled={busyPaiement} className="btn-secondary">Annuler</button>
           <button onClick={async () => {
-            const bulletin = await payerBulletin(versementModal, modeVersement, referenceVersement);
-            if (bulletin) setVersementModal(null);
-          }} disabled={modeVersement !== 'especes' && !referenceVersement.trim()} className="btn-primary">Confirmer le versement</button>
+            if (busyPaiement) return;
+            setBusyPaiement(true);
+            try {
+              const bulletin = await payerBulletin(versementModal, modeVersement, referenceVersement);
+              if (bulletin) setVersementModal(null);
+            } finally { setBusyPaiement(false); }
+          }} disabled={busyPaiement || (modeVersement !== 'especes' && !referenceVersement.trim())} className="btn-primary">{busyPaiement ? 'Versement…' : 'Confirmer le versement'}</button>
         </>}>
         <p className="text-xs text-gray-500 mb-4">
           Le net est décaissé de la caisse de la tontine. Les retenues sont imputées et apparaissent dans le PV.
@@ -2038,16 +2055,20 @@ function BeneficiaireSeancePanel({ reunion }) {
 
       <Modal open={!!retenueModal} onClose={() => setRetenueModal(null)} title="Ajouter une retenue manuelle"
         footer={<>
-          <button onClick={() => setRetenueModal(null)} className="btn-secondary">Annuler</button>
+          <button onClick={() => setRetenueModal(null)} disabled={busyPaiement} className="btn-secondary">Annuler</button>
           <button
             onClick={async () => {
+              if (busyPaiement) return;
               if (!retenueLibelle.trim() || !retenueMontant || Number(retenueMontant) <= 0) return;
-              const b = await ajouterRetenueBulletin(retenueModal, retenueLibelle.trim(), retenueMontant, retenueCaisseId);
-              if (b) setRetenueModal(null);
+              setBusyPaiement(true);
+              try {
+                const b = await ajouterRetenueBulletin(retenueModal, retenueLibelle.trim(), retenueMontant, retenueCaisseId);
+                if (b) setRetenueModal(null);
+              } finally { setBusyPaiement(false); }
             }}
-            disabled={!retenueLibelle.trim() || !retenueMontant || Number(retenueMontant) <= 0 || !retenueCaisseId}
-            className={clsx('btn-primary', (!retenueLibelle.trim() || !retenueMontant || Number(retenueMontant) <= 0 || !retenueCaisseId) && 'opacity-40 cursor-not-allowed')}>
-            Ajouter
+            disabled={busyPaiement || !retenueLibelle.trim() || !retenueMontant || Number(retenueMontant) <= 0 || !retenueCaisseId}
+            className={clsx('btn-primary', (busyPaiement || !retenueLibelle.trim() || !retenueMontant || Number(retenueMontant) <= 0 || !retenueCaisseId) && 'opacity-40 cursor-not-allowed')}>
+            {busyPaiement ? 'Ajout…' : 'Ajouter'}
           </button>
         </>}>
         <p className="text-xs text-gray-500 mb-3">

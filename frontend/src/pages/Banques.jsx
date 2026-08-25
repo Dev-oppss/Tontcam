@@ -5,6 +5,7 @@ import { useApp } from '../context/AppContext';
 import { PageHeader, Table, Badge, Modal, FormField, SectionCard } from '../components/ui/index';
 import { ModePaiementFields, isModePaiementValid } from '../components/ui/ModePaiement';
 import { getMissingFields } from '../lib/validation';
+import { useAsyncGuard } from '../hooks/useAsyncGuard';
 import clsx from 'clsx';
 
 const typeColors = {
@@ -72,11 +73,11 @@ export default function Banques() {
     setOpModal({ compte, type });
   };
 
-  const handleOp = () => {
+  const handleOp = async () => {
     if (!opForm.montant || Number(opForm.montant) <= 0) { showToast?.('Montant requis.', 'error'); return; }
     if (!isModePaiementValid(opForm.modePaiement, opForm.detailsPaiement)) { showToast?.('Référence de paiement requise pour ce mode de versement.', 'error'); return; }
     if (opModal.type === 'retrait' && Number(opForm.montant) > Number(opModal.compte.solde || 0)) { showToast?.('Solde insuffisant pour ce retrait (RG-CAI-006).', 'error'); return; }
-    doOperation({
+    await doOperation({
       idMembre: opModal.compte.idMembre,
       idBanque: opModal.compte.idBanque,
       typeOperation: opModal.type,
@@ -88,11 +89,12 @@ export default function Banques() {
     });
     setOpModal(null);
   };
+  const [guardedHandleOp, doingOp] = useAsyncGuard(handleOp);
 
   /* ─── Création banque ──────────────────────────────────────── */
-  const handleAddBanque = () => {
+  const handleAddBanque = async () => {
     if (!newBanque.nom.trim()) { showToast?.('Nom de la caisse requis.', 'error'); return; }
-    addBanque({
+    await addBanque({
       ...newBanque,
       pretAutorise: Boolean(newBanque.pretAutorise),
       tauxInteretPret: newBanque.pretAutorise ? Number(newBanque.tauxInteretPret || 0) : 0,
@@ -101,6 +103,7 @@ export default function Banques() {
     setAddModal(false);
     resetAddWizard();
   };
+  const [guardedHandleAddBanque, addingBanque] = useAsyncGuard(handleAddBanque);
 
   /* ─── Édition banque ───────────────────────────────────────── */
   const openEditModal = (b) => {
@@ -126,18 +129,20 @@ export default function Banques() {
     });
     setEditModal(null);
   };
+  const [guardedHandleEditBanque, editingBanque] = useAsyncGuard(handleEditBanque);
 
   /* ─── Inscription membre ───────────────────────────────────── */
-  const handleEnroll = () => {
+  const handleEnroll = async () => {
     if (!enrollModal) return;
     if (!enrollForm.idMembre) { showToast?.('Membre à inscrire requis.', 'error'); return; }
     const mEnroll = membres.find(m => m.id === enrollForm.idMembre);
-    addMembreBanque({ idMembre: enrollForm.idMembre, idBanque: enrollModal.id, nomBanque: enrollModal.nom,
+    await addMembreBanque({ idMembre: enrollForm.idMembre, idBanque: enrollModal.id, nomBanque: enrollModal.nom,
       nomMembre: mEnroll ? `${mEnroll.nom} ${mEnroll.prenom}` : '—',
     });
     setEnrollForm({ idMembre:'' });
     setEnrollModal(null);
   };
+  const [guardedHandleEnroll, enrolling] = useAsyncGuard(handleEnroll);
 
   const pretAutorise = Boolean(newBanque.pretAutorise);
 
@@ -309,7 +314,7 @@ export default function Banques() {
         onClose={() => { setAddModal(false); resetAddWizard(); }}
         size="xl"
         title="Nouvelle caisse"
-        footer={<><button onClick={() => setAddModal(false)} className="btn-secondary">Annuler</button><button onClick={handleAddBanque} disabled={!newBanque.nom.trim()} className="btn-primary disabled:opacity-40 disabled:cursor-not-allowed"><Plus size={14} /> Créer la caisse</button></>}
+        footer={<><button onClick={() => setAddModal(false)} disabled={addingBanque} className="btn-secondary">Annuler</button><button onClick={guardedHandleAddBanque} disabled={addingBanque || !newBanque.nom.trim()} className="btn-primary disabled:opacity-40 disabled:cursor-not-allowed"><Plus size={14} /> {addingBanque ? 'Création…' : 'Créer la caisse'}</button></>}
       >
         {/* ── Étape 1 : Informations ─────────────────────── */}
         {step === 1 && (
@@ -547,7 +552,7 @@ export default function Banques() {
         onClose={() => setEditModal(null)}
         size="xl"
         title="Modifier la caisse"
-        footer={<><button onClick={() => setEditModal(null)} className="btn-secondary">Annuler</button><button onClick={handleEditBanque} disabled={!editBanque.nom.trim()} className="btn-primary disabled:opacity-40 disabled:cursor-not-allowed"><Pencil size={14} /> Enregistrer</button></>}
+        footer={<><button onClick={() => setEditModal(null)} disabled={editingBanque} className="btn-secondary">Annuler</button><button onClick={guardedHandleEditBanque} disabled={editingBanque || !editBanque.nom.trim()} className="btn-primary disabled:opacity-40 disabled:cursor-not-allowed"><Pencil size={14} /> {editingBanque ? 'Enregistrement…' : 'Enregistrer'}</button></>}
       >
         <div className="space-y-4">
           <FormField label="Nom de la caisse" required>
@@ -698,8 +703,8 @@ export default function Banques() {
         onClose={() => { setEnrollModal(null); setEnrollForm({ idMembre:'' }); }}
         title={`Inscrire un membre — ${enrollModal?.nom}`}
         footer={<>
-          <button onClick={() => { setEnrollModal(null); setEnrollForm({ idMembre:'' }); }} className="btn-secondary">Annuler</button>
-          <button onClick={handleEnroll} className="btn-primary"><UserPlus size={14} /> Inscrire</button>
+          <button onClick={() => { setEnrollModal(null); setEnrollForm({ idMembre:'' }); }} disabled={enrolling} className="btn-secondary">Annuler</button>
+          <button onClick={guardedHandleEnroll} disabled={enrolling} className="btn-primary"><UserPlus size={14} /> {enrolling ? 'Inscription…' : 'Inscrire'}</button>
         </>}
       >
         <div className="space-y-4">
@@ -733,15 +738,15 @@ export default function Banques() {
         onClose={() => setOpModal(null)}
         title={opModal?.type === 'depot' ? `Dépôt — ${opModal?.compte.nomMembre}` : `Retrait — ${opModal?.compte.nomMembre}`}
         footer={<>
-          <button onClick={() => setOpModal(null)} className="btn-secondary">Annuler</button>
+          <button onClick={() => setOpModal(null)} disabled={doingOp} className="btn-secondary">Annuler</button>
           <button
-            onClick={handleOp}
-            disabled={!opForm.montant || Number(opForm.montant) <= 0 || !isModePaiementValid(opForm.modePaiement, opForm.detailsPaiement) || (opModal?.type === 'retrait' && Number(opForm.montant) > Number(opModal?.compte.solde || 0))}
-            className={clsx('btn-primary', (!opForm.montant || Number(opForm.montant) <= 0 || !isModePaiementValid(opForm.modePaiement, opForm.detailsPaiement) || (opModal?.type === 'retrait' && Number(opForm.montant) > Number(opModal?.compte.solde || 0))) && 'opacity-40 cursor-not-allowed')}
+            onClick={guardedHandleOp}
+            disabled={doingOp || !opForm.montant || Number(opForm.montant) <= 0 || !isModePaiementValid(opForm.modePaiement, opForm.detailsPaiement) || (opModal?.type === 'retrait' && Number(opForm.montant) > Number(opModal?.compte.solde || 0))}
+            className={clsx('btn-primary', (doingOp || !opForm.montant || Number(opForm.montant) <= 0 || !isModePaiementValid(opForm.modePaiement, opForm.detailsPaiement) || (opModal?.type === 'retrait' && Number(opForm.montant) > Number(opModal?.compte.solde || 0))) && 'opacity-40 cursor-not-allowed')}
           >
-            {opModal?.type === 'depot'
+            {doingOp ? 'Enregistrement…' : (opModal?.type === 'depot'
               ? <><ArrowDownCircle size={14} /> Enregistrer le dépôt</>
-              : <><ArrowUpCircle size={14} /> Enregistrer le retrait</>}
+              : <><ArrowUpCircle size={14} /> Enregistrer le retrait</>)}
           </button>
         </>}
       >

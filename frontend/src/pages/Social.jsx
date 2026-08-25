@@ -4,6 +4,7 @@ import { useApp } from '../context/AppContext';
 import { fmt, fmtDate } from '../data/mockData';
 import { PageHeader, SectionCard, Table, Badge, Modal, FormField } from '../components/ui/index';
 import { ModePaiementFields, isModePaiementValid, ModePaiementBadge } from '../components/ui/ModePaiement';
+import { useAsyncGuard } from '../hooks/useAsyncGuard';
 
 const CATEGORIES = [
   { code: 'naissance',      label: 'Naissance',            delaiJours: 30, param: 'aideNaissance' },
@@ -51,11 +52,11 @@ export default function Social() {
   const versees = aidesSociales.filter((a) => a.statut === 'versee');
   const totalVerse = versees.reduce((s, a) => s + Number(a.montant), 0);
 
-  const handleAdd = () => {
+  const handleAdd = async () => {
     if (!form.idMembre || !form.categorie) return;
     if (nbDejaAccorde(form.idMembre, typeSelectionne?.typeEvenement) >= maxParCategorieAn) return; // garde-fou RG-SOC-010
     const m = membres.find((x) => x.id === form.idMembre);
-    addAideSociale?.({
+    await addAideSociale?.({
       ...form,
       idMembre: form.idMembre,
       nomMembre: `${m?.nom || ''} ${m?.prenom || ''}`.trim(),
@@ -65,6 +66,7 @@ export default function Social() {
     setAdd(false);
     setForm(EMPTY);
   };
+  const [guardedHandleAdd, declaringAide] = useAsyncGuard(handleAdd);
 
   const limiteAtteinte = form.idMembre && form.categorie && nbDejaAccorde(form.idMembre, typeSelectionne?.typeEvenement) >= maxParCategorieAn;
 
@@ -74,17 +76,34 @@ export default function Social() {
     setAddType(true);
   };
   const closeTypeModal = () => { setAddType(false); setEditingTypeId(null); setTypeForm(EMPTY_TYPE); };
+  const [guardedSaveType, savingTypeAide] = useAsyncGuard(async () => {
+    if (!typeForm.libelle.trim()) return;
+    const payload = { libelle: typeForm.libelle.trim(), typeEvenement: typeForm.typeEvenement, montantFixe: Number(typeForm.montantFixe || 0) };
+    const result = editingTypeId ? await updateTypeAideSociale?.(editingTypeId, payload) : await addTypeAideSociale(payload);
+    if (result) closeTypeModal();
+  });
   const handleDeleteType = (t) => {
     if (window.confirm(`Supprimer le type d'aide « ${t.libelle} » ?`)) deleteTypeAideSociale?.(t.id);
   };
+  const [guardedHandleDeleteType, deletingType] = useAsyncGuard(async (t) => {
+    if (window.confirm(`Supprimer le type d'aide « ${t.libelle} » ?`)) await deleteTypeAideSociale?.(t.id);
+  });
 
   // Caisse de versement : celle configurée sur le type si présente, sinon à
   // choisir ici (paramétrer un type n'exige plus de caisse, cf addTypeAideSociale).
   const verserCaisseRequise = verserModal && !typesAideSociale.find((t) => t.id === verserModal.categorie)?.caisseSourceId;
-  const handleVerser = () => {
+  const handleVerser = async () => {
     if (verserCaisseRequise && !verserCaisse) { showToast?.('Choisissez la caisse à débiter pour ce versement.', 'error'); return; }
-    verserAideSociale?.(verserModal.id, { modePaiement: verserMode, detailsPaiement: verserDetails, idCaisse: verserCaisse || undefined });
+    await verserAideSociale?.(verserModal.id, { modePaiement: verserMode, detailsPaiement: verserDetails, idCaisse: verserCaisse || undefined });
     setVerserModal(null);
+  };
+  const [guardedHandleVerser, verserEnCours] = useAsyncGuard(handleVerser);
+
+  const [validationEnCours, setValidationEnCours] = useState(null); // id de l'aide en cours de validation/rejet — anti double-clic ciblé
+  const guardedValiderAideSociale = async (id, ...args) => {
+    if (validationEnCours) return;
+    setValidationEnCours(id);
+    try { await validerAideSociale?.(id, ...args); } finally { setValidationEnCours(null); }
   };
 
   return (
@@ -131,7 +150,7 @@ export default function Social() {
                   <button onClick={() => openEditType(t)} title="Modifier" className="p-1 hover:bg-white rounded-lg text-ink-600/50 hover:text-indigo-600">
                     <Pencil size={12}/>
                   </button>
-                  <button onClick={() => handleDeleteType(t)} title="Supprimer" className="p-1 hover:bg-white rounded-lg text-ink-600/50 hover:text-red-600">
+                  <button onClick={() => guardedHandleDeleteType(t)} disabled={deletingType} title="Supprimer" className="p-1 hover:bg-white rounded-lg text-ink-600/50 hover:text-red-600">
                     <Trash2 size={12}/>
                   </button>
                 </div>
@@ -166,8 +185,8 @@ export default function Social() {
                 <div className="flex items-center gap-1">
                   {a.statut === 'demandee' && (
                     <>
-                      <button onClick={() => validerAideSociale?.(a.id, 'approuvee')} title="Approuver" className="btn-primary py-1 px-2.5 text-xs"><CheckCircle2 size={12} />Valider</button>
-                      <button onClick={() => validerAideSociale?.(a.id, 'refusee')} title="Refuser" className="p-1.5 hover:bg-red-50 rounded-lg"><XCircle size={14} className="text-red-400"/></button>
+                      <button onClick={() => guardedValiderAideSociale(a.id, 'approuvee')} disabled={validationEnCours===a.id} title="Approuver" className="btn-primary py-1 px-2.5 text-xs"><CheckCircle2 size={12} />{validationEnCours===a.id ? '…' : 'Valider'}</button>
+                      <button onClick={() => guardedValiderAideSociale(a.id, 'refusee')} disabled={validationEnCours===a.id} title="Refuser" className="p-1.5 hover:bg-red-50 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed"><XCircle size={14} className="text-red-400"/></button>
                     </>
                   )}
                   {a.statut === 'approuvee' && (
@@ -185,12 +204,12 @@ export default function Social() {
 
       <Modal open={!!verserModal} onClose={() => setVerserModal(null)} title="Verser l'aide sociale"
         footer={<>
-          <button onClick={() => setVerserModal(null)} className="btn-secondary">Annuler</button>
+          <button onClick={() => setVerserModal(null)} disabled={verserEnCours} className="btn-secondary">Annuler</button>
           <button
-            onClick={handleVerser}
-            disabled={!isModePaiementValid(verserMode, verserDetails) || (verserCaisseRequise && !verserCaisse)}
-            className={`btn-primary ${(!isModePaiementValid(verserMode, verserDetails) || (verserCaisseRequise && !verserCaisse)) ? 'opacity-40 cursor-not-allowed' : ''}`}
-          ><Wallet size={14}/>Confirmer le versement</button>
+            onClick={guardedHandleVerser}
+            disabled={verserEnCours || !isModePaiementValid(verserMode, verserDetails) || (verserCaisseRequise && !verserCaisse)}
+            className={`btn-primary ${(verserEnCours || !isModePaiementValid(verserMode, verserDetails) || (verserCaisseRequise && !verserCaisse)) ? 'opacity-40 cursor-not-allowed' : ''}`}
+          ><Wallet size={14}/>{verserEnCours ? 'Versement…' : 'Confirmer le versement'}</button>
         </>}>
         {verserModal && (
           <div className="space-y-4">
@@ -218,8 +237,8 @@ export default function Social() {
 
       <Modal open={add} onClose={() => setAdd(false)} title="Déclarer un événement social"
         footer={<>
-          <button onClick={() => setAdd(false)} className="btn-secondary">Annuler</button>
-          <button onClick={handleAdd} disabled={limiteAtteinte} className="btn-primary"><HeartHandshake size={14} />Déclarer</button>
+          <button onClick={() => setAdd(false)} disabled={declaringAide} className="btn-secondary">Annuler</button>
+          <button onClick={guardedHandleAdd} disabled={limiteAtteinte || declaringAide} className="btn-primary"><HeartHandshake size={14} />{declaringAide ? 'Déclaration…' : 'Déclarer'}</button>
         </>}>
         <div className="space-y-4">
           <FormField label="Membre" required>
@@ -255,13 +274,8 @@ export default function Social() {
       </Modal>
       <Modal open={addType} onClose={closeTypeModal} title={editingTypeId ? "Modifier le type d'aide sociale" : "Paramétrer un type d'aide sociale"}
         footer={<>
-          <button onClick={closeTypeModal} className="btn-secondary">Annuler</button>
-          <button onClick={async () => {
-            if (!typeForm.libelle.trim()) return;
-            const payload = { libelle: typeForm.libelle.trim(), typeEvenement: typeForm.typeEvenement, montantFixe: Number(typeForm.montantFixe || 0) };
-            const result = editingTypeId ? await updateTypeAideSociale?.(editingTypeId, payload) : await addTypeAideSociale(payload);
-            if (result) closeTypeModal();
-          }} className="btn-primary"><Settings2 size={14}/>Enregistrer</button>
+          <button onClick={closeTypeModal} disabled={savingTypeAide} className="btn-secondary">Annuler</button>
+          <button onClick={guardedSaveType} disabled={savingTypeAide} className="btn-primary"><Settings2 size={14}/>{savingTypeAide ? 'Enregistrement…' : 'Enregistrer'}</button>
         </>}>
         <div className="space-y-4">
           <FormField label="Libellé" required hint="Ex : « Mariage », « Naissance jumeaux », « Rentrée scolaire »">

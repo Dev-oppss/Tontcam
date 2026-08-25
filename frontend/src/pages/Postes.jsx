@@ -3,6 +3,7 @@ import { Landmark, UserCheck, History, LogOut, Plus } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { PageHeader, SectionCard, Table, Badge, Modal, FormField } from '../components/ui/index';
 import { getMissingFields } from '../lib/validation';
+import { useAsyncGuard } from '../hooks/useAsyncGuard';
 
 export default function Postes() {
   const { membres = [], postes = [], mandats = [], addPoste, addMandat, cloturerMandat, parametres, showToast } = useApp();
@@ -18,14 +19,15 @@ export default function Postes() {
   const nbPostesMembre = (idMembre) =>
     mandats.filter((m) => m.idMembre === idMembre && !m.dateFin).length;
 
-  const handleAssign = () => {
+  const handleAssign = async () => {
     if (!assignModal) return;
     if (!form.idMembre) { showToast?.('Membre requis.', 'error'); return; }
     if (nbPostesMembre(form.idMembre) >= plafond) { showToast?.(`Plafond de ${plafond} poste(s) simultané(s) atteint pour ce membre (RG-ORG-010).`, 'error'); return; }
-    addMandat?.({ idPoste: assignModal.poste.id, idMembre: form.idMembre, dateDebut: form.dateDebut });
+    await addMandat?.({ idPoste: assignModal.poste.id, idMembre: form.idMembre, dateDebut: form.dateDebut });
     setAssignModal(null);
     setForm({ idMembre: '', dateDebut: new Date().toISOString().split('T')[0] });
   };
+  const [guardedHandleAssign, assigning] = useAsyncGuard(handleAssign);
   const handleCreatePoste = async () => {
     const missing = getMissingFields(posteForm, [
       { key: 'libelle', label: 'Intitulé' },
@@ -37,6 +39,14 @@ export default function Postes() {
       setPosteModal(false);
       setPosteForm({ libelle: '', code: '', role_utilisateur: '', niveau_hierarchie: 3, est_bureau: false });
     }
+  };
+  const [guardedHandleCreatePoste, creatingPoste] = useAsyncGuard(handleCreatePoste);
+  const [busyMandatId, setBusyMandatId] = useState(null); // anti double-clic : clôture d'un mandat précis
+  const handleCloturerMandat = async (idMandat) => {
+    if (busyMandatId) return;
+    setBusyMandatId(idMandat);
+    try { await cloturerMandat?.(idMandat, new Date().toISOString().split('T')[0]); }
+    finally { setBusyMandatId(null); }
   };
 
   return (
@@ -78,7 +88,8 @@ export default function Postes() {
                 </button>
                 {titulaire && (
                   <button
-                    onClick={() => cloturerMandat?.(titulaire.id, new Date().toISOString().split('T')[0])}
+                    onClick={() => handleCloturerMandat(titulaire.id)}
+                    disabled={busyMandatId === titulaire.id}
                     className="btn-danger py-1.5 px-2.5 text-xs"
                     title="Clôturer le mandat"
                   >
@@ -117,7 +128,7 @@ export default function Postes() {
         title={`Attribuer : ${assignModal?.poste?.libelle || ''}`}
         footer={<>
           <button onClick={() => setAssignModal(null)} className="btn-secondary">Annuler</button>
-          <button onClick={handleAssign} className="btn-primary"><UserCheck size={14} />Attribuer</button>
+          <button onClick={guardedHandleAssign} disabled={assigning} className="btn-primary"><UserCheck size={14} />{assigning ? 'Attribution…' : 'Attribuer'}</button>
         </>}
       >
         <div className="space-y-4">
@@ -142,7 +153,7 @@ export default function Postes() {
       </Modal>
 
       <Modal open={posteModal} onClose={() => setPosteModal(false)} title="Créer un poste"
-        footer={<><button onClick={() => setPosteModal(false)} className="btn-secondary">Annuler</button><button onClick={handleCreatePoste} className="btn-primary">Créer</button></>}>
+        footer={<><button onClick={() => setPosteModal(false)} disabled={creatingPoste} className="btn-secondary">Annuler</button><button onClick={guardedHandleCreatePoste} disabled={creatingPoste} className="btn-primary">{creatingPoste ? 'Création…' : 'Créer'}</button></>}>
         <div className="space-y-4">
           <FormField label="Intitulé" required><input className="input" value={posteForm.libelle} onChange={e => setPosteForm(f => ({ ...f, libelle: e.target.value }))}/></FormField>
           <FormField label="Code" required hint="Ex. COMMISSAIRE_AUX_COMPTES"><input className="input uppercase" value={posteForm.code} onChange={e => setPosteForm(f => ({ ...f, code: e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '_') }))}/></FormField>

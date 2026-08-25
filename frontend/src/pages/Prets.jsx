@@ -6,6 +6,7 @@ import { PageHeader, Table, Badge, Modal, FormField } from '../components/ui/ind
 import { ModePaiementFields, isModePaiementValid } from '../components/ui/ModePaiement';
 import { computeEcheancesAvecPenalites, statutEcheanceLabel } from '../lib/penalites';
 import { getMissingFields } from '../lib/validation';
+import { useAsyncGuard } from '../hooks/useAsyncGuard';
 
 export default function Prets() {
   const { membres, prets, comptesBanque, caisses, addPret, validerPret, approuverPret, refuserPret, decaisserPret, rembourserPret, distribuerInteretsPret, showToast } = useApp();
@@ -131,7 +132,7 @@ export default function Prets() {
   const enRetard  = pretsLive.filter(p => p.statut === 'en_cours' && p.nbEcheancesEnRetard > 0);
   const rembourse = pretsLive.filter(p => p.statut === 'rembourse');
 
-  const handleAdd = () => {
+  const handleAdd = async () => {
     const missing = getMissingFields(form, [
       { key: 'idMembre', label: 'Membre bénéficiaire' },
       { key: 'caisseId', label: 'Caisse source' },
@@ -140,7 +141,7 @@ export default function Prets() {
     if (missing.length) { showToast?.(`Champ(s) requis manquant(s) : ${missing.join(', ')}`, 'error'); return; }
     if (!pretSimule) { showToast?.('Simulation du prêt indisponible — vérifiez les paramètres saisis.', 'error'); return; }
     const m = membres.find(x => x.id === form.idMembre);
-    addPret({
+    await addPret({
       ...form,
       montantPret: Number(form.montantPret),
       tauxInteret: Number(form.tauxInteret),
@@ -159,12 +160,13 @@ export default function Prets() {
     setAdd(false);
     setForm({ idMembre: '', caisseId: '', montantPret: '', tauxInteret: 10, dureeMois: 3, datePret: new Date().toISOString().split('T')[0], dateEcheance: '', garantie: "Caution d'un membre", observation: '' });
   };
+  const [guardedHandleAdd, addingPret] = useAsyncGuard(handleAdd);
 
-  const handleRembourser = () => {
+  const handleRembourser = async () => {
     if (!remMontant || Number(remMontant) <= 0) { showToast?.('Montant reçu requis.', 'error'); return; }
     if (!isModePaiementValid(remModePaiement, remDetailsPaiement)) { showToast?.('Référence de paiement requise pour ce mode de versement.', 'error'); return; }
     const reste = remModal.resteAPayer - Number(remMontant);
-    rembourserPret(remModal.id, Number(remMontant), { modePaiement: remModePaiement, detailsPaiement: remDetailsPaiement });
+    await rembourserPret(remModal.id, Number(remMontant), { modePaiement: remModePaiement, detailsPaiement: remDetailsPaiement });
     if (reste <= 0 && !remModal.interetsDistribues) {
       setTimeout(() => distribuerInteretsPret(remModal.id), 200);
     }
@@ -173,6 +175,7 @@ export default function Prets() {
     setRemModePaiement('especes');
     setRemDetailsPaiement('');
   };
+  const [guardedHandleRembourser, remboursing] = useAsyncGuard(handleRembourser);
 
   return (
     <div className="space-y-6">
@@ -469,12 +472,12 @@ export default function Prets() {
       {/* Modal remboursement */}
       <Modal open={!!remModal} onClose={() => setRemModal(null)} title="Enregistrer un remboursement"
         footer={<>
-          <button onClick={() => setRemModal(null)} className="btn-secondary">Annuler</button>
+          <button onClick={() => setRemModal(null)} disabled={remboursing} className="btn-secondary">Annuler</button>
           <button
-            onClick={handleRembourser}
-            disabled={!remMontant || Number(remMontant) <= 0 || !isModePaiementValid(remModePaiement, remDetailsPaiement)}
-            className={`btn-primary ${(!remMontant || Number(remMontant) <= 0 || !isModePaiementValid(remModePaiement, remDetailsPaiement)) ? 'opacity-40 cursor-not-allowed' : ''}`}
-          ><CreditCard size={14}/>Valider</button>
+            onClick={guardedHandleRembourser}
+            disabled={remboursing || !remMontant || Number(remMontant) <= 0 || !isModePaiementValid(remModePaiement, remDetailsPaiement)}
+            className={`btn-primary ${(remboursing || !remMontant || Number(remMontant) <= 0 || !isModePaiementValid(remModePaiement, remDetailsPaiement)) ? 'opacity-40 cursor-not-allowed' : ''}`}
+          ><CreditCard size={14}/>{remboursing ? 'Validation…' : 'Valider'}</button>
         </>}>
         {remModal && (() => {
           const caisseDuPret = caissesMap[remModal.caisseId];
@@ -525,7 +528,7 @@ export default function Prets() {
 
       {/* Modal nouveau prêt */}
       <Modal open={add} onClose={() => setAdd(false)} title="Nouveau prêt"
-        footer={<><button onClick={() => setAdd(false)} className="btn-secondary">Annuler</button><button onClick={handleAdd} className="btn-primary"><HandCoins size={14}/>Accorder le prêt</button></>}>
+        footer={<><button onClick={() => setAdd(false)} disabled={addingPret} className="btn-secondary">Annuler</button><button onClick={guardedHandleAdd} disabled={addingPret} className="btn-primary"><HandCoins size={14}/>{addingPret ? 'Enregistrement…' : 'Accorder le prêt'}</button></>}>
         <div className="space-y-4">
           <FormField label="Membre bénéficiaire" required>
             <select className="select" value={form.idMembre} onChange={e => setForm(f => ({ ...f, idMembre: e.target.value }))}>

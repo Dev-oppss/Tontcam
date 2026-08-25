@@ -9,6 +9,7 @@ import { fmt, fmtDate } from '../data/mockData';
 import { useApp } from '../context/AppContext';
 import { PageHeader, Badge, Modal, FormField } from '../components/ui/index';
 import { getMissingFields } from '../lib/validation';
+import { useAsyncGuard } from '../hooks/useAsyncGuard';
 import clsx from 'clsx';
 
 // ── Catégories de flux financiers (hors cotisations tontine) ──
@@ -129,6 +130,7 @@ export default function Caisse() {
       motif: '',
     });
   };
+  const [guardedHandleTransfer, transferring] = useAsyncGuard(handleTransfer);
 
   const exportCSV = () => {
     const rows = [['Date','Caisse','Opération','Catégorie','Entrée','Sortie','Solde cumulé']];
@@ -675,8 +677,8 @@ export default function Caisse() {
         title="Nouveau transfert de caisse"
         footer={
           <>
-            <button onClick={() => setShowTransfer(false)} className="btn-secondary">Annuler</button>
-            <button onClick={handleTransfer} className="btn-primary"><RefreshCw size={14}/> Transférer</button>
+            <button onClick={() => setShowTransfer(false)} disabled={transferring} className="btn-secondary">Annuler</button>
+            <button onClick={guardedHandleTransfer} disabled={transferring} className="btn-primary"><RefreshCw size={14}/> {transferring ? 'Transfert…' : 'Transférer'}</button>
           </>
         }
       >

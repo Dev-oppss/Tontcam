@@ -12,6 +12,7 @@ import { PageHeader, Badge, Modal, FormField } from '../components/ui/index';
 import { ModePaiementFields, isModePaiementValid } from '../components/ui/ModePaiement';
 import { NavLink, useSearchParams } from 'react-router-dom';
 import clsx from 'clsx';
+import { useAsyncGuard } from '../hooks/useAsyncGuard';
 
 const TYPE_CONFIG = {
   rotation: {
@@ -136,7 +137,7 @@ export default function Tontines() {
   const getProchainTour   = (id, nb) => Math.min(getNbEncaisses(id) + 1, nb);
   const modeAttributionVerrouillee = !!showEdit && (cyclesTontine || []).some((cycle) => cycle.idTontine === showEdit.id);
 
-  const handleAdd = () => {
+  const handleAdd = async () => {
     const missing = getMissingFields(form, [
       { key: 'nom', label: 'Nom de la tontine' },
       { key: 'idCaisse', label: 'Caisse liée' },
@@ -146,11 +147,12 @@ export default function Tontines() {
     if (!missing.length && (!form.cotisation || Number(form.cotisation) <= 0)) missing.push('Cotisation / part');
     if (missing.length) { showToast?.(`Champ(s) requis manquant(s) : ${missing.join(', ')}`, 'error'); return; }
     const dateFin = form.dateFin || calcDateFin(form.dateDebut, form.dureeSeances, form.periode);
-    addTontine({ ...form, cotisation: Number(form.cotisation), nbTours: Number(form.nbTours), dateFin });
+    await addTontine({ ...form, cotisation: Number(form.cotisation), nbTours: Number(form.nbTours), dateFin });
     setShowAdd(false); setForm(EMPTY_FORM);
   };
+  const [guardedHandleAddTontine, addingTontine] = useAsyncGuard(handleAdd);
 
-  const handleEdit = () => {
+  const handleEdit = async () => {
     const missing = getMissingFields(form, [
       { key: 'nom', label: 'Nom' },
       { key: 'idCaisse', label: 'Caisse liée' },
@@ -158,9 +160,10 @@ export default function Tontines() {
     ]);
     if (!missing.length && (!form.cotisation || Number(form.cotisation) <= 0)) missing.push('Cotisation');
     if (missing.length) { showToast?.(`Champ(s) requis manquant(s) : ${missing.join(', ')}`, 'error'); return; }
-    updateTontine({ ...showEdit, ...form, cotisation: Number(form.cotisation), nbTours: Number(form.nbTours), dureeSeances: Number(form.dureeSeances) });
+    await updateTontine({ ...showEdit, ...form, cotisation: Number(form.cotisation), nbTours: Number(form.nbTours), dureeSeances: Number(form.dureeSeances) });
     setShowEdit(null);
   };
+  const [guardedHandleEdit, editingTontine] = useAsyncGuard(handleEdit);
 
   const nextNumeroPart = (idTontine) => {
     const existants = membresParTontine.filter(mt => mt.idTontine === idTontine);
@@ -207,6 +210,7 @@ export default function Tontines() {
     }
     setBulkParts({}); setBulkAvalistes({});
   };
+  const [guardedHandleSaveBulkParts, savingBulkParts] = useAsyncGuard(handleSaveBulkParts);
 
   const handleAddTour = (idTontine, nbTours) => {
     if (!formTour.idMembre) return;
@@ -238,6 +242,7 @@ export default function Tontines() {
       });
     }
   };
+  const [guardedHandleTirage, tirageEnCours] = useAsyncGuard(handleTirage);
 
   // Chaque `mt` est une part (une ligne = une part côté serveur). On y ajoute les
   // champs du membre SANS écraser l'id de la part (bug corrigé : `{...mt, ...membre}`
@@ -682,8 +687,8 @@ export default function Tontines() {
                       <div className="flex gap-2">
                         <input type="date" className="input flex-1 text-sm" value={formTour.datePrevue}
                           onChange={e=>setFormTour(f=>({...f,datePrevue:e.target.value}))}/>
-                        <button onClick={()=>handleTirage(t.id,t.nbTours)} className="btn-primary text-sm px-4 flex items-center gap-1.5">
-                          <Shuffle size={14}/> Tirer
+                        <button onClick={()=>guardedHandleTirage(t.id,t.nbTours)} disabled={tirageEnCours} className="btn-primary text-sm px-4 flex items-center gap-1.5">
+                          <Shuffle size={14}/> {tirageEnCours ? 'Tirage…' : 'Tirer'}
                         </button>
                       </div>
                     </div>
@@ -760,7 +765,7 @@ export default function Tontines() {
         const pot = potTontine(t);
         return (
           <Modal open={true} onClose={()=>{setShowMembres(null);setBulkParts({});setBulkAvalistes({});}} title={`${cfg.icon} Membres — ${t.nom}`}
-            footer={<div className="flex gap-2 w-full"><button onClick={async()=>{await handleSaveBulkParts(t.id);}} className="btn-primary"><Pencil size={14}/> Enregistrer</button><button onClick={()=>{setShowMembres(null);setBulkParts({});setBulkAvalistes({});}} className="btn-secondary ml-auto">Fermer</button></div>}>
+            footer={<div className="flex gap-2 w-full"><button onClick={()=>guardedHandleSaveBulkParts(t.id)} disabled={savingBulkParts} className="btn-primary"><Pencil size={14}/> {savingBulkParts ? 'Enregistrement…' : 'Enregistrer'}</button><button onClick={()=>{setShowMembres(null);setBulkParts({});setBulkAvalistes({});}} disabled={savingBulkParts} className="btn-secondary ml-auto">Fermer</button></div>}>
             <div className="space-y-4">
               <div className="grid grid-cols-3 gap-2 text-center">
                 <div className="p-2.5 bg-gray-50 rounded-xl"><p className="text-sm font-bold text-primary-600">{fmt(pot)}</p><p className="text-xs text-gray-400">Pot/tour</p></div>
@@ -817,7 +822,7 @@ export default function Tontines() {
 
       {/* Nouvelle tontine */}
       <Modal open={showAdd} onClose={()=>setShowAdd(false)} title="Nouvelle tontine"
-        footer={<><button onClick={()=>setShowAdd(false)} className="btn-secondary">Annuler</button><button onClick={handleAdd} disabled={!form.nom.trim()||!form.cotisation} className={clsx('btn-primary',(!form.nom.trim()||!form.cotisation)&&'opacity-40 cursor-not-allowed')}><Plus size={14}/> Créer</button></>}>
+        footer={<><button onClick={()=>setShowAdd(false)} disabled={addingTontine} className="btn-secondary">Annuler</button><button onClick={guardedHandleAddTontine} disabled={!form.nom.trim()||!form.cotisation||addingTontine} className={clsx('btn-primary',(!form.nom.trim()||!form.cotisation||addingTontine)&&'opacity-40 cursor-not-allowed')}><Plus size={14}/> {addingTontine ? 'Création…' : 'Créer'}</button></>}>
         <div className="space-y-5">
           <div className="p-3 bg-gray-50 rounded-xl space-y-3">
             <p className="text-xs font-bold text-gray-500 uppercase">Identité</p>
@@ -876,7 +881,7 @@ export default function Tontines() {
 
       {/* Modifier tontine */}
       <Modal open={!!showEdit} onClose={()=>setShowEdit(null)} title={`Modifier — ${showEdit?.nom}`}
-        footer={<><button onClick={()=>setShowEdit(null)} className="btn-secondary">Annuler</button><button onClick={handleEdit} className="btn-primary"><Pencil size={14}/>Enregistrer</button></>}>
+        footer={<><button onClick={()=>setShowEdit(null)} disabled={editingTontine} className="btn-secondary">Annuler</button><button onClick={guardedHandleEdit} disabled={editingTontine} className="btn-primary"><Pencil size={14}/>{editingTontine ? 'Enregistrement…' : 'Enregistrer'}</button></>}>
         <div className="space-y-4">
           <FormField label="Nom" required><F k="nom"/></FormField>
           <div className="grid grid-cols-2 gap-3">
