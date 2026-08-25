@@ -220,6 +220,37 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
     });
   }, [idTontineSelectee, membresDeLatontine, tontineSelectee]);
 
+  // ── Reprise d'un cycle laissé en suspens ──────────────────────────────
+  // Bug corrigé : "Valider et désigner le bénéficiaire" ouvre le cycle
+  // (ouvrirCycle) dès la validation des cotisations — AVANT toute
+  // désignation réelle — pour pouvoir y rattacher les transactions de
+  // cotisation (cf. commentaire dans handleValiderFeuille). Si l'utilisateur
+  // quitte ensuite l'onglet (ex. pour aller pointer les présences) sans
+  // avoir désigné de bénéficiaire, ce cycle "ouvert" reste orphelin en base
+  // : le tour est déjà compté, mais localement `etape`/`cycleActuelId` sont
+  // remis à zéro au remontage du composant. Résultat : en revenant sur
+  // Feuille Cotisation, tout repart de "choix" comme si rien n'avait été
+  // fait, et re-valider les cotisations tente d'ouvrir un DEUXIÈME cycle
+  // pour la même séance → rejeté par le backend ("comporte déjà le nombre
+  // de tours prévu"), avec un message qui ne dit pas pourquoi.
+  //
+  // On détecte donc ici, pour la tontine sélectionnée, un cycle déjà ouvert
+  // pour cette réunion et pas encore clos/annulé, et on reprend directement
+  // à l'étape bénéficiaire au lieu de repartir de zéro.
+  const cycleOuvertPourTontine = (idTontineCandidat) => (cyclesTontine || []).find(c =>
+    c.idReunion === reunion.id && c.idTontine === idTontineCandidat && c.statut !== 'clos' && c.statut !== 'annule');
+
+  useEffect(() => {
+    if (!tontineSelectee) return;
+    if (etape !== 'choix' && etape !== 'cotisation') return;
+    const enSuspens = cycleOuvertPourTontine(tontineSelectee.id);
+    if (enSuspens && enSuspens.id !== cycleActuelId) {
+      setCycleActuelId(enSuspens.id);
+      setEtape('beneficiaire');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tontineSelectee, cyclesTontine]);
+
   const toggleCotise = (idMembre) =>
     setStatutParMembre(prev => ({ ...prev, [idMembre]: prev[idMembre] === 'defaillant' ? 'cotise' : 'defaillant' }));
   const setModePaiementMembre = (idMembre, patch) =>
@@ -439,6 +470,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
               const progressPct = t.nbTours > 0 ? Math.round(nbEncaisses / t.nbTours * 100) : 0;
               const toursTraites = beneficiairesSeance.filter(b => b.idTontine === t.id).length;
               const dejaTraite  = toursTraites >= (t.maxCyclesParReunion || 1);
+              const enSuspens   = !!cycleOuvertPourTontine(t.id);
               const isSelected  = idTontineSelectee === t.id;
               const tColor      = TYPE_COLORS[t.typeAttribution] || '';
               return (
@@ -446,21 +478,31 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
                   onClick={() => setIdTontineSelectee(String(t.id))}
                   className={clsx('w-full text-left p-3.5 rounded-xl border-2 transition-all',
                     dejaTraite ? 'border-green-300 bg-green-50' :
-                    isSelected ? 'border-primary-500 bg-primary-50 shadow-sm' :
+                    enSuspens ? 'border-amber-400 bg-amber-50' :
+                    isSelected ? 'border-primary-500 bg-primary-50 shadow-sm ring-2 ring-primary-200' :
                     'border-gray-200 hover:border-primary-300'
                   )}>
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2">
                       <span className="text-xl">{TYPE_ICONS[t.typeAttribution] || ''}</span>
                       <div>
-                        <p className="font-bold text-sm text-gray-800">{t.nom}</p>
+                        <p className="font-bold text-sm text-gray-800 flex items-center gap-1.5">
+                          {t.nom}
+                          {isSelected && <CheckCircle size={14} className="text-primary-600"/>}
+                        </p>
                         <p className="text-xs text-gray-400">{fmt(t.cotisation)} / part · {t.totalParts} parts = <strong>{fmt(t.cotisation * t.totalParts)}</strong></p>
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className={clsx('text-xs px-2 py-0.5 rounded-full border font-medium', tColor)}>
-                        {TYPE_LABELS[t.typeAttribution]}
-                      </span>
+                      {enSuspens ? (
+                        <span className="text-xs px-2 py-0.5 rounded-full border font-medium border-amber-300 bg-amber-100 text-amber-700">
+                          Bénéficiaire à désigner
+                        </span>
+                      ) : (
+                        <span className={clsx('text-xs px-2 py-0.5 rounded-full border font-medium', tColor)}>
+                          {TYPE_LABELS[t.typeAttribution]}
+                        </span>
+                      )}
                       <span className="text-xs text-gray-500 font-medium">{toursTraites}/{t.maxCyclesParReunion || 1}</span>
                     </div>
                   </div>
@@ -475,6 +517,11 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
             })}
           </div>
 
+          {idTontineSelectee && tontineSelectee && cycleOuvertPourTontine(tontineSelectee.id) && (
+            <div className="flex items-center gap-2 p-2.5 bg-amber-50 rounded-xl text-xs text-amber-700 border border-amber-200">
+              <AlertTriangle size={13}/> Les cotisations de cette tontine ont déjà été validées pour cette séance — vous allez reprendre directement à la désignation du bénéficiaire.
+            </div>
+          )}
           {idTontineSelectee && tontineSelectee && !benefDejaEnregistre && (
             <button onClick={() => setEtape('cotisation')} className="btn-primary w-full justify-center">
               <ClipboardList size={15}/>
