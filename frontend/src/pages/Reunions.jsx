@@ -82,6 +82,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
   const locked   = !!reunion.verrouillee;
   const notOpen  = reunion.statutReunion === 'planifiee';
   const [bulletinUrl, setBulletinUrl] = useState(null);
+  const [busyPaiement, setBusyPaiement] = useState(false); // anti double-clic : versement / retenue bulletin
 
   // reunion.beneficiairesSeance n'a jamais existé côté API — dérivé ici de la vraie
   // source de vérité (cyclesTontine) pour que le bénéficiaire désigné reste visible
@@ -929,11 +930,15 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
 
       <Modal open={versementModal} onClose={() => setVersementModal(false)} title="Verser le gain au bénéficiaire"
         footer={<>
-          <button onClick={() => setVersementModal(false)} className="btn-secondary">Annuler</button>
+          <button onClick={() => setVersementModal(false)} disabled={busyPaiement} className="btn-secondary">Annuler</button>
           <button onClick={async () => {
-            const bulletin = await payerBulletin(gagnant.idBulletin, modeVersement, referenceVersement);
-            if (bulletin) setVersementModal(false);
-          }} disabled={modeVersement !== 'especes' && !referenceVersement.trim()} className="btn-primary">Confirmer le versement</button>
+            if (busyPaiement) return;
+            setBusyPaiement(true);
+            try {
+              const bulletin = await payerBulletin(gagnant.idBulletin, modeVersement, referenceVersement);
+              if (bulletin) setVersementModal(false);
+            } finally { setBusyPaiement(false); }
+          }} disabled={busyPaiement || (modeVersement !== 'especes' && !referenceVersement.trim())} className="btn-primary">{busyPaiement ? 'Versement…' : 'Confirmer le versement'}</button>
         </>}>
         <p className="text-xs text-gray-500 mb-4">Le net sort de la caisse de la tontine et les retenues sont imputées dans le PV.</p>
         <FormField label="Mode de versement" required>
@@ -946,16 +951,20 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
 
       <Modal open={retenueModal} onClose={() => setRetenueModal(false)} title="Ajouter une retenue manuelle"
         footer={<>
-          <button onClick={() => setRetenueModal(false)} className="btn-secondary">Annuler</button>
+          <button onClick={() => setRetenueModal(false)} disabled={busyPaiement} className="btn-secondary">Annuler</button>
           <button
             onClick={async () => {
+              if (busyPaiement) return;
               if (!retenueLibelle.trim() || !retenueMontant || Number(retenueMontant) <= 0) return;
-              const b = await ajouterRetenueBulletin(gagnant.idBulletin, retenueLibelle.trim(), retenueMontant, retenueCaisseId);
-              if (b) setRetenueModal(false);
+              setBusyPaiement(true);
+              try {
+                const b = await ajouterRetenueBulletin(gagnant.idBulletin, retenueLibelle.trim(), retenueMontant, retenueCaisseId);
+                if (b) setRetenueModal(false);
+              } finally { setBusyPaiement(false); }
             }}
-            disabled={!retenueLibelle.trim() || !retenueMontant || Number(retenueMontant) <= 0 || !retenueCaisseId}
-            className={clsx('btn-primary', (!retenueLibelle.trim() || !retenueMontant || Number(retenueMontant) <= 0 || !retenueCaisseId) && 'opacity-40 cursor-not-allowed')}>
-            Ajouter
+            disabled={busyPaiement || !retenueLibelle.trim() || !retenueMontant || Number(retenueMontant) <= 0 || !retenueCaisseId}
+            className={clsx('btn-primary', (busyPaiement || !retenueLibelle.trim() || !retenueMontant || Number(retenueMontant) <= 0 || !retenueCaisseId) && 'opacity-40 cursor-not-allowed')}>
+            {busyPaiement ? 'Ajout…' : 'Ajouter'}
           </button>
         </>}>
         <p className="text-xs text-gray-500 mb-3">
@@ -1342,7 +1351,7 @@ function TypePicker({ onSelect }) {
 // ── Wrapper formulaire intelligent (sans hook conditionnel) ────
 // Tous les états "extra" sont dans form._idTontine pour éviter
 // les hooks conditionnels (violation React)
-function SmartFormWrapper({ type, reunion, membres, banques, prets, sanctions, tontines, membresParTontine, soldeDisponible = Infinity, onSubmit, onCancel }) {
+function SmartFormWrapper({ type, reunion, membres, banques, prets, sanctions, tontines, membresParTontine, soldeDisponible = Infinity, onSubmit, onCancel, submitting = false }) {
   const [form, setForm] = useState({
     type, montant: '', libelle: '', idMembre: '', idSanction: '', idPret: '',
     idBanque: '', sousType: 'autre',
@@ -1355,6 +1364,7 @@ function SmartFormWrapper({ type, reunion, membres, banques, prets, sanctions, t
   const depasseSoldeCaisse = estSortie && Number(form.montant || 0) > soldeDisponible;
 
   const handleSubmit = () => {
+    if (submitting) return; // clic ignoré : enregistrement déjà en cours
     if (!form.montant || Number(form.montant) <= 0) return;
     if (!isModePaiementValid(form.modePaiement, form.detailsPaiement)) return;
     if (depasseSoldeCaisse) return; // RG-CAI-006 : solde caisse jamais négatif
@@ -1427,10 +1437,10 @@ function SmartFormWrapper({ type, reunion, membres, banques, prets, sanctions, t
         </div>
       )}
       <div className="flex gap-2 pt-1">
-        <button onClick={onCancel} className="btn-secondary flex-1">Annuler</button>
-        <button onClick={handleSubmit} disabled={!isValid}
-          className={clsx('btn-primary flex-1', !isValid && 'opacity-40 cursor-not-allowed')}>
-          <CheckCircle size={14}/> Valider la transaction
+        <button onClick={onCancel} disabled={submitting} className="btn-secondary flex-1">Annuler</button>
+        <button onClick={handleSubmit} disabled={!isValid || submitting}
+          className={clsx('btn-primary flex-1', (!isValid || submitting) && 'opacity-40 cursor-not-allowed')}>
+          <CheckCircle size={14}/> {submitting ? 'Enregistrement…' : 'Valider la transaction'}
         </button>
       </div>
     </div>
@@ -2440,10 +2450,10 @@ function PanneauRubrique({ reunion, types, titre, readOnly = false }) {
     );
   }
 
-  const handleSubmitTx = (form) => {
+  const handleSubmitTx = async (form) => {
     if (!form.montant || Number(form.montant) <= 0) return;
     const m = form.idMembre ? membres.find(x => x.id === form.idMembre) : null;
-    addSeanceTransaction(reunion.id, {
+    await addSeanceTransaction(reunion.id, {
       ...form,
       idMembre:   form.idMembre   || null,
       idSanction: form.idSanction || null,
@@ -2453,6 +2463,7 @@ function PanneauRubrique({ reunion, types, titre, readOnly = false }) {
     });
     if (types.length > 1) setSelectedType(null); else setSelectedType(types[0]);
   };
+  const [guardedHandleSubmitTx, submittingTx] = useAsyncGuard(handleSubmitTx);
 
   return (
     <div className="space-y-4">
@@ -2520,7 +2531,8 @@ function PanneauRubrique({ reunion, types, titre, readOnly = false }) {
                 sanctions={sanctions}
                 tontines={tontines}
                 membresParTontine={membresParTontine}
-                onSubmit={handleSubmitTx}
+                onSubmit={guardedHandleSubmitTx}
+                submitting={submittingTx}
                 onCancel={() => setSelectedType(types.length > 1 ? null : types[0])}
               />
             </div>
