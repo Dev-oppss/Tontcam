@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\BulletinGain;
 use App\Models\CotisationTontine;
 use App\Models\CycleTontine;
 use App\Models\Encherite;
@@ -551,14 +552,20 @@ class TontineCycleService
         if (in_array($cycle->reunion->statut, ['cloturee', 'annulee'], true)) {
             throw new RuntimeException('Une réunion clôturée ou annulée ne peut plus être modifiée.');
         }
-        if ($cycle->bulletin?->statut === 'paye') {
+        // Interroger directement la table plutôt que la relation hasOne
+        // ($cycle->bulletin) : en l'absence de contrainte UNIQUE sur
+        // bulletins_gain.cycle_id, un bulletin dupliqué (double-clic avant la
+        // protection anti-double-clic, retry réseau, etc.) est invisible via
+        // hasOne mais bloquerait quand même la suppression du cycle plus bas.
+        $bulletins = BulletinGain::where('cycle_id', $cycle->id)->get();
+        if ($bulletins->contains(fn (BulletinGain $b) => $b->statut === 'paye')) {
             throw new RuntimeException('Le gain a déjà été versé : enregistrez d’abord le retour des fonds avant d’annuler le cycle.');
         }
 
         $seancesCotisation = SeanceTransaction::where('cycle_tontine_id', $cycle->id)
             ->where('annulee', false)->get();
 
-        DB::transaction(function () use ($cycle, $auteur, $seancesCotisation) {
+        DB::transaction(function () use ($cycle, $auteur, $seancesCotisation, $bulletins) {
             $besoinContrePassation = (float) $cycle->surplus_mis_en_caisse > 0 || $seancesCotisation->isNotEmpty();
             if ($besoinContrePassation && ! $auteur) {
                 throw new RuntimeException('De l’argent a déjà été mouvementé en caisse pour ce cycle (cotisations et/ou surplus) : l’annulation doit être effectuée par un utilisateur authentifié pour être contre-passée.');
@@ -602,8 +609,13 @@ class TontineCycleService
                     ->where('tontine_part_id', $cycle->gagnant_part_id)
                     ->where('statut', 'encaisse')->update(['statut' => 'planifie']);
             }
-            $cycle->bulletin?->retenues()->delete();
-            $cycle->bulletin?->delete();
+            // retenues_bulletin.bulletin_id est en ON DELETE CASCADE côté base : pas
+            // besoin de les supprimer explicitement, la suppression des bulletins
+            // (potentiellement plusieurs, cf. commentaire plus haut) suffit et évite
+            // le même problème d'orphelins que pour les cycles.
+            foreach ($bulletins as $bulletin) {
+                $bulletin->delete();
+            }
             $cycle->encherites()->delete();
             $cycle->cotisations()->delete();
             $cycle->delete();

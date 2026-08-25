@@ -22,6 +22,19 @@ class BulletinGainService
 {
     public function genererDepuisCycle(CycleTontine $cycle, Utilisateur $auteur): BulletinGain
     {
+        // Idempotence : aucune contrainte UNIQUE en base sur bulletins_gain.cycle_id
+        // (seul numero_bulletin l'est), donc un double-clic ou un retry sur la
+        // clôture/désignation avant la protection anti-double-clic pouvait créer
+        // DEUX bulletins pour le même cycle. Résultat concret : annuler le cycle
+        // ensuite échouait en 422 (violation de clé étrangère bulletins_gain_cycle_id_fkey)
+        // car seul le premier bulletin (relation hasOne) était supprimé, laissant le
+        // second orphelin bloquer le DELETE sur cycles_tontine. On retourne donc le
+        // bulletin déjà généré au lieu d'en recréer un second.
+        $existant = BulletinGain::where('cycle_id', $cycle->id)->first();
+        if ($existant) {
+            return $existant->fresh(['retenues', 'cycle']);
+        }
+
         $part = $cycle->gagnant;
         $membre = $part->membre;
 
