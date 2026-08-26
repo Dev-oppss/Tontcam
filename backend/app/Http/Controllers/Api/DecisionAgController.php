@@ -71,7 +71,12 @@ class DecisionAgController extends Controller
         $data = $request->validate([
             'decisions' => ['required', 'array', 'min:1', 'max:500'],
             'decisions.*.reunion_id' => ['required', 'uuid'],
-            'decisions.*.numero_decision' => ['required', 'string', 'max:100'],
+            // max:30 aligné sur la colonne réelle decisions_ag.numero_decision
+            // VARCHAR(30) (voir database/script.sql) : la validation acceptait
+            // jusqu'à 100 caractères, un numéro de 31-100 caractères passait
+            // Laravel puis plantait à l'insertion SQL ("value too long") au
+            // lieu d'un message de validation propre par ligne.
+            'decisions.*.numero_decision' => ['required', 'string', 'max:30'],
             'decisions.*.type' => ['required', 'in:financier,statutaire,disciplinaire,organisationnel,autre'],
             'decisions.*.objet' => ['required', 'string', 'max:400'],
             'decisions.*.description' => ['nullable', 'string'],
@@ -119,7 +124,8 @@ class DecisionAgController extends Controller
             try {
                 $validee = \Illuminate\Support\Facades\Validator::make($ligne, [
                     'reunion_id' => ['required', 'uuid'],
-                    'numero_decision' => ['required', 'string', 'max:100'],
+                    // Même alignement que importHistorique() ci-dessus (colonne VARCHAR(30)).
+                    'numero_decision' => ['required', 'string', 'max:30'],
                     'type' => ['required', 'in:financier,statutaire,disciplinaire,organisationnel,autre'],
                     'objet' => ['required', 'string', 'max:400'],
                     'description' => ['nullable', 'string'],
