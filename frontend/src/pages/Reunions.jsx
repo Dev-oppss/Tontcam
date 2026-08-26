@@ -1525,9 +1525,14 @@ function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, san
     ? (() => {
         // Même bug que les enchères : une ligne par PART côté serveur, il faut
         // regrouper par membre sinon un membre à N parts apparaît N fois.
+        // Contrairement à l'éligibilité au GAIN (qui exclut les parts déjà
+        // gagnées), la cotisation reste due sur TOUTE part détenue — une part
+        // déjà gagnée continue de cotiser jusqu'à la fin complète du tour de
+        // la tontine. Seule une part réellement bloquée (sanction, litige...)
+        // est exclue.
         const partsParMembre = new Map();
         membresParTontine
-          .filter(mt => mt.idTontine === tontineChoisie.id && mt.statut === 'actif')
+          .filter(mt => mt.idTontine === tontineChoisie.id && mt.statut !== 'bloquee')
           .forEach(mt => partsParMembre.set(mt.idMembre, (partsParMembre.get(mt.idMembre) || 0) + mt.nombreParts));
         return [...partsParMembre.entries()]
           .map(([idMembre, parts]) => {
@@ -1538,7 +1543,7 @@ function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, san
     : membres;
 
   const membreDansTontine = tontineChoisie && form.idMembre
-    ? membresParTontine.find(mt => mt.idTontine === tontineChoisie.id && mt.idMembre === form.idMembre && mt.statut === 'actif')
+    ? membresParTontine.find(mt => mt.idTontine === tontineChoisie.id && mt.idMembre === form.idMembre && mt.statut !== 'bloquee')
     : null;
 
   const membresAttrTour = tontineChoisie
