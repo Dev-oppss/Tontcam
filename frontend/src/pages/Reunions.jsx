@@ -17,6 +17,9 @@ import { getMissingFields } from '../lib/validation';
 import { ModePaiementFields, isModePaiementValid, ModePaiementBadge } from '../components/ui/ModePaiement';
 import { useAsyncGuard } from '../hooks/useAsyncGuard';
 import clsx from 'clsx';
+import { buildAmortization, simulerRepartitionInterets, FORM_PRET_VIDE } from '../lib/amortissement';
+import { PretFormFields } from '../components/shared/PretFormFields';
+import { HandCoins } from 'lucide-react';
 
 // ── Config statuts ────────────────────────────────────────────
 const sCfg = {
@@ -2490,12 +2493,104 @@ function DeclarerAideSocialePanel({ membres, typesAideSociale, banques, addAide,
   );
 }
 
+// ── Octroi de prêt en réunion — EXACTEMENT le même formulaire que Prets.jsx ──
+// (composant PretFormFields partagé). Contrairement à l'ancien onglet, ceci
+// crée un vrai Pret (même appel addPret que la page Prêts), puis enchaîne
+// automatiquement valider -> approuver -> décaisser puisqu'on est déjà en
+// séance ouverte : le décaissement crée lui-même la SeanceTransaction
+// 'pret_accorde' (voir PretService::decaisser côté backend), donc l'opération
+// apparaît toujours dans le registre de réunion comme avant, mais adossée
+// cette fois à un vrai prêt suivi dans Prêts (échéancier, remboursements).
+// Si l'approbation nécessite le Président (seuil dépassé) ou échoue, la chaîne
+// s'arrête au step atteint : le prêt reste visible et actionnable depuis la
+// page Prêts (boutons Valider/Approuver/Décaisser) au lieu d'échouer en silence.
+function OctroiPretReunion({ reunion, membres, caisses, comptesBanque, onDone, onCancel }) {
+  const { addPret, validerPret, approuverPret, decaisserPret, showToast } = useApp();
+  const [form, setForm] = useState({ ...FORM_PRET_VIDE });
+  const [busy, setBusy] = useState(false);
+
+  const caissesPret = (caisses || []).filter((c) => c.pretAutorise);
+  const caisseSelectionnee = caissesPret.find((c) => c.id === form.caisseId);
+  const pretSimule = useMemo(
+    () => buildAmortization(form.montantPret, form.tauxInteret, form.dureeMois, form.datePret),
+    [form.montantPret, form.tauxInteret, form.dureeMois, form.datePret]
+  );
+  const montantInteret = pretSimule?.totalInteret || 0;
+  const repartitionSimulee = montantInteret > 0 ? simulerRepartitionInterets(comptesBanque, montantInteret) : [];
+
+  const handleAccorder = async () => {
+    const missing = getMissingFields(form, [
+      { key: 'idMembre', label: 'Membre bénéficiaire' },
+      { key: 'caisseId', label: 'Caisse source' },
+      { key: 'montantPret', label: 'Montant' },
+    ]);
+    if (missing.length) { showToast?.(`Champ(s) requis manquant(s) : ${missing.join(', ')}`, 'error'); return; }
+    if (!pretSimule) { showToast?.('Simulation du prêt indisponible — vérifiez les paramètres saisis.', 'error'); return; }
+    const m = membres.find((x) => x.id === form.idMembre);
+    setBusy(true);
+    try {
+      const pret = await addPret({
+        ...form,
+        montantPret: Number(form.montantPret),
+        tauxInteret: Number(form.tauxInteret),
+        dureeMois: Number(form.dureeMois),
+        nomMembre: `${m.nom} ${m.prenom}`,
+        idMembre: form.idMembre,
+        caisseId: form.caisseId,
+        dateEcheance: pretSimule.dateEcheance,
+        montantInteret: pretSimule.totalInteret,
+        montantTotal: pretSimule.montantTotal,
+        montantMensuel: pretSimule.mensualiteMoyenne,
+        ficheAmortissement: pretSimule.ficheAmortissement,
+        amortissementPret: caisseSelectionnee?.amortissementPret || 'unique',
+        echeancesPret: caisseSelectionnee?.echeancesPret || 'mensuel',
+      });
+      if (!pret?.id) return; // addPret a déjà notifié l'erreur
+      await validerPret(pret.id);
+      await approuverPret(pret.id);
+      await decaisserPret(pret.id);
+      showToast('Prêt accordé et décaissé — visible dans Prêts pour le suivi des échéances.');
+      setForm({ ...FORM_PRET_VIDE });
+      onDone?.();
+    } catch {
+      // Chaîne interrompue (ex. seuil d'approbation réservé au Président) :
+      // le prêt reste dans Prêts, au statut atteint, pour être finalisé
+      // manuellement — pas d'écriture perdue, juste une étape restante.
+      showToast('Le prêt est enregistré mais reste à finaliser depuis la page Prêts (validation/approbation/décaissement).', 'info');
+      setForm({ ...FORM_PRET_VIDE });
+      onDone?.();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="p-4 bg-white rounded-xl border border-gray-200 shadow-sm space-y-4">
+      {caissesPret.length === 0 && (
+        <p className="text-xs text-red-600">Aucune caisse n'autorise les prêts pour l'instant — activez « Prêt autorisé » sur une caisse (Banques) avant de continuer.</p>
+      )}
+      <PretFormFields
+        form={form} setForm={setForm}
+        membres={membres} caissesPret={caissesPret}
+        pretSimule={pretSimule} montantInteret={montantInteret}
+        repartitionSimulee={repartitionSimulee} caisseSelectionnee={caisseSelectionnee}
+      />
+      <div className="flex gap-2 pt-1">
+        <button onClick={onCancel} disabled={busy} className="btn-secondary flex-1">Annuler</button>
+        <button onClick={handleAccorder} disabled={busy} className={clsx('btn-primary flex-1', busy && 'opacity-40 cursor-not-allowed')}>
+          <HandCoins size={14} /> {busy ? 'Enregistrement…' : 'Accorder le prêt'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function PanneauRubrique({ reunion, types, titre, readOnly = false }) {
   const {
     membres, banques, prets, sanctions, typesSanction, addSanction,
     typesAideSociale, addAide, validerAideSociale, verserAideSociale,
     seanceTransactions, addSeanceTransaction, deleteSeanceTransaction,
-    tontines, membresParTontine, showToast,
+    tontines, membresParTontine, showToast, comptesBanque,
   } = useApp();
 
   // BUG corrigé : soldeDisponibleCaisse se basait sur caisseJournal, un état qui
@@ -2605,19 +2700,30 @@ function PanneauRubrique({ reunion, types, titre, readOnly = false }) {
                   </button>
                 </div>
               )}
-              <SmartFormWrapper
-                type={selectedType}
-                reunion={reunion}
-                membres={membres}
-                banques={banques}
-                prets={prets}
-                sanctions={sanctions}
-                tontines={tontines}
-                membresParTontine={membresParTontine}
-                onSubmit={guardedHandleSubmitTx}
-                submitting={submittingTx}
-                onCancel={() => setSelectedType(types.length > 1 ? null : types[0])}
-              />
+              {selectedType === 'pret_accorde' ? (
+                <OctroiPretReunion
+                  reunion={reunion}
+                  membres={membres}
+                  caisses={banques}
+                  comptesBanque={comptesBanque}
+                  onDone={() => setSelectedType(types.length > 1 ? null : types[0])}
+                  onCancel={() => setSelectedType(types.length > 1 ? null : types[0])}
+                />
+              ) : (
+                <SmartFormWrapper
+                  type={selectedType}
+                  reunion={reunion}
+                  membres={membres}
+                  banques={banques}
+                  prets={prets}
+                  sanctions={sanctions}
+                  tontines={tontines}
+                  membresParTontine={membresParTontine}
+                  onSubmit={guardedHandleSubmitTx}
+                  submitting={submittingTx}
+                  onCancel={() => setSelectedType(types.length > 1 ? null : types[0])}
+                />
+              )}
             </div>
           )}
         </div>
