@@ -13,8 +13,8 @@
     table { width: 100%; border-collapse: collapse; margin-top: 6px; }
     th { background: #f2f0eb; text-align: left; padding: 6px 8px; font-size: 10px; text-transform: uppercase; }
     td { padding: 6px 8px; border-bottom: 1px solid #eee; font-size: 11px; }
-    .signatures { display: flex; flex-wrap: wrap; margin-top: 20px; }
-    .signature { width: 33%; border-top: 1px solid #999; padding-top: 6px; font-size: 10px; text-align: center; margin-top: 20px; }
+    .signatures { margin-top: 20px; }
+    .signature { display: inline-block; vertical-align: top; width: 30%; margin: 0 1.5% 16px; border-top: 1px solid #999; padding-top: 6px; font-size: 10px; text-align: center; }
 </style>
 </head>
 <body>
