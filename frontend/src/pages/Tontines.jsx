@@ -280,6 +280,22 @@ export default function Tontines() {
     return Array.from(groupes.values());
   };
   const membresDisponibles = (id) => membres.filter(m => !membresParTontine.some(mt => mt.idTontine === id && mt.idMembre === m.id));
+
+  // Le bouton "Membres (n)" ne fait qu'initialiser bulkParts UNE FOIS, au clic.
+  // Si les parts d'une tontine viennent d'être modifiées ailleurs (ou si le
+  // rechargement des données côté API arrive après ce clic), rouvrir la même
+  // modale montrait alors 0 part pour tout le monde alors que les compteurs
+  // globaux (pot/tour, parts, actifs) — eux dérivés de tontine.totalParts,
+  // recalculé indépendamment — restaient corrects. On resynchronise donc
+  // bulkParts en continu tant que la modale est ouverte, à chaque changement
+  // de membresParTontine, au lieu de ne le faire qu'à l'ouverture.
+  useEffect(() => {
+    if (!showMembres) return;
+    const init = {};
+    membresDeTontine(showMembres.id).forEach(mt => { init[mt.idMembre] = String(mt.nombreParts); });
+    setBulkParts(init);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showMembres, membresParTontine]);
   const getEncheresDuTour = (id) => {
     const rotation = rotations.find(r => r.idTontine === id && !r.dateAttribution);
     return rotation ? { rotation, bids: encheres.filter(e => e.idRotation === rotation.id) } : null;
@@ -425,7 +441,7 @@ export default function Tontines() {
               )}
 
               <div className="grid grid-cols-4 gap-2">
-                <button onClick={() => { setShowMembres(t); setShowAddMembre(false); const init={}; membresDeTontine(t.id).forEach(mt=>{init[mt.idMembre]=String(mt.nombreParts);}); setBulkParts(init); setBulkAvalistes({}); }} className="btn-secondary text-xs py-1.5 justify-center">
+                <button onClick={() => { setShowMembres(t); setShowAddMembre(false); setBulkAvalistes({}); }} className="btn-secondary text-xs py-1.5 justify-center">
                   <Users size={12}/> Membres ({nbActifs})
                 </button>
                 <button onClick={() => { setShowBenef(t); setAddTourMode(false); setFormTour({ idMembre:'', datePrevue:'', note:'' }); chargerPlanningTours(t.id); }}
