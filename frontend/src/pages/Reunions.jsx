@@ -1468,8 +1468,17 @@ function SmartFormWrapper({ type, reunion, membres, banques, prets, sanctions, t
         <FormField label="Caisse concernée" required>
           <select className="select" value={form.idBanque} onChange={e => sf('idBanque', e.target.value)}>
             <option value="">— Sélectionner la caisse —</option>
-            {banques.map(b => <option key={b.id} value={b.id}>{b.nom} — Solde : {fmt(b.totalSolde)}</option>)}
+            {/* Un octroi de prêt ici ne crée qu'une ligne de caisse (le vrai
+                enregistrement du prêt se fait à part, dans Prêts — cf. l'avertissement
+                affiché plus haut). Sans ce filtre, rien n'empêchait de décaisser un
+                "prêt" depuis une caisse où pret_autorise=false : le backend ne le
+                bloque que côté PretService (création d'un vrai Pret), jamais consulté
+                ici puisqu'aucun Pret n'est réellement créé par ce formulaire. */}
+            {(type === 'pret_accorde' ? banques.filter(b => b.pretAutorise) : banques).map(b => <option key={b.id} value={b.id}>{b.nom} — Solde : {fmt(b.totalSolde)}</option>)}
           </select>
+          {type === 'pret_accorde' && banques.some(b => b.pretAutorise) === false && (
+            <p className="text-xs text-red-600 mt-1">Aucune caisse n'autorise les prêts pour l'instant — activez « Prêt autorisé » sur une caisse (Banques) avant de continuer.</p>
+          )}
         </FormField>
       )}
       <div className="pt-1 border-t border-gray-100">

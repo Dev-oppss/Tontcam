@@ -31,11 +31,24 @@ const names = {
   '/mon-profil':      { title: 'Mon profil',        sub: 'Informations personnelles' },
 };
 
+// Routes détaillées avec un identifiant dynamique (ex. /reunions/{uuid}) : la
+// correspondance exacte ci-dessus échouait toujours pour ces pages (la clé
+// '/reunions' ne matche pas '/reunions/xxx'), et l'en-tête retombait sur le
+// fallback générique 'Page' / 'Vue claire des modules métier' — trompeur,
+// on croirait ne plus être dans le module concerné alors qu'on y est bien.
+const prefixNames = [
+  ['/reunions/',  { title: 'Réunion',  sub: 'Feuille de séance' }],
+  ['/tontines/',  { title: 'Tontine',  sub: 'Détail de la tontine' }],
+  ['/membres/',   { title: 'Membre',   sub: 'Fiche membre' }],
+];
+
 export default function Header() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const { user, currentAssociation, membres, tontines, prets } = useApp();
-  const meta = names[pathname] || { title: 'Page', sub: '' };
+  const meta = names[pathname]
+    || prefixNames.find(([prefix]) => pathname.startsWith(prefix))?.[1]
+    || { title: 'Page', sub: '' };
   const today = new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 
   const [query, setQuery] = useState('');
