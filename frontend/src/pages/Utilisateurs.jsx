@@ -1,6 +1,13 @@
 import { useState, useRef } from 'react';
 import { UserCog, Plus, ShieldCheck, Pencil, Power, Copy, Check, KeyRound } from 'lucide-react';
 import { roleLabel } from '../data/mockData';
+
+const fmtDerniereConnexion = (d) => {
+  if (!d) return 'Jamais connecté';
+  return new Date(d).toLocaleString('fr-FR', {
+    day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+  });
+};
 import { useApp } from '../context/AppContext';
 import { PageHeader, Table, Badge, Modal, FormField } from '../components/ui/index';
 import { getMissingFields } from '../lib/validation';
@@ -111,7 +118,7 @@ export default function Utilisateurs() {
               </td>
               <td className="td text-gray-600">{u.nomMembre}</td>
               <td className="td"><Badge variant={roleV[u.role]}>{roleLabel[u.role]}</Badge></td>
-              <td className="td text-gray-400 text-xs">{u.derniereConnexion}</td>
+              <td className="td text-gray-400 text-xs">{fmtDerniereConnexion(u.derniereConnexion)}</td>
               <td className="td"><Badge variant={u.statut==='actif'?'green':'gray'}>{u.statut==='actif'?'Actif':'Inactif'}</Badge></td>
               <td className="td">
                 <div className="flex gap-1">
