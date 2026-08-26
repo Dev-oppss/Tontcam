@@ -208,7 +208,17 @@ export default function Tontines() {
     } catch {
       return; // toast d'erreur déjà affiché par handleError
     }
-    setBulkParts({}); setBulkAvalistes({});
+    // Ne pas vider bulkParts avec {} : la modale reste ouverte après
+    // l'enregistrement (voir bouton Fermer séparé), et les champs de saisie
+    // affichent bulkParts[m.id] ?? '0'. Un {} vide fait donc retomber
+    // TOUTES les lignes à 0 à l'écran, alors que les parts viennent d'être
+    // sauvegardées avec succès (visible seulement dans les totaux Pot/
+    // Parts/Actifs en haut, pas ligne par ligne) — source de confusion.
+    // On réinitialise plutôt depuis les données fraîchement enregistrées.
+    const init = {};
+    membresDeTontine(idTontine).forEach(mt => { init[mt.idMembre] = String(mt.nombreParts); });
+    setBulkParts(init);
+    setBulkAvalistes({});
   };
   const [guardedHandleSaveBulkParts, savingBulkParts] = useAsyncGuard(handleSaveBulkParts);
 
