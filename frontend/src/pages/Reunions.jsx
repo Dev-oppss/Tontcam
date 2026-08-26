@@ -15,6 +15,7 @@ import { useApp, TX_TYPES, TX_LABELS } from '../context/AppContext';
 import { PageHeader, Badge, Modal, FormField } from '../components/ui/index';
 import { getMissingFields } from '../lib/validation';
 import { ModePaiementFields, isModePaiementValid, ModePaiementBadge } from '../components/ui/ModePaiement';
+import { useAsyncGuard } from '../hooks/useAsyncGuard';
 import clsx from 'clsx';
 
 // ── Config statuts ────────────────────────────────────────────
