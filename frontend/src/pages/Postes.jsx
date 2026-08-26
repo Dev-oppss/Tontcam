@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Landmark, UserCheck, History, LogOut, Plus } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import { fmtDate } from '../data/mockData';
 import { PageHeader, SectionCard, Table, Badge, Modal, FormField } from '../components/ui/index';
 import { getMissingFields } from '../lib/validation';
 import { useAsyncGuard } from '../hooks/useAsyncGuard';
@@ -76,7 +77,7 @@ export default function Postes() {
                   <div className="avatar-soft w-8 h-8 text-xs">{titulaire.nomMembre?.[0]?.toUpperCase() || '?'}</div>
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-ink-900 truncate">{titulaire.nomMembre}</p>
-                    <p className="text-[11px] text-ink-600/50">Depuis {titulaire.dateDebut}</p>
+                    <p className="text-[11px] text-ink-600/50">Depuis {fmtDate(titulaire.dateDebut)}</p>
                   </div>
                 </div>
               ) : (
@@ -111,8 +112,8 @@ export default function Postes() {
             <tr key={m.id} className="hover:bg-white/40 transition-colors">
               <td className="td font-medium">{m.poste || postes.find((p) => p.id === m.idPoste)?.libelle}</td>
               <td className="td">{m.nomMembre}</td>
-              <td className="td text-ink-600/60 num">{m.dateDebut}</td>
-              <td className="td text-ink-600/60 num">{m.dateFin || '—'}</td>
+              <td className="td text-ink-600/60 num">{fmtDate(m.dateDebut)}</td>
+              <td className="td text-ink-600/60 num">{m.dateFin ? fmtDate(m.dateFin) : '—'}</td>
               <td className="td"><Badge variant={m.dateFin ? 'gray' : 'green'}>{m.dateFin ? 'Terminé' : 'Actif'}</Badge></td>
             </tr>
           ))}
