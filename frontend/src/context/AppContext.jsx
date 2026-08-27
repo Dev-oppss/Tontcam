@@ -3,16 +3,20 @@ import { request, getApiToken, setApiToken, clearApiToken, API_BASE } from '../l
 import * as adapt from '../lib/adapters';
 import * as mock from '../data/mockData';
 
-// Les 9 valeurs réellement acceptées par le backend (voir SeanceTransactionController::store
+// Les 10 valeurs réellement acceptées par le backend (voir SeanceTransactionController::store
 // et TYPES_SORTIE) — ce tableau sert à la fois aux boutons de sélection (TypePicker), au
 // calcul des totaux/sens du rapport PV (RapportSeance), et aux libellés affichés partout.
 // Historique : contenait avant 7 valeurs obsolètes (sanction, pret, remboursement, retrait,
 // autre) qui ne correspondaient à aucun type réellement envoyé — les transactions amende /
 // aide_sociale / pret_accorde / paiement_sanction / remboursement_pret / attribution_tour /
 // divers_entree / divers_sortie étaient donc invisibles dans les totaux et le rapport PV.
+// 'paiement_sanction' (distinct de 'amende') a été rajouté à part : c'est le type que
+// BulletinGainService::verser() écrit pour la retenue de sanction imputée sur un gain
+// (voir son absence d'ici → ligne du PV sans icône ni montant, colonnes Entrée/Sortie vides).
 export const TX_TYPES = [
   { value: 'cotisation',         label: 'Cotisation',            dir: 'entree', icon: '💰' },
   { value: 'amende',             label: 'Paiement de sanction',  dir: 'entree', icon: '⚖️' },
+  { value: 'paiement_sanction',  label: 'Sanction imputée',      dir: 'entree', icon: '🧾' },
   { value: 'remboursement_pret', label: 'Remboursement prêt',    dir: 'entree', icon: '🏦' },
   { value: 'divers_entree',      label: 'Entrée diverse',        dir: 'entree', icon: '📥' },
   { value: 'depot_banque',       label: 'Dépôt banque',          dir: 'banque', icon: '🏛️' },

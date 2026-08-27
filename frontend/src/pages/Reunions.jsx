@@ -12,6 +12,12 @@ import {
 import { fmtDate, typePointLabel, statutPointLabel, fmt, periodeLabel, ACTEUR_ROLES, acteurRoleLabel, roleLabel, STATUTS_PRESENCE, statutPresenceLabel, MODES_PAIEMENT, modePaiementConfig } from '../data/mockData';
 import { API_BASE, request } from '../lib/api';
 import { useApp, TX_TYPES, TX_LABELS } from '../context/AppContext';
+
+// Une SeanceTransaction générée par BulletinGainService::verser() pour imputer une
+// retenue (prêt, sanction, divers) sur un gain déjà versé porte cette note fixe — ce
+// n'est pas un nouvel encaissement/décaissement, juste une trace de ce qui reste en
+// caisse. Le PV doit l'afficher (traçabilité) mais ne jamais l'additionner aux totaux.
+const estImputation = (tx) => !!tx.note?.includes('Imputation sur gain');
 import { PageHeader, Badge, Modal, FormField } from '../components/ui/index';
 import { getMissingFields } from '../lib/validation';
 import { ModePaiementFields, isModePaiementValid, ModePaiementBadge } from '../components/ui/ModePaiement';
@@ -1104,14 +1110,19 @@ function RapportSeance({ reunion, transactions, membres, onClose }) {
     });
 
     return [...groupes.values()].map((groupe) => {
+      // Les lignes "Imputation sur gain (sans nouvel encaissement)" (voir
+      // BulletinGainService::verser()) ne sont que la trace documentaire de ce qui
+      // reste en caisse sur un gain déjà compté via les cotisations — pas un nouveau
+      // mouvement d'argent. Les inclure dans les totaux compte le même pot deux fois
+      // (cotisations + imputation) et gonfle artificiellement le solde net du PV.
       const totalEntrees = groupe.items
-        .filter((tx) => TX_TYPES.find((type) => type.value === tx.type)?.dir === 'entree')
+        .filter((tx) => TX_TYPES.find((type) => type.value === tx.type)?.dir === 'entree' && !estImputation(tx))
         .reduce((somme, tx) => somme + tx.montant, 0);
       const totalSorties = groupe.items
-        .filter((tx) => TX_TYPES.find((type) => type.value === tx.type)?.dir === 'sortie')
+        .filter((tx) => TX_TYPES.find((type) => type.value === tx.type)?.dir === 'sortie' && !estImputation(tx))
         .reduce((somme, tx) => somme + tx.montant, 0);
       const totalBanque = groupe.items
-        .filter((tx) => tx.type === 'depot_banque')
+        .filter((tx) => tx.type === 'depot_banque' && !estImputation(tx))
         .reduce((somme, tx) => somme + tx.montant, 0);
 
       return { ...groupe, totalEntrees, totalSorties, totalBanque, soldeNet: totalEntrees - totalSorties };
@@ -1241,7 +1252,7 @@ function RapportSeance({ reunion, transactions, membres, onClose }) {
                               const isEntree = meta?.dir === 'entree';
                               const isSortie = meta?.dir === 'sortie';
                               const isBanque = tx.type === 'depot_banque';
-                              const isImputation = tx.note?.includes('Imputation sur gain');
+                              const isImputation = estImputation(tx);
                               return (
                                 <tr key={tx.id} className="hover:bg-gray-50">
                                   <td className="p-2.5 text-gray-400 font-mono">{tx.heure}</td>
