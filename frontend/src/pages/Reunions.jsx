@@ -2612,11 +2612,17 @@ function OctroiPretReunion({ reunion, membres, caisses, comptesBanque, onDone, o
       showToast('Prêt accordé et décaissé — visible dans Prêts pour le suivi des échéances.');
       setForm({ ...FORM_PRET_VIDE });
       onDone?.();
-    } catch {
-      // Chaîne interrompue (ex. seuil d'approbation réservé au Président) :
-      // le prêt reste dans Prêts, au statut atteint, pour être finalisé
-      // manuellement — pas d'écriture perdue, juste une étape restante.
-      showToast('Le prêt est enregistré mais reste à finaliser depuis la page Prêts (validation/approbation/décaissement).', 'info');
+    } catch (err) {
+      // Chaîne interrompue (ex. seuil d'approbation réservé au Président, séance
+      // fermée entre-temps...) : le prêt reste dans Prêts, au statut atteint,
+      // pour être finalisé manuellement — pas d'écriture perdue, juste une
+      // étape restante. On affiche la VRAIE raison de l'arrêt (au lieu d'un
+      // message générique qui masquait la cause et rendait le diagnostic
+      // impossible) — err.message vient du toast déjà déclenché par
+      // handleError() côté contexte, donc souvent redondant ; on l'ajoute quand
+      // même en secours si aucun toast n'a pu s'afficher avant l'échec.
+      const raison = err?.message ? ` (${err.message})` : '';
+      showToast(`Le prêt est enregistré mais reste à finaliser depuis la page Prêts${raison}.`, 'info');
       setForm({ ...FORM_PRET_VIDE });
       onDone?.();
     } finally {
