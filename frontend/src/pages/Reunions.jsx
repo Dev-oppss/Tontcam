@@ -1999,8 +1999,12 @@ function BeneficiaireSeancePanel({ reunion }) {
                 {!b.montantEnchere && <p className="text-xs text-amber-600">Montant : {fmt(b.montantPot)}</p>}
               </div>
               <div className="shrink-0 flex items-center gap-1.5">
-                <button onClick={() => ouvrirCorrection(b.idCycle)}
-                  className="text-xs px-2.5 py-1.5 bg-white border border-blue-300 text-blue-700 rounded-lg font-medium hover:bg-blue-50">
+                <button onClick={() => { if (b.statutBulletin === 'paye') return; ouvrirCorrection(b.idCycle); }}
+                  disabled={b.statutBulletin === 'paye'}
+                  title={b.statutBulletin === 'paye' ? 'Le gain a déjà été versé — impossible de corriger les cotisations' : undefined}
+                  className={"text-xs px-2.5 py-1.5 rounded-lg font-medium border "+(b.statutBulletin === 'paye'
+                    ? 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'
+                    : 'bg-white border-blue-300 text-blue-700 hover:bg-blue-50')}>
                   Corriger cotisations
                 </button>
                 {b.idBulletin && (
@@ -2011,8 +2015,12 @@ function BeneficiaireSeancePanel({ reunion }) {
                       Verser le gain
                     </button>
                   )}
-                  <button onClick={() => { setRetenueLibelle(''); setRetenueMontant(''); setRetenueCaisseId(''); setRetenueModal(b.idBulletin); }}
-                    className="text-xs px-2.5 py-1.5 bg-white border border-amber-300 text-amber-700 rounded-lg font-medium hover:bg-amber-50">
+                  <button onClick={() => { if (b.statutBulletin === 'paye') return; setRetenueLibelle(''); setRetenueMontant(''); setRetenueCaisseId(''); setRetenueModal(b.idBulletin); }}
+                    disabled={b.statutBulletin === 'paye'}
+                    title={b.statutBulletin === 'paye' ? 'Le gain a déjà été versé — impossible d\'ajouter une retenue' : undefined}
+                    className={"text-xs px-2.5 py-1.5 rounded-lg font-medium border "+(b.statutBulletin === 'paye'
+                      ? 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'
+                      : 'bg-white border-amber-300 text-amber-700 hover:bg-amber-50')}>
                     + Retenue
                   </button>
                   <button onClick={async () => { const url = await ouvrirBulletinPdf(b.idBulletin); if (url) setBulletinUrl(url); }}
