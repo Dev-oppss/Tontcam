@@ -347,7 +347,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
     await designerGagnantCycle(cycleActuelId, idPart);
     const cycleFinal = await cloturerCycle(cycleActuelId);
     if (!cycleFinal) return;
-    setGagnant({ nomMembre: cycleFinal.gagnantNom, montantPot: cycleFinal.montantCollecteReel, idBulletin: cycleFinal.idBulletin });
+    setGagnant({ nomMembre: cycleFinal.gagnantNom, montantPot: cycleFinal.montantCollecteReel, idBulletin: cycleFinal.idBulletin, statutPaiement: cycleFinal.statutBulletin });
     setEtape('recap');
   };
 
@@ -357,7 +357,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
     if (!apresDesignation) return;
     const cycleFinal = await cloturerCycle(cycleActuelId);
     if (!cycleFinal) return;
-    setGagnant({ nomMembre: cycleFinal.gagnantNom, montantPot: cycleFinal.montantCollecteReel, idBulletin: cycleFinal.idBulletin });
+    setGagnant({ nomMembre: cycleFinal.gagnantNom, montantPot: cycleFinal.montantCollecteReel, idBulletin: cycleFinal.idBulletin, statutPaiement: cycleFinal.statutBulletin });
     setTirageEffectue(true);
     setEtape('recap');
   };
@@ -375,7 +375,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
     if (!apresDesignation) return;
     const cycleFinal = await cloturerCycle(cycleActuelId);
     if (!cycleFinal) return;
-    setGagnant({ nomMembre: cycleFinal.gagnantNom, montantPot: cycleFinal.montantCollecteReel, idBulletin: cycleFinal.idBulletin });
+    setGagnant({ nomMembre: cycleFinal.gagnantNom, montantPot: cycleFinal.montantCollecteReel, idBulletin: cycleFinal.idBulletin, statutPaiement: cycleFinal.statutBulletin });
     setChoixManuel(false);
     setBeneficiaireManuelId('');
     setEtape('recap');
@@ -405,6 +405,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
       montantPot: cycleFinal.montantCollecteReel - cycleFinal.montantEnchere,
       mise: cycleFinal.montantEnchere,
       idBulletin: cycleFinal.idBulletin,
+      statutPaiement: cycleFinal.statutBulletin,
     });
     setEtape('recap');
   };
@@ -954,14 +955,25 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
                 </div>
                 {gagnant.idBulletin && (
                   <div className="shrink-0 flex items-center gap-1.5">
-                    <button onClick={() => { setModeVersement('especes'); setReferenceVersement(''); setVersementModal(true); }}
-                      className="text-xs px-2.5 py-1.5 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700">
-                      Verser le gain
-                    </button>
-                    <button onClick={() => { setRetenueLibelle(''); setRetenueMontant(''); setRetenueCaisseId(''); setRetenueModal(true); }}
-                      className="text-xs px-2.5 py-1.5 bg-white border border-amber-300 text-amber-700 rounded-lg font-medium hover:bg-amber-50">
-                      + Retenue
-                    </button>
+                    {(() => {
+                      const dejaVerse = gagnant.statutPaiement === 'paye';
+                      return (<>
+                        <button onClick={() => { if (dejaVerse) return; setModeVersement('especes'); setReferenceVersement(''); setVersementModal(true); }}
+                          disabled={dejaVerse}
+                          title={dejaVerse ? 'Gain déjà versé' : undefined}
+                          className={clsx('text-xs px-2.5 py-1.5 rounded-lg font-medium',
+                            dejaVerse ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700')}>
+                          {dejaVerse ? 'Gain versé' : 'Verser le gain'}
+                        </button>
+                        <button onClick={() => { if (dejaVerse) return; setRetenueLibelle(''); setRetenueMontant(''); setRetenueCaisseId(''); setRetenueModal(true); }}
+                          disabled={dejaVerse}
+                          title={dejaVerse ? 'Le gain a déjà été versé — impossible d\'ajouter une retenue' : undefined}
+                          className={clsx('text-xs px-2.5 py-1.5 rounded-lg font-medium border',
+                            dejaVerse ? 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed' : 'bg-white border-amber-300 text-amber-700 hover:bg-amber-50')}>
+                          + Retenue
+                        </button>
+                      </>);
+                    })()}
                     <button onClick={async () => { const url = await ouvrirBulletinPdf(gagnant.idBulletin); if (url) setBulletinUrl(url); }}
                       className="text-xs px-2.5 py-1.5 bg-amber-600 text-white rounded-lg font-medium hover:bg-amber-700 flex items-center gap-1">
                       <FileText size={12}/> Bulletin
@@ -999,7 +1011,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
             setBusyPaiement(true);
             try {
               const bulletin = await payerBulletin(gagnant.idBulletin, modeVersement, referenceVersement);
-              if (bulletin) setVersementModal(false);
+              if (bulletin) { setVersementModal(false); setGagnant((g) => g && ({ ...g, statutPaiement: bulletin.statut })); }
             } finally { setBusyPaiement(false); }
           }} disabled={busyPaiement || (modeVersement !== 'especes' && !referenceVersement.trim())} className="btn-primary">{busyPaiement ? 'Versement…' : 'Confirmer le versement'}</button>
         </>}>

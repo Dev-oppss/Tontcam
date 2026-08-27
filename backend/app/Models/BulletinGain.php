@@ -27,6 +27,7 @@ class BulletinGain extends Model
         'signe_president_at',
         'signe_beneficiaire_at',
         'pdf_url',
+        'pdf_genere_at',
         'genere_par',
         'annule_par',
         'annule_at',
@@ -41,7 +42,8 @@ class BulletinGain extends Model
             'signe_tresorier_at' => 'datetime',
             'signe_president_at' => 'datetime',
             'signe_beneficiaire_at' => 'datetime',
-            'annule_at' => 'datetime'
+            'annule_at' => 'datetime',
+            'pdf_genere_at' => 'datetime'
     ];
 
     public function cycle()

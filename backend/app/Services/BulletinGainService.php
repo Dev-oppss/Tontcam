@@ -447,11 +447,27 @@ class BulletinGainService
     {
         $bulletin->loadMissing('retenues', 'gagnant', 'part', 'cycle.tontine.association');
 
-        $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('pdf.bulletin-gain', ['bulletin' => $bulletin]);
         $chemin = "bulletins/{$bulletin->numero_bulletin}.pdf";
-        \Illuminate\Support\Facades\Storage::disk('public')->put($chemin, $pdf->output());
+        $disk = \Illuminate\Support\Facades\Storage::disk('public');
 
-        $bulletin->update(['pdf_url' => \Illuminate\Support\Facades\Storage::url($chemin)]);
+        // Le PDF (DomPDF) est coûteux à générer (plusieurs secondes) et cette
+        // méthode était appelée à CHAQUE clic sur « Bulletin », même quand rien
+        // n'avait changé depuis le dernier rendu — d'où la lenteur perçue.
+        // On ne régénère que si le bulletin a été modifié (retenue ajoutée,
+        // signature, versement, annulation...) depuis le dernier rendu, ou si
+        // le fichier n'existe plus sur le disque.
+        $dejaGenere = $bulletin->pdf_genere_at
+            && $bulletin->pdf_genere_at->gte($bulletin->updated_at)
+            && $disk->exists($chemin);
+
+        if ($dejaGenere) {
+            return $bulletin->pdf_url;
+        }
+
+        $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('pdf.bulletin-gain', ['bulletin' => $bulletin]);
+        $disk->put($chemin, $pdf->output());
+
+        $bulletin->update(['pdf_url' => \Illuminate\Support\Facades\Storage::url($chemin), 'pdf_genere_at' => now()]);
 
         return $bulletin->pdf_url;
     }
