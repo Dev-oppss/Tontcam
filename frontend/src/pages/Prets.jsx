@@ -118,7 +118,7 @@ export default function Prets() {
         <div className="flex items-center justify-between gap-3">
           <div>
             <p className="text-sm font-semibold text-ink-900">Caisses autorisées au prêt</p>
-            <p className="text-xs text-ink-600/60 mt-1">Chaque caisse peut définir son taux, sa durée maximale et son mode d’amortissement.</p>
+            <p className="text-xs text-ink-600/60 mt-1">Chaque caisse définit son propre taux d'intérêt mensuel.</p>
           </div>
           <p className="text-sm font-bold text-primary-700">{caissesPret.length} caisse(s)</p>
         </div>
@@ -126,8 +126,14 @@ export default function Prets() {
           {caissesPret.map((c) => (
             <div key={c.id} className="rounded-2xl border border-surface-200 bg-surface-50 p-4">
               <p className="font-semibold text-ink-900">{c.nom}</p>
-              <p className="text-xs text-ink-600/55 mt-1">Taux: {c.tauxInteretPret || 0}% · Durée max: {c.dureeMaxPretMois || 0} mois</p>
-              <p className="text-xs text-ink-600/55 mt-1">Amortissement: {formatAmortissement(c.amortissementPret)}</p>
+              {/* Bug corrigé : ce bloc lisait c.tauxInteretPret (n'existe pas —
+                  l'adaptateur produit c.tauxInteret), et affichait Durée
+                  max/Amortissement par caisse — deux réglages qui n'existent
+                  nulle part côté backend (aucune colonne, aucun champ dans le
+                  formulaire "Modifier la caisse") : toujours une fausse valeur
+                  par défaut ("0 mois", "Remboursement unique"), jamais la
+                  vraie config. */}
+              <p className="text-xs text-ink-600/55 mt-1">Taux : {c.tauxInteret || 0}%</p>
             </div>
           ))}
         </div>

@@ -27,14 +27,16 @@ export function PretFormFields({ form, setForm, membres, caissesPret, pretSimule
           setForm((f) => ({
             ...f,
             caisseId: e.target.value,
-            tauxInteret: caisse?.tauxInteretPret ?? f.tauxInteret,
-            dureeMois: caisse?.dureeMaxPretMois || f.dureeMois,
-            dateEcheance: caisse?.dureeMaxPretMois ? calcEcheance(f.datePret, caisse.dureeMaxPretMois) : f.dateEcheance,
+            // Bug corrigé : ce select lisait c.tauxInteretPret, un champ qui
+            // n'existe pas — l'adaptateur produit c.tauxInteret. Le taux
+            // configuré sur la caisse (image « Modifier la caisse ») restait
+            // donc toujours ignoré ici (0% affiché quel que soit le vrai taux).
+            tauxInteret: caisse?.tauxInteret ?? f.tauxInteret,
           }));
         }}>
           <option value="">Sélectionner une caisse…</option>
           {caissesPret.map((c) => (
-            <option key={c.id} value={c.id}>{c.nom} · {c.tauxInteretPret || 0}% · {c.dureeMaxPretMois || 0} mois</option>
+            <option key={c.id} value={c.id}>{c.nom} · {c.tauxInteret || 0}%</option>
           ))}
         </select>
       </FormField>
