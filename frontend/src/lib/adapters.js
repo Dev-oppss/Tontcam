@@ -284,7 +284,12 @@ function mapStatutPret(s) {
 }
 
 export const pretToApi = (p) => ({
-  caisse_id: p.idCaisse,
+  // Bug trouvé : tous les appelants réels (Prets.jsx, Reunions.jsx) envoient
+  // `caisseId`, mais cet adaptateur lisait `idCaisse` — toujours undefined en
+  // pratique, donc `caisse_id` partait vide côté API malgré une caisse bien
+  // sélectionnée à l'écran ("The caisse id field is required."). Fallback sur
+  // idCaisse conservé par précaution, mais caisseId est la vraie source.
+  caisse_id: p.caisseId || p.idCaisse,
   emprunteur_id: p.idMembre,
   montant_principal: Number(p.montantPret),
   nb_echeances: Number(p.nbEcheances || p.dureeMois || 12),
