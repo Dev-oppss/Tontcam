@@ -1115,17 +1115,27 @@ function RapportSeance({ reunion, transactions, membres, onClose }) {
       // reste en caisse sur un gain déjà compté via les cotisations — pas un nouveau
       // mouvement d'argent. Les inclure dans les totaux compte le même pot deux fois
       // (cotisations + imputation) et gonfle artificiellement le solde net du PV.
-      const totalEntrees = groupe.items
-        .filter((tx) => TX_TYPES.find((type) => type.value === tx.type)?.dir === 'entree' && !estImputation(tx))
+      // Mouvements bruts : ce qui rentre/sort réellement du tiroir-caisse, imputations comprises
+      // (l'argent des retenues/sanctions passe bel et bien par les mains du trésorier).
+      const totalEntreesBrut = groupe.items
+        .filter((tx) => TX_TYPES.find((type) => type.value === tx.type)?.dir === 'entree')
         .reduce((somme, tx) => somme + tx.montant, 0);
-      const totalSorties = groupe.items
-        .filter((tx) => TX_TYPES.find((type) => type.value === tx.type)?.dir === 'sortie' && !estImputation(tx))
+      const totalSortiesBrut = groupe.items
+        .filter((tx) => TX_TYPES.find((type) => type.value === tx.type)?.dir === 'sortie')
         .reduce((somme, tx) => somme + tx.montant, 0);
       const totalBanque = groupe.items
         .filter((tx) => tx.type === 'depot_banque' && !estImputation(tx))
         .reduce((somme, tx) => somme + tx.montant, 0);
+      // Part des entrées brutes qui n'est qu'une imputation documentaire (déjà comptée une
+      // première fois via les cotisations qui financent le gain) — à retirer du solde net
+      // pour ne pas compter le même pot deux fois.
+      const totalImputations = groupe.items
+        .filter((tx) => TX_TYPES.find((type) => type.value === tx.type)?.dir === 'entree' && estImputation(tx))
+        .reduce((somme, tx) => somme + tx.montant, 0);
 
-      return { ...groupe, totalEntrees, totalSorties, totalBanque, soldeNet: totalEntrees - totalSorties };
+      const soldeNet = (totalEntreesBrut - totalImputations) - totalSortiesBrut;
+
+      return { ...groupe, totalEntreesBrut, totalSortiesBrut, totalBanque, totalImputations, soldeNet };
     });
   }, [txs, banques]);
 
@@ -1249,14 +1259,21 @@ function RapportSeance({ reunion, transactions, membres, onClose }) {
                           <tbody className="divide-y divide-gray-100">
                             {groupe.items.map((tx) => {
                               const meta = TX_TYPES.find((type) => type.value === tx.type);
+                              const isImputation = estImputation(tx);
                               const isEntree = meta?.dir === 'entree';
                               const isSortie = meta?.dir === 'sortie';
                               const isBanque = tx.type === 'depot_banque';
-                              const isImputation = estImputation(tx);
                               return (
-                                <tr key={tx.id} className="hover:bg-gray-50">
+                                <tr key={tx.id} className={clsx('hover:bg-gray-50', isImputation && 'bg-amber-50/50')}>
                                   <td className="p-2.5 text-gray-400 font-mono">{tx.heure}</td>
-                                  <td className="p-2.5"><span>{meta?.icon} {meta?.label || tx.type}{isImputation ? ' (imputation)' : ''}</span></td>
+                                  <td className="p-2.5">
+                                    <span>{meta?.icon} {meta?.label || tx.type}</span>
+                                    {isImputation && (
+                                      <span className="ml-1.5 inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-700 align-middle">
+                                        déjà dans le gain
+                                      </span>
+                                    )}
+                                  </td>
                                   <td className="p-2.5 font-medium text-gray-700">{tx.nomMembre || '—'}</td>
                                   <td className="p-2.5 text-gray-500 italic truncate max-w-[140px]">{tx.libelle || '—'}</td>
                                   <td className="p-2.5 text-right font-bold text-green-600">{isEntree ? fmt(tx.montant) : '—'}</td>
@@ -1268,13 +1285,25 @@ function RapportSeance({ reunion, transactions, membres, onClose }) {
                           </tbody>
                           <tfoot className="bg-gray-50 border-t-2 border-gray-200 font-bold text-xs">
                             <tr>
-                              <td colSpan={4} className="p-2.5 text-gray-700">TOTAUX — {groupe.nomCaisse}</td>
-                              <td className="p-2.5 text-right text-green-600">{fmt(groupe.totalEntrees)}</td>
-                              <td className="p-2.5 text-right text-red-500">{fmt(groupe.totalSorties)}</td>
+                              <td colSpan={4} className="p-2.5 text-gray-700">TOTAUX MOUVEMENTS — {groupe.nomCaisse}</td>
+                              <td className="p-2.5 text-right text-green-600">{fmt(groupe.totalEntreesBrut)}</td>
+                              <td className="p-2.5 text-right text-red-500">{fmt(groupe.totalSortiesBrut)}</td>
                               <td className="p-2.5 text-right text-blue-600">{fmt(groupe.totalBanque)}</td>
                             </tr>
+                            <tr>
+                              <td colSpan={4} className="p-2.5 text-gray-500 font-normal">Solde brut (Entrées − Sorties)</td>
+                              <td colSpan={3} className="p-2.5 text-right text-gray-500 font-normal">{fmt(groupe.totalEntreesBrut - groupe.totalSortiesBrut)}</td>
+                            </tr>
+                            {groupe.totalImputations > 0 && (
+                              <tr>
+                                <td colSpan={4} className="p-2.5 text-amber-700 font-normal italic">
+                                  (−) Imputations déjà comptées dans le gain <span className="not-italic">« déjà dans le gain »</span>
+                                </td>
+                                <td colSpan={3} className="p-2.5 text-right text-amber-700 font-normal">− {fmt(groupe.totalImputations)}</td>
+                              </tr>
+                            )}
                             <tr className="bg-primary-50">
-                              <td colSpan={4} className="p-2.5 text-primary-700 font-bold">SOLDE NET — {groupe.nomCaisse}</td>
+                              <td colSpan={4} className="p-2.5 text-primary-700 font-bold">SOLDE NET RÉEL — {groupe.nomCaisse}</td>
                               <td colSpan={3} className={clsx('p-2.5 text-right text-base font-black', groupe.soldeNet >= 0 ? 'text-primary-700' : 'text-red-600')}>
                                 {groupe.soldeNet >= 0 ? '+' : ''}{fmt(groupe.soldeNet)}
                               </td>
