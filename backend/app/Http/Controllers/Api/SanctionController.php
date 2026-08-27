@@ -11,9 +11,12 @@ use App\Services\SanctionService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use App\Http\Controllers\Controller;
+use App\Http\Controllers\Api\Concerns\AssertSeanceOuverte;
 
 class SanctionController extends Controller
 {
+    use AssertSeanceOuverte;
+
     public function __construct(
         private AccessScopeService $scope,
         private SanctionService $service,
@@ -41,12 +44,18 @@ class SanctionController extends Controller
             'membre_id' => ['required', 'uuid'],
             'type_sanction_id' => ['required', 'uuid'],
             'motif' => ['required', 'string'],
-            'reunion_id' => ['nullable', 'uuid'],
+            'reunion_id' => ['required', 'uuid'],
         ]);
 
         $membre = Membre::where('association_id', $this->scope->associationId())->findOrFail($data['membre_id']);
         $type = TypeSanction::where('association_id', $this->scope->associationId())->findOrFail($data['type_sanction_id']);
-        $reunion = $data['reunion_id'] ?? null ? \App\Models\Reunion::findOrFail($data['reunion_id']) : null;
+        $reunion = \App\Models\Reunion::where('association_id', $this->scope->associationId())->findOrFail($data['reunion_id']);
+
+        try {
+            $this->assertSeanceOuverte($reunion);
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
 
         $sanction = $this->service->appliquerManuelle($membre, $type, $data['motif'], $request->user(), $reunion);
 
@@ -85,6 +94,59 @@ class SanctionController extends Controller
         return response()->json($sanction->load('type'), 201);
     }
 
+    /**
+     * Import via fichier CSV/XLSX, une ligne par sanction. Colonnes attendues :
+     * membre_id, type_sanction_id, motif, date_application, reunion_id
+     * (optionnel), paiement_caisse_id (optionnel - marque la sanction payee
+     * immediatement si renseigne), paiement_date (optionnel).
+     */
+    public function importHistoriqueFichier(Request $request, \App\Services\Import\TabularFileReader $reader): JsonResponse
+    {
+        if ($request->user()->role !== 'super_admin') {
+            return response()->json(['message' => "Réservé au super_admin."], 403);
+        }
+        $request->validate(['fichier' => ['required', 'file', 'mimes:csv,txt,xlsx', 'max:5120']]);
+
+        try {
+            $lignes = $reader->lire($request->file('fichier'));
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        $crees = 0;
+        $erreurs = [];
+        foreach ($lignes as $i => $ligne) {
+            try {
+                $validee = \Illuminate\Support\Facades\Validator::make($ligne, [
+                    'membre_id' => ['required', 'uuid'],
+                    'type_sanction_id' => ['required', 'uuid'],
+                    'motif' => ['required', 'string'],
+                    'date_application' => ['required', 'date'],
+                    'reunion_id' => ['nullable', 'uuid'],
+                    'paiement_caisse_id' => ['nullable', 'uuid'],
+                    'paiement_date' => ['nullable', 'date'],
+                ])->validate();
+
+                $m = Membre::where('association_id', $this->scope->associationId())->findOrFail($validee['membre_id']);
+                $t = TypeSanction::where('association_id', $this->scope->associationId())->findOrFail($validee['type_sanction_id']);
+                $r = ! empty($validee['reunion_id']) ? \App\Models\Reunion::findOrFail($validee['reunion_id']) : null;
+                $paiement = ! empty($validee['paiement_caisse_id'])
+                    ? ['caisse_id' => $validee['paiement_caisse_id'], 'date' => $validee['paiement_date'] ?? null]
+                    : null;
+
+                $this->service->importerHistorique($m, $t, $validee['motif'], $validee['date_application'], $request->user(), $r, $paiement);
+                $crees++;
+            } catch (\Throwable $e) {
+                $message = $e instanceof \Illuminate\Validation\ValidationException
+                    ? implode(' ', $e->validator->errors()->all())
+                    : $e->getMessage();
+                $erreurs[] = ['ligne' => $i + 2, 'donnees' => $ligne, 'erreur' => $message];
+            }
+        }
+
+        return response()->json(['crees' => $crees, 'erreurs' => $erreurs]);
+    }
+
     public function show(string $id): JsonResponse
     {
         return response()->json($this->scope->scopeAssociation(SanctionMembre::query())->with('membre', 'type')->findOrFail($id));
@@ -93,6 +155,7 @@ class SanctionController extends Controller
     public function update(Request $request, string $id): JsonResponse
     {
         $sanction = $this->scope->scopeAssociation(SanctionMembre::query())->findOrFail($id);
+        $this->authorize('update', $sanction);
 
         if (in_array($sanction->statut, ['payee', 'annulee'], true)) {
             return response()->json(['message' => 'Sanction déjà clôturée.'], 422);
@@ -100,6 +163,9 @@ class SanctionController extends Controller
 
         $data = $request->validate(['statut' => ['sometimes', 'in:annulee'], 'motif_annulation' => ['required_if:statut,annulee', 'string']]);
         if (($data['statut'] ?? null) === 'annulee') {
+            if (! in_array($request->user()->role, ['president', 'super_admin'], true)) {
+                return response()->json(['message' => "Seul le président peut annuler une sanction."], 403);
+            }
             $sanction->update([
                 'statut' => 'annulee',
                 'annulee_par' => $request->user()->id,

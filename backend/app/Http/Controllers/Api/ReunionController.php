@@ -133,11 +133,25 @@ class ReunionController extends Controller
         return response()->json($reunion);
     }
 
-    public function ouvrir(string $id): JsonResponse
+    public function ouvrir(Request $request, string $id): JsonResponse
     {
         $reunion = $this->scope->scopeAssociation(Reunion::query())->findOrFail($id);
         $this->authorize('update', $reunion);
-        $reunion->update(['statut' => 'ouverte']);
+
+        $data = $request->validate([
+            'heure_ouverture_reelle' => ['nullable', 'date_format:H:i,H:i:s'],
+            'president_seance' => ['nullable', 'string', 'max:255'],
+            'secretaire_seance' => ['nullable', 'string', 'max:255'],
+            'mot_ouverture' => ['nullable', 'string'],
+        ]);
+
+        $reunion->update([
+            'statut' => 'ouverte',
+            'heure_ouverture_reelle' => $data['heure_ouverture_reelle'] ?? now()->format('H:i:s'),
+            'president_seance' => $data['president_seance'] ?? null,
+            'secretaire_seance' => $data['secretaire_seance'] ?? null,
+            'mot_ouverture' => $data['mot_ouverture'] ?? null,
+        ]);
         $reunion->load(['ordreDuJour.rubrique', 'ordreDuJour.rapporteur', 'presences.membre', 'signataires.membre']);
 
         return response()->json($reunion);

@@ -6,6 +6,7 @@ use App\Models\Caisse;
 use App\Models\Transaction;
 use App\Services\AccessScopeService;
 use App\Services\CaisseService;
+use App\Services\Import\TabularFileReader;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use App\Http\Controllers\Controller;
@@ -134,6 +135,72 @@ class CaisseController extends Controller
      * sont créées via CaisseService afin de préserver soldes, audit et règles
      * d'interdiction de solde négatif.
      */
+    /**
+     * Import historique caisses via fichier CSV/XLSX, en plus du JSON existant
+     * (importHistorique ci-dessus). Colonnes attendues (insensibles à la casse
+     * et aux accents) :
+     *   type (entree|sortie|transfert), caisse_id (ou caisse_source_id pour un
+     *   transfert), caisse_destination_id (transfert uniquement), montant,
+     *   libelle (ou motif pour un transfert), date_transaction, mode_paiement
+     *   (entree/sortie uniquement), reference_externe (optionnel), notes (optionnel)
+     *
+     * Contrairement à importHistorique() (tout ou rien dans une transaction),
+     * chaque ligne est traitée indépendamment avec son propre rapport
+     * créée/erreur — un fichier importé à la main contient plus souvent des
+     * erreurs de saisie ponctuelles qu'un payload JSON généré par un script,
+     * bloquer tout le fichier pour une seule ligne fautive serait pénible.
+     */
+    public function importHistoriqueFichier(Request $request, TabularFileReader $reader): JsonResponse
+    {
+        if ($request->user()->role !== 'super_admin') {
+            return response()->json(['message' => 'Réservé au super_admin.'], 403);
+        }
+        $request->validate(['fichier' => ['required', 'file', 'mimes:csv,txt,xlsx', 'max:5120']]);
+
+        try {
+            $lignes = $reader->lire($request->file('fichier'));
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        $crees = 0;
+        $erreurs = [];
+        foreach ($lignes as $i => $ligne) {
+            try {
+                \Illuminate\Support\Facades\DB::transaction(function () use ($ligne, $request) {
+                    $type = strtolower(trim((string) ($ligne['type'] ?? 'entree')));
+                    if ($type === 'transfert') {
+                        $source = $this->scope->scopeAssociation(Caisse::query())
+                            ->findOrFail($ligne['caisse_source_id'] ?? $ligne['caisse_id'] ?? null);
+                        $destination = $this->scope->scopeAssociation(Caisse::query())
+                            ->findOrFail($ligne['caisse_destination_id'] ?? null);
+                        $this->service->transfert($source, $destination, (float) $ligne['montant'], $ligne['libelle'] ?? $ligne['motif'] ?? 'Import historique', $request->user(), [
+                            'date' => $ligne['date_transaction'] ?? null, 'created_by' => $request->user()->id, 'valide_par' => $request->user()->id,
+                        ]);
+                        return;
+                    }
+                    if (! in_array($type, ['entree', 'sortie'], true)) {
+                        throw new \RuntimeException("type invalide : \"{$type}\" (attendu entree, sortie ou transfert).");
+                    }
+                    $caisse = $this->scope->scopeAssociation(Caisse::query())->findOrFail($ligne['caisse_id'] ?? null);
+                    $this->service->{$type}($caisse, (float) ($ligne['montant'] ?? 0), (string) ($ligne['libelle'] ?? 'Import historique'), [
+                        'date' => $ligne['date_transaction'] ?? null,
+                        'mode_paiement' => $ligne['mode_paiement'] ?? 'especes',
+                        'reference_type' => 'import_historique',
+                        'reference_externe' => $ligne['reference_externe'] ?? null,
+                        'notes' => $ligne['notes'] ?? null,
+                        'created_by' => $request->user()->id, 'valide_par' => $request->user()->id,
+                    ]);
+                });
+                $crees++;
+            } catch (\Throwable $e) {
+                $erreurs[] = ['ligne' => $i + 2, 'donnees' => $ligne, 'erreur' => $e->getMessage()];
+            }
+        }
+
+        return response()->json(['crees' => $crees, 'erreurs' => $erreurs]);
+    }
+
     public function importHistorique(Request $request): JsonResponse
     {
         if ($request->user()->role !== 'super_admin') {

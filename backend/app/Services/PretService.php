@@ -21,6 +21,15 @@ class PretService
         if (! $caisse->pret_autorise) {
             throw new RuntimeException("La caisse « {$caisse->libelle} » n'autorise pas les prêts.");
         }
+        if ($emprunteur->statut !== 'actif') {
+            throw new RuntimeException("Le membre n'est pas actif ({$emprunteur->statut}) : demande de prêt refusée.");
+        }
+        $pretEnCours = Pret::where('emprunteur_id', $emprunteur->id)
+            ->whereIn('statut', ['en_cours', 'en_retard', 'defaut'])
+            ->exists();
+        if ($pretEnCours) {
+            throw new RuntimeException("Le membre a déjà un prêt en cours : nouvelle demande refusée.");
+        }
         if ($montant > (float) $caisse->solde_actuel) {
             throw new RuntimeException('Montant demandé supérieur au solde disponible de la caisse.');
         }
@@ -112,13 +121,13 @@ class PretService
     /**
      * Décaissement effectif : sortie de caisse + passage EN_COURS.
      */
-    public function decaisser(Pret $pret, Utilisateur $tresorier): Pret
+    public function decaisser(Pret $pret, Utilisateur $tresorier, \App\Models\Reunion $reunion): Pret
     {
         if ($pret->statut !== 'approuve') {
             throw new RuntimeException('Seul un prêt approuvé peut être décaissé.');
         }
 
-        return DB::transaction(function () use ($pret, $tresorier) {
+        return DB::transaction(function () use ($pret, $tresorier, $reunion) {
             $transaction = app(CaisseService::class)->sortie(
                 $pret->caisse,
                 (float) $pret->montant_principal,
@@ -126,8 +135,22 @@ class PretService
                 ['reference_type' => 'pret', 'reference_id' => $pret->id, 'created_by' => $tresorier->id, 'valide_par' => $tresorier->id]
             );
 
+            // Journal de séance (RG-SEA-001) : traçabilité — l'argent décaissé apparaît
+            // dans le registre de la réunion, comme une cotisation ou un remboursement.
+            \App\Models\SeanceTransaction::create([
+                'reunion_id' => $reunion->id,
+                'type' => 'pret_accorde',
+                'membre_id' => $pret->emprunteur_id,
+                'montant' => $pret->montant_principal,
+                'libelle' => "Décaissement prêt — {$pret->emprunteur->nom} {$pret->emprunteur->prenom}",
+                'reference_pret_id' => $pret->id,
+                'caisse_id' => $pret->caisse_id,
+                'created_by' => $tresorier->id,
+            ]);
+
             $pret->update([
                 'statut' => 'en_cours',
+                'reunion_id' => $reunion->id,
                 'date_debut' => now()->toDateString(),
                 'date_fin_prevue' => now()->addMonths($pret->nb_echeances)->toDateString(),
                 'transaction_decaissement_id' => $transaction->id,

@@ -5,6 +5,7 @@ import { fmtDate } from '../data/mockData';
 import { resolveApiUrl } from '../lib/api';
 import { PageHeader, SectionCard, Table, Badge, Modal, FormField } from '../components/ui/index';
 import { getMissingFields } from '../lib/validation';
+import { useAsyncGuard } from '../hooks/useAsyncGuard';
 
 const EMPTY = { version: '', dateAdoption: new Date().toISOString().split('T')[0], decisionAG: '', fichier: '', notes: '' };
 
@@ -30,6 +31,7 @@ export default function ReglementInterieur() {
       setForm(EMPTY);
     } catch { /* L'erreur est affichée par le contexte et le formulaire reste ouvert. */ }
   };
+  const [guardedHandleAdd, publishing] = useAsyncGuard(handleAdd);
 
   return (
     <div className="space-y-6">
@@ -74,7 +76,7 @@ export default function ReglementInterieur() {
       <Modal open={add} onClose={() => setAdd(false)} title="Publier une nouvelle version"
         footer={<>
           <button onClick={() => setAdd(false)} className="btn-secondary">Annuler</button>
-          <button onClick={handleAdd} className="btn-primary"><Upload size={14} />Publier</button>
+          <button onClick={guardedHandleAdd} disabled={publishing} className="btn-primary"><Upload size={14} />{publishing ? 'Publication…' : 'Publier'}</button>
         </>}>
         <div className="space-y-4">
           <FormField label="Numéro de version" required>

@@ -73,6 +73,85 @@ class CycleTontineController extends Controller
     }
 
     /**
+     * Import via fichier CSV/XLSX. Une ligne = une cotisation ; les colonnes
+     * du cycle (reunion_id, gagnant_part_id, dates...) sont répétées sur
+     * chaque ligne d'un même cycle et regroupées via la colonne "cycle_ref"
+     * (identifiant libre choisi par l'utilisateur, pas stocké en base).
+     * Un cycle sans aucune cotisation peut être importé avec une seule ligne
+     * où les colonnes cotisation_tontine_part_id/cotisation_montant_verse
+     * sont laissées vides.
+     */
+    public function importHistoriqueFichier(Request $request, string $tontineId, \App\Services\Import\TabularFileReader $reader): JsonResponse
+    {
+        if ($request->user()->role !== 'super_admin') {
+            return response()->json(['message' => "Réservé au super_admin."], 403);
+        }
+        $tontine = $this->scope->scopeAssociation(Tontine::query())->findOrFail($tontineId);
+        $request->validate(['fichier' => ['required', 'file', 'mimes:csv,txt,xlsx', 'max:5120']]);
+
+        try {
+            $lignes = $reader->lire($request->file('fichier'));
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        $groupes = [];
+        foreach ($lignes as $i => $ligne) {
+            $ref = trim((string) ($ligne['cycle_ref'] ?? ''));
+            if ($ref === '') {
+                $ref = "__ligne_seule_{$i}";
+            }
+            $groupes[$ref]['lignes_source'][] = $i + 2;
+            $groupes[$ref]['cycle'] ??= $ligne;
+            if (! empty($ligne['cotisation_tontine_part_id'])) {
+                $groupes[$ref]['cotisations'][] = $ligne;
+            }
+        }
+
+        $crees = 0;
+        $erreurs = [];
+        foreach ($groupes as $ref => $groupe) {
+            try {
+                $cycleLigne = $groupe['cycle'];
+                $data = \Illuminate\Support\Facades\Validator::make($cycleLigne, [
+                    'reunion_id' => ['required', 'uuid'],
+                    'gagnant_part_id' => ['required', 'uuid'],
+                    'date_ouverture' => ['required', 'date'],
+                    'date_cloture' => ['required', 'date'],
+                    'montant_enchere' => ['nullable', 'numeric', 'min:0'],
+                    'surplus_enchere' => ['nullable', 'numeric', 'min:0'],
+                    'gain_verse' => ['nullable', 'boolean'],
+                    'mode_versement' => ['nullable', 'in:especes,cheque,virement,mobile_money,carte_bancaire'],
+                    'reference_versement' => ['nullable', 'string', 'max:200'],
+                ])->validate();
+                $data['gain_verse'] = $data['gain_verse'] ?? true;
+
+                $data['cotisations'] = collect($groupe['cotisations'] ?? [])->map(function ($c) {
+                    return \Illuminate\Support\Facades\Validator::make($c, [
+                        'cotisation_tontine_part_id' => ['required', 'uuid'],
+                        'cotisation_montant_verse' => ['required', 'numeric', 'min:0'],
+                        'cotisation_date_versement' => ['nullable', 'date'],
+                    ])->validate();
+                })->map(fn ($c) => [
+                    'tontine_part_id' => $c['cotisation_tontine_part_id'],
+                    'montant_verse' => (float) $c['cotisation_montant_verse'],
+                    'date_versement' => $c['cotisation_date_versement'] ?? null,
+                ])->values()->all();
+
+                $this->service->importerHistorique($tontine, $data, $request->user());
+                $crees++;
+            } catch (\Throwable $e) {
+                $message = $e instanceof \Illuminate\Validation\ValidationException
+                    ? implode(' ', $e->validator->errors()->all())
+                    : $e->getMessage();
+                $erreurs[] = ['cycle_ref' => $ref, 'lignes' => $groupe['lignes_source'], 'erreur' => $message];
+            }
+        }
+
+        return response()->json(['crees' => $crees, 'erreurs' => $erreurs]);
+    }
+
+    /**
      * POST /tontines/{id}/cycles/ouvrir
      */
     public function ouvrir(Request $request, string $tontineId): JsonResponse
@@ -202,11 +281,11 @@ class CycleTontineController extends Controller
     }
 
     /** Annule un bénéficiaire/cycle non payé avant la clôture de la réunion. */
-    public function annulerCycle(string $id): JsonResponse
+    public function annulerCycle(Request $request, string $id): JsonResponse
     {
         $cycle = $this->cycleScope($id);
         try {
-            $this->service->annulerCycleAvantVersement($cycle);
+            $this->service->annulerCycleAvantVersement($cycle, $request->user());
         } catch (\RuntimeException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
         }
@@ -365,8 +444,31 @@ class CycleTontineController extends Controller
     }
 
     /**
-     * POST /cycles/{id}/encheres — soumission d'une offre par un membre.
+     * POST /bulletins/{id}/annuler — annule un bulletin non versé (brouillon/genere),
+     * bloqué dès que le bénéficiaire a signé (voir BulletinGainService::annulerBulletin).
      */
+    public function annulerBulletin(Request $request, string $bulletinId): JsonResponse
+    {
+        if (! in_array($request->user()->role, ['tresorier', 'president', 'super_admin'], true)) {
+            return response()->json(['message' => 'Réservé au trésorier, au président ou au super_admin.'], 403);
+        }
+        $bulletin = \App\Models\BulletinGain::with('cycle.tontine')
+            ->whereHas('cycle.tontine', fn ($q) => $this->scope->scopeAssociation($q))->findOrFail($bulletinId);
+
+        $data = $request->validate([
+            'motif' => ['nullable', 'string', 'max:200'],
+        ]);
+
+        try {
+            $bulletin = $this->bulletinService->annulerBulletin($bulletin, $request->user(), $data['motif'] ?? null);
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json($bulletin);
+    }
+
+
     public function placerEnchere(Request $request, string $id): JsonResponse
     {
         $cycle = $this->cycleScope($id);

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Navigate, useNavigate, Link } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
+import { useAsyncGuard } from '../hooks/useAsyncGuard';
 
 const pillars = [
   'Organisation claire',
@@ -36,6 +37,7 @@ export default function Login() {
       setError('Connexion impossible. Vérifiez vos identifiants.');
     }
   };
+  const [guardedSubmit, loggingIn] = useAsyncGuard(submit);
 
   const submitPassword = async (e) => {
     e.preventDefault();
@@ -47,6 +49,7 @@ export default function Login() {
       setError('Impossible de changer le mot de passe');
     }
   };
+  const [guardedSubmitPassword, changingPassword] = useAsyncGuard(submitPassword);
 
   return (
     <div className="min-h-screen app-shell flex items-stretch bg-[linear-gradient(135deg,#09142a_0%,#2147a6_42%,#fbfaf7_100%)] p-4 md:p-6">
@@ -120,7 +123,7 @@ export default function Login() {
           </div>
 
           {!mustChange ? (
-            <form onSubmit={submit} className="space-y-4">
+            <form onSubmit={guardedSubmit} className="space-y-4">
               <div>
                 <label className="label">Email</label>
                 <input
@@ -140,13 +143,13 @@ export default function Login() {
                 />
               </div>
               {error && <div className="text-sm text-[#a64734]">{error}</div>}
-              <button type="submit" className="btn-primary w-full justify-center">Se connecter</button>
+              <button type="submit" disabled={loggingIn} className="btn-primary w-full justify-center">{loggingIn ? 'Connexion…' : 'Se connecter'}</button>
               <p className="text-sm text-ink-600/70 text-center">
                 Pas encore de compte ? <Link to="/register" className="font-semibold text-[#1f4aa6]">Créer un compte</Link>
               </p>
             </form>
           ) : (
-            <form onSubmit={submitPassword} className="space-y-4">
+            <form onSubmit={guardedSubmitPassword} className="space-y-4">
               <div className="rounded-2xl bg-[#fcf1d7] border border-[#edd399] p-3 text-sm text-[#8a6421]">
                 Changement de mot de passe requis.
               </div>
@@ -169,8 +172,8 @@ export default function Login() {
                 />
               </div>
               {error && <div className="text-sm text-[#a64734]">{error}</div>}
-              <button type="submit" className="btn-primary w-full justify-center">
-                Changer
+              <button type="submit" disabled={changingPassword} className="btn-primary w-full justify-center">
+                {changingPassword ? 'Changement…' : 'Changer'}
               </button>
             </form>
           )}

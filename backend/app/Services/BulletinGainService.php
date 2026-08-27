@@ -22,6 +22,19 @@ class BulletinGainService
 {
     public function genererDepuisCycle(CycleTontine $cycle, Utilisateur $auteur): BulletinGain
     {
+        // Idempotence : aucune contrainte UNIQUE en base sur bulletins_gain.cycle_id
+        // (seul numero_bulletin l'est), donc un double-clic ou un retry sur la
+        // clôture/désignation avant la protection anti-double-clic pouvait créer
+        // DEUX bulletins pour le même cycle. Résultat concret : annuler le cycle
+        // ensuite échouait en 422 (violation de clé étrangère bulletins_gain_cycle_id_fkey)
+        // car seul le premier bulletin (relation hasOne) était supprimé, laissant le
+        // second orphelin bloquer le DELETE sur cycles_tontine. On retourne donc le
+        // bulletin déjà généré au lieu d'en recréer un second.
+        $existant = BulletinGain::where('cycle_id', $cycle->id)->first();
+        if ($existant) {
+            return $existant->fresh(['retenues', 'cycle']);
+        }
+
         $part = $cycle->gagnant;
         $membre = $part->membre;
 
@@ -400,6 +413,33 @@ class BulletinGainService
     }
 
     /**
+     * Annulation d'un bulletin non encore versé (statut brouillon/genere), tant que
+     * le bénéficiaire n'a pas signé. Le paiement déjà effectué doit d'abord être
+     * retourné via annulerVersement() (statut 'paye' non accepté ici).
+     */
+    public function annulerBulletin(BulletinGain $bulletin, Utilisateur $auteur, ?string $motif = null): BulletinGain
+    {
+        if ($bulletin->statut === 'paye') {
+            throw new \RuntimeException('Ce bulletin est déjà versé : utilisez d’abord le retour des fonds.');
+        }
+        if ($bulletin->statut === 'annule') {
+            throw new \RuntimeException('Ce bulletin est déjà annulé.');
+        }
+        if ($bulletin->signe_beneficiaire_at) {
+            throw new \RuntimeException('Ce bulletin a déjà été signé par le bénéficiaire, annulation impossible.');
+        }
+
+        $bulletin->update([
+            'statut' => 'annule',
+            'annule_par' => $auteur->id,
+            'annule_at' => now(),
+            'motif_annulation' => $motif ?: "Annulation bulletin {$bulletin->numero_bulletin}",
+        ]);
+
+        return $bulletin->fresh();
+    }
+
+    /**
      * Génération du PDF officiel (en-tête, retenues, signatures).
      * Nécessite : composer require barryvdh/laravel-dompdf
      */
@@ -407,11 +447,27 @@ class BulletinGainService
     {
         $bulletin->loadMissing('retenues', 'gagnant', 'part', 'cycle.tontine.association');
 
-        $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('pdf.bulletin-gain', ['bulletin' => $bulletin]);
         $chemin = "bulletins/{$bulletin->numero_bulletin}.pdf";
-        \Illuminate\Support\Facades\Storage::disk('public')->put($chemin, $pdf->output());
+        $disk = \Illuminate\Support\Facades\Storage::disk('public');
 
-        $bulletin->update(['pdf_url' => \Illuminate\Support\Facades\Storage::url($chemin)]);
+        // Le PDF (DomPDF) est coûteux à générer (plusieurs secondes) et cette
+        // méthode était appelée à CHAQUE clic sur « Bulletin », même quand rien
+        // n'avait changé depuis le dernier rendu — d'où la lenteur perçue.
+        // On ne régénère que si le bulletin a été modifié (retenue ajoutée,
+        // signature, versement, annulation...) depuis le dernier rendu, ou si
+        // le fichier n'existe plus sur le disque.
+        $dejaGenere = $bulletin->pdf_genere_at
+            && $bulletin->pdf_genere_at->gte($bulletin->updated_at)
+            && $disk->exists($chemin);
+
+        if ($dejaGenere) {
+            return $bulletin->pdf_url;
+        }
+
+        $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('pdf.bulletin-gain', ['bulletin' => $bulletin]);
+        $disk->put($chemin, $pdf->output());
+
+        $bulletin->update(['pdf_url' => \Illuminate\Support\Facades\Storage::url($chemin), 'pdf_genere_at' => now()]);
 
         return $bulletin->pdf_url;
     }

@@ -1,9 +1,17 @@
 import { useState, useRef } from 'react';
 import { UserCog, Plus, ShieldCheck, Pencil, Power, Copy, Check, KeyRound } from 'lucide-react';
 import { roleLabel } from '../data/mockData';
+
+const fmtDerniereConnexion = (d) => {
+  if (!d) return 'Jamais connecté';
+  return new Date(d).toLocaleString('fr-FR', {
+    day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+  });
+};
 import { useApp } from '../context/AppContext';
 import { PageHeader, Table, Badge, Modal, FormField } from '../components/ui/index';
 import { getMissingFields } from '../lib/validation';
+import { useAsyncGuard } from '../hooks/useAsyncGuard';
 
 const roleV = { super_admin:'red', president:'purple', vice_president:'purple', tresorier:'blue', secretaire:'green', controleur:'gray' };
 
@@ -36,6 +44,7 @@ export default function Utilisateurs() {
       setTempPassword({ email: form.email, mdp: res.motDePasseProvisoire });
     }
   };
+  const [guardedHandleAdd, addingUser] = useAsyncGuard(handleAdd);
 
   const handleCopyPassword = () => {
     if (!tempPassword) return;
@@ -49,13 +58,15 @@ export default function Utilisateurs() {
     await updateUtilisateur(edit.id, { role: editRole });
     setEdit(null);
   };
+  const [guardedHandleEditSave, savingEdit] = useAsyncGuard(handleEditSave);
 
-  const handleToggle = () => {
+  const handleToggle = async () => {
     if (!confirm) return;
-    if (confirm.action === 'desactiver') desactiverUtilisateur(confirm.u.id);
-    else activerUtilisateur(confirm.u.id);
+    if (confirm.action === 'desactiver') await desactiverUtilisateur(confirm.u.id);
+    else await activerUtilisateur(confirm.u.id);
     setConfirm(null);
   };
+  const [guardedHandleToggle, toggling] = useAsyncGuard(handleToggle);
 
   const formRef = useRef(form); formRef.current = form;
   const F = useRef(({ k, ...p }) => (
@@ -107,7 +118,7 @@ export default function Utilisateurs() {
               </td>
               <td className="td text-gray-600">{u.nomMembre}</td>
               <td className="td"><Badge variant={roleV[u.role]}>{roleLabel[u.role]}</Badge></td>
-              <td className="td text-gray-400 text-xs">{u.derniereConnexion}</td>
+              <td className="td text-gray-400 text-xs">{fmtDerniereConnexion(u.derniereConnexion)}</td>
               <td className="td"><Badge variant={u.statut==='actif'?'green':'gray'}>{u.statut==='actif'?'Actif':'Inactif'}</Badge></td>
               <td className="td">
                 <div className="flex gap-1">
@@ -139,7 +150,7 @@ export default function Utilisateurs() {
 
       {/* Modal ajout */}
       <Modal open={add} onClose={()=>setAdd(false)} title="Nouvel utilisateur"
-        footer={<><button onClick={()=>setAdd(false)} className="btn-secondary">Annuler</button><button onClick={handleAdd} className="btn-primary"><UserCog size={14}/>Créer</button></>}>
+        footer={<><button onClick={()=>setAdd(false)} disabled={addingUser} className="btn-secondary">Annuler</button><button onClick={guardedHandleAdd} disabled={addingUser} className="btn-primary"><UserCog size={14}/>{addingUser ? 'Création…' : 'Créer'}</button></>}>
         <div className="space-y-4">
           <FormField label="Membre lié" required>
             <S k="idMembre">
@@ -166,7 +177,7 @@ export default function Utilisateurs() {
 
       {/* Modal édition rôle */}
       <Modal open={!!edit} onClose={()=>setEdit(null)} title="Modifier l'utilisateur"
-        footer={<><button onClick={()=>setEdit(null)} className="btn-secondary">Annuler</button><button onClick={handleEditSave} className="btn-primary"><Pencil size={14}/>Enregistrer</button></>}>
+        footer={<><button onClick={()=>setEdit(null)} disabled={savingEdit} className="btn-secondary">Annuler</button><button onClick={guardedHandleEditSave} disabled={savingEdit} className="btn-primary"><Pencil size={14}/>{savingEdit ? 'Enregistrement…' : 'Enregistrer'}</button></>}>
         <div className="space-y-4">
           <p className="text-sm text-gray-600">
             {edit?.nomUtilisateur} — {edit?.nomMembre}
@@ -207,9 +218,9 @@ export default function Utilisateurs() {
       <Modal open={!!confirm} onClose={()=>setConfirm(null)}
         title={confirm?.action==='desactiver'?'Désactiver l\'utilisateur':'Activer l\'utilisateur'}
         footer={<>
-          <button onClick={()=>setConfirm(null)} className="btn-secondary">Annuler</button>
-          <button onClick={handleToggle} className={confirm?.action==='desactiver'?'btn-danger':'btn-primary'}>
-            <Power size={14}/>{confirm?.action==='desactiver'?'Oui, désactiver':'Oui, activer'}
+          <button onClick={()=>setConfirm(null)} disabled={toggling} className="btn-secondary">Annuler</button>
+          <button onClick={guardedHandleToggle} disabled={toggling} className={confirm?.action==='desactiver'?'btn-danger':'btn-primary'}>
+            <Power size={14}/>{toggling ? 'Veuillez patienter…' : (confirm?.action==='desactiver'?'Oui, désactiver':'Oui, activer')}
           </button>
         </>}>
         <p className="text-sm text-gray-600">

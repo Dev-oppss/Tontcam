@@ -61,18 +61,21 @@ class MembreController extends Controller
     /**
      * Import CSV en masse (RG-MBR — colonnes attendues : nom,prenom,telephone,email,date_adhesion).
      */
-    public function importCsv(Request $request): JsonResponse
+    public function importCsv(Request $request, \App\Services\Import\TabularFileReader $reader): JsonResponse
     {
-        $request->validate(['fichier' => ['required', 'file', 'mimes:csv,txt']]);
+        $request->validate(['fichier' => ['required', 'file', 'mimes:csv,txt,xlsx', 'max:5120']]);
 
         $associationId = $this->scope->associationId();
-        $handle = fopen($request->file('fichier')->getRealPath(), 'r');
-        $headers = fgetcsv($handle);
+        try {
+            $lignes = $reader->lire($request->file('fichier'));
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
         $crees = 0;
         $erreurs = [];
 
-        while (($row = fgetcsv($handle)) !== false) {
-            $ligne = array_combine($headers, $row);
+        foreach ($lignes as $ligne) {
             try {
                 $telephone = $this->normaliserTelephone($ligne['telephone'] ?? null);
                 if (! $telephone) {
@@ -97,7 +100,6 @@ class MembreController extends Controller
                 $erreurs[] = ['ligne' => $ligne, 'erreur' => $e->getMessage()];
             }
         }
-        fclose($handle);
 
         return response()->json(['crees' => $crees, 'erreurs' => $erreurs], 201);
     }

@@ -9,9 +9,12 @@ use App\Services\AccessScopeService;
 use App\Services\DecisionAgService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use App\Http\Controllers\Api\Concerns\AssertSeanceOuverte;
 
 class DecisionAgController extends Controller
 {
+    use AssertSeanceOuverte;
+
     public function __construct(private AccessScopeService $scope, private DecisionAgService $service) {}
 
     public function index(Request $request): JsonResponse
@@ -43,6 +46,12 @@ class DecisionAgController extends Controller
 
         $reunion = Reunion::where('association_id', $this->scope->associationId())->findOrFail($data['reunion_id']);
 
+        try {
+            $this->assertSeanceOuverte($reunion);
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
         $decision = $this->service->enregistrer($reunion, $data);
 
         return response()->json($decision, 201);
@@ -62,7 +71,12 @@ class DecisionAgController extends Controller
         $data = $request->validate([
             'decisions' => ['required', 'array', 'min:1', 'max:500'],
             'decisions.*.reunion_id' => ['required', 'uuid'],
-            'decisions.*.numero_decision' => ['required', 'string', 'max:100'],
+            // max:30 aligné sur la colonne réelle decisions_ag.numero_decision
+            // VARCHAR(30) (voir database/script.sql) : la validation acceptait
+            // jusqu'à 100 caractères, un numéro de 31-100 caractères passait
+            // Laravel puis plantait à l'insertion SQL ("value too long") au
+            // lieu d'un message de validation propre par ligne.
+            'decisions.*.numero_decision' => ['required', 'string', 'max:30'],
             'decisions.*.type' => ['required', 'in:financier,statutaire,disciplinaire,organisationnel,autre'],
             'decisions.*.objet' => ['required', 'string', 'max:400'],
             'decisions.*.description' => ['nullable', 'string'],
@@ -81,6 +95,61 @@ class DecisionAgController extends Controller
             })->values();
         });
         return response()->json($decisions, 201);
+    }
+
+    /**
+     * Import via fichier CSV/XLSX. Colonnes attendues : reunion_id,
+     * numero_decision, type, objet, description (optionnel), quorum_present,
+     * votes_pour, votes_contre, votes_abstention (optionnel), statut,
+     * date_effet (optionnel), notes (optionnel).
+     * Une ligne par decision - traitees independamment (rapport creee/erreur
+     * par ligne), contrairement au JSON qui est tout-ou-rien.
+     */
+    public function importHistoriqueFichier(Request $request, \App\Services\Import\TabularFileReader $reader): JsonResponse
+    {
+        if ($request->user()->role !== 'super_admin') {
+            return response()->json(['message' => 'Réservé au super_admin.'], 403);
+        }
+        $request->validate(['fichier' => ['required', 'file', 'mimes:csv,txt,xlsx', 'max:5120']]);
+
+        try {
+            $lignes = $reader->lire($request->file('fichier'));
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        $crees = 0;
+        $erreurs = [];
+        foreach ($lignes as $i => $ligne) {
+            try {
+                $validee = \Illuminate\Support\Facades\Validator::make($ligne, [
+                    'reunion_id' => ['required', 'uuid'],
+                    // Même alignement que importHistorique() ci-dessus (colonne VARCHAR(30)).
+                    'numero_decision' => ['required', 'string', 'max:30'],
+                    'type' => ['required', 'in:financier,statutaire,disciplinaire,organisationnel,autre'],
+                    'objet' => ['required', 'string', 'max:400'],
+                    'description' => ['nullable', 'string'],
+                    'quorum_present' => ['required', 'integer', 'min:0'],
+                    'votes_pour' => ['required', 'integer', 'min:0'],
+                    'votes_contre' => ['required', 'integer', 'min:0'],
+                    'votes_abstention' => ['nullable', 'integer', 'min:0'],
+                    'statut' => ['required', 'in:adopte,rejete'],
+                    'date_effet' => ['nullable', 'date'],
+                    'notes' => ['nullable', 'string'],
+                ])->validate();
+
+                Reunion::where('association_id', $this->scope->associationId())->findOrFail($validee['reunion_id']);
+                DecisionAg::create(['association_id' => $this->scope->associationId(), ...$validee]);
+                $crees++;
+            } catch (\Throwable $e) {
+                $message = $e instanceof \Illuminate\Validation\ValidationException
+                    ? implode(' ', $e->validator->errors()->all())
+                    : $e->getMessage();
+                $erreurs[] = ['ligne' => $i + 2, 'donnees' => $ligne, 'erreur' => $message];
+            }
+        }
+
+        return response()->json(['crees' => $crees, 'erreurs' => $erreurs]);
     }
 
     // Aucune mise à jour ni suppression : le registre des décisions d'AG est immuable (RG-SOC-014).

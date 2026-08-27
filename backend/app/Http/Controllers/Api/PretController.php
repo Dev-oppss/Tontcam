@@ -5,14 +5,18 @@ namespace App\Http\Controllers\Api;
 use App\Models\Caisse;
 use App\Models\Membre;
 use App\Models\Pret;
+use App\Models\Reunion;
 use App\Services\AccessScopeService;
 use App\Services\PretService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use App\Http\Controllers\Controller;
+use App\Http\Controllers\Api\Concerns\AssertSeanceOuverte;
 
 class PretController extends Controller
 {
+    use AssertSeanceOuverte;
+
     public function __construct(private AccessScopeService $scope, private PretService $service) {}
 
     public function index(Request $request): JsonResponse
@@ -70,6 +74,96 @@ class PretController extends Controller
         $pret = $this->service->importerHistorique($data, $request->user());
 
         return response()->json($pret->load('emprunteur', 'echeances'), 201);
+    }
+
+    /**
+     * Import via fichier CSV/XLSX. Une ligne = une échéance ; les colonnes du
+     * prêt (caisse_id, emprunteur_id, montant_principal, ...) sont répétées
+     * sur chaque ligne d'un même prêt et regroupées via la colonne
+     * "pret_ref" (identifiant libre choisi par l'utilisateur, propre au
+     * fichier — pas stocké en base, juste utilisé pour reconstituer les
+     * groupes de lignes appartenant au même prêt avant import).
+     * Colonnes échéance : numero_echeance, date_echeance, montant_capital,
+     * montant_interet, statut_echeance, montant_verse (optionnel),
+     * date_versement_reel (optionnel).
+     */
+    public function importHistoriqueFichier(Request $request, \App\Services\Import\TabularFileReader $reader): JsonResponse
+    {
+        if ($request->user()->role !== 'super_admin') {
+            return response()->json(['message' => "Réservé au super_admin."], 403);
+        }
+        $request->validate(['fichier' => ['required', 'file', 'mimes:csv,txt,xlsx', 'max:5120']]);
+
+        try {
+            $lignes = $reader->lire($request->file('fichier'));
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        $groupes = [];
+        foreach ($lignes as $i => $ligne) {
+            $ref = trim((string) ($ligne['pret_ref'] ?? ''));
+            if ($ref === '') {
+                $ref = "__ligne_seule_{$i}"; // pas de regroupement voulu : 1 ligne = 1 pret a 1 seule echeance
+            }
+            $groupes[$ref]['lignes_source'][] = $i + 2;
+            $groupes[$ref]['pret'] ??= $ligne; // les infos du pret viennent de la 1ere ligne du groupe
+            $groupes[$ref]['echeances'][] = $ligne;
+        }
+
+        $crees = 0;
+        $erreurs = [];
+        foreach ($groupes as $ref => $groupe) {
+            try {
+                $pretLigne = $groupe['pret'];
+                $data = \Illuminate\Support\Facades\Validator::make($pretLigne, [
+                    'caisse_id' => ['required', 'uuid'],
+                    'emprunteur_id' => ['required', 'uuid'],
+                    'montant_principal' => ['required', 'numeric', 'min:1'],
+                    'taux_interet_mensuel' => ['required', 'numeric', 'min:0'],
+                    'taux_penalite_mensuel' => ['nullable', 'numeric', 'min:0'],
+                    'statut' => ['required', 'in:en_cours,en_retard,defaut,solde'],
+                    'date_demande' => ['required', 'date'],
+                    'date_debut' => ['nullable', 'date'],
+                    'avaliste_id' => ['nullable', 'uuid'],
+                    'notes' => ['nullable', 'string'],
+                ])->validate();
+
+                $echeances = collect($groupe['echeances'])->map(function ($e) {
+                    return \Illuminate\Support\Facades\Validator::make($e, [
+                        'numero_echeance' => ['required', 'integer', 'min:1'],
+                        'date_echeance' => ['required', 'date'],
+                        'montant_capital' => ['required', 'numeric', 'min:0'],
+                        'montant_interet' => ['required', 'numeric', 'min:0'],
+                        'statut_echeance' => ['required', 'in:a_venir,payee,partielle,en_retard,penalisee'],
+                        'montant_verse' => ['nullable', 'numeric', 'min:0'],
+                        'date_versement_reel' => ['nullable', 'date'],
+                    ])->validate();
+                })->map(fn ($e) => [
+                    'numero_echeance' => (int) $e['numero_echeance'],
+                    'date_echeance' => $e['date_echeance'],
+                    'montant_capital' => (float) $e['montant_capital'],
+                    'montant_interet' => (float) $e['montant_interet'],
+                    'statut' => $e['statut_echeance'],
+                    'montant_verse' => (($e['montant_verse'] ?? '') !== '') ? (float) $e['montant_verse'] : 0,
+                    'date_versement_reel' => (($e['date_versement_reel'] ?? '') !== '') ? $e['date_versement_reel'] : null,
+                ])->values()->all();
+
+                $caisse = Caisse::whereHas('association', fn ($q) => $this->scope->scopeAssociation($q))->findOrFail($data['caisse_id']);
+                $data['caisse_id'] = $caisse->id;
+                $data['echeances'] = $echeances;
+
+                $this->service->importerHistorique($data, $request->user());
+                $crees++;
+            } catch (\Throwable $e) {
+                $message = $e instanceof \Illuminate\Validation\ValidationException
+                    ? implode(' ', $e->validator->errors()->all())
+                    : $e->getMessage();
+                $erreurs[] = ['pret_ref' => $ref, 'lignes' => $groupe['lignes_source'], 'erreur' => $message];
+            }
+        }
+
+        return response()->json(['crees' => $crees, 'erreurs' => $erreurs]);
     }
 
     /**
@@ -143,7 +237,14 @@ class PretController extends Controller
         $pret = $this->pretScope($id);
         $this->authorize('update', $pret);
 
-        return $this->wrap(fn () => $this->service->decaisser($pret, $request->user()));
+        $data = $request->validate(['reunion_id' => ['required', 'uuid']]);
+        $reunion = Reunion::where('association_id', $this->scope->associationId())->findOrFail($data['reunion_id']);
+
+        return $this->wrap(function () use ($pret, $reunion, $request) {
+            $this->assertSeanceOuverte($reunion);
+
+            return $this->service->decaisser($pret, $request->user(), $reunion);
+        });
     }
 
     public function rembourser(Request $request, string $id): JsonResponse

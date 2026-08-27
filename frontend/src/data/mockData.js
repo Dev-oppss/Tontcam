@@ -94,6 +94,7 @@ export const typePointLabel = {
   financier: 'Financier',
   attribution: 'Attribution',
   disciplinaire: 'Disciplinaire',
+  sociale: 'Sociale',
   divers: 'Divers',
 };
 

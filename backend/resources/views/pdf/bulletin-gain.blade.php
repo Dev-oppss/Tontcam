@@ -19,7 +19,7 @@
     .type-retenue { color: #c24e33; font-weight: bold; font-size: 9px; }
     .net { background: #4C5FD6; color: #fff; padding: 10px 8px; font-weight: bold; }
     .versement { margin-top: 12px; font-size: 10.5px; background: #f7f6f2; padding: 8px 10px; border-radius: 4px; }
-    .signatures { display: flex; margin-top: 40px; }
+    .signatures { width: 100%; border-collapse: separate; border-spacing: 14px 0; margin-top: 40px; }
     .signature { width: 33%; border-top: 1px solid #999; padding-top: 6px; font-size: 10px; text-align: center; }
 </style>
 </head>
@@ -71,7 +71,7 @@
                 <tr>
                     <td>{{ $r->libelle }}</td>
                     <td class="type-retenue">RETENUE</td>
-                    <td style="text-align:right;color:#c24e33">− {{ number_format($r->montant, 0, ',', ' ') }} FCFA</td>
+                    <td style="text-align:right;color:#c24e33">- {{ number_format($r->montant, 0, ',', ' ') }} FCFA</td>
                 </tr>
             @endforeach
             <tr class="net"><td colspan="2">MONTANT NET À VERSER</td><td style="text-align:right">{{ number_format($bulletin->montant_net, 0, ',', ' ') }} FCFA</td></tr>
@@ -86,29 +86,31 @@
             </div>
         @endif
 
-        <div class="signatures">
-            <div class="signature">
-                @if($bulletin->signe_tresorier_at)
-                    ✓ Signé — Trésorier<br><span style="font-size:9px;color:#666">{{ $bulletin->signe_tresorier_at->format('d/m/Y H:i') }}</span>
-                @else
-                    Signature Trésorier
-                @endif
-            </div>
-            <div class="signature">
-                @if($bulletin->signe_president_at)
-                    ✓ Signé — Président<br><span style="font-size:9px;color:#666">{{ $bulletin->signe_president_at->format('d/m/Y H:i') }}</span>
-                @else
-                    Signature Président
-                @endif
-            </div>
-            <div class="signature">
-                @if($bulletin->signe_beneficiaire_at)
-                    ✓ Signé — Bénéficiaire<br><span style="font-size:9px;color:#666">{{ $bulletin->signe_beneficiaire_at->format('d/m/Y H:i') }}</span>
-                @else
-                    Signature Bénéficiaire
-                @endif
-            </div>
-        </div>
+        <table class="signatures">
+            <tr>
+                <td class="signature">
+                    @if($bulletin->signe_tresorier_at)
+                        ✓ Signé — Trésorier<br><span style="font-size:9px;color:#666">{{ $bulletin->signe_tresorier_at->format('d/m/Y H:i') }}</span>
+                    @else
+                        Signature Trésorier
+                    @endif
+                </td>
+                <td class="signature">
+                    @if($bulletin->signe_president_at)
+                        ✓ Signé — Président<br><span style="font-size:9px;color:#666">{{ $bulletin->signe_president_at->format('d/m/Y H:i') }}</span>
+                    @else
+                        Signature Président
+                    @endif
+                </td>
+                <td class="signature">
+                    @if($bulletin->signe_beneficiaire_at)
+                        ✓ Signé — Bénéficiaire<br><span style="font-size:9px;color:#666">{{ $bulletin->signe_beneficiaire_at->format('d/m/Y H:i') }}</span>
+                    @else
+                        Signature Bénéficiaire
+                    @endif
+                </td>
+            </tr>
+        </table>
         @if($bulletin->hash_integrite)
             <p style="margin-top:16px;font-size:8px;color:#999;word-break:break-all">
                 Document scellé numériquement — hash d'intégrité SHA-256 : {{ $bulletin->hash_integrite }}<br>

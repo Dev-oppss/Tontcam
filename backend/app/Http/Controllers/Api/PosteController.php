@@ -31,8 +31,11 @@ class PosteController extends Controller
             }
         }
 
+        $withHistory = request()->boolean('with_history');
         $postes = $this->scope->scopeAssociation(Poste::query())
-            ->with(['mandats' => fn ($q) => $q->whereNull('date_fin')->with('membre')])
+            ->with($withHistory
+                ? ['mandats' => fn ($q) => $q->with('membre')->orderByDesc('date_debut')]
+                : ['mandats' => fn ($q) => $q->whereNull('date_fin')->with('membre')])
             ->orderByDesc('est_obligatoire')->orderBy('niveau_hierarchie')
             ->get();
 

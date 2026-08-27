@@ -12,10 +12,20 @@ import {
 import { fmtDate, typePointLabel, statutPointLabel, fmt, periodeLabel, ACTEUR_ROLES, acteurRoleLabel, roleLabel, STATUTS_PRESENCE, statutPresenceLabel, MODES_PAIEMENT, modePaiementConfig } from '../data/mockData';
 import { API_BASE, request } from '../lib/api';
 import { useApp, TX_TYPES, TX_LABELS } from '../context/AppContext';
+
+// Une SeanceTransaction générée par BulletinGainService::verser() pour imputer une
+// retenue (prêt, sanction, divers) sur un gain déjà versé porte cette note fixe — ce
+// n'est pas un nouvel encaissement/décaissement, juste une trace de ce qui reste en
+// caisse. Le PV doit l'afficher (traçabilité) mais ne jamais l'additionner aux totaux.
+const estImputation = (tx) => !!tx.note?.includes('Imputation sur gain');
 import { PageHeader, Badge, Modal, FormField } from '../components/ui/index';
 import { getMissingFields } from '../lib/validation';
 import { ModePaiementFields, isModePaiementValid, ModePaiementBadge } from '../components/ui/ModePaiement';
+import { useAsyncGuard } from '../hooks/useAsyncGuard';
 import clsx from 'clsx';
+import { buildAmortization, simulerRepartitionInterets, FORM_PRET_VIDE } from '../lib/amortissement';
+import { PretFormFields } from '../components/shared/PretFormFields';
+import { HandCoins } from 'lucide-react';
 
 // ── Config statuts ────────────────────────────────────────────
 const sCfg = {
@@ -82,6 +92,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
   const locked   = !!reunion.verrouillee;
   const notOpen  = reunion.statutReunion === 'planifiee';
   const [bulletinUrl, setBulletinUrl] = useState(null);
+  const [busyPaiement, setBusyPaiement] = useState(false); // anti double-clic : versement / retenue bulletin
 
   // reunion.beneficiairesSeance n'a jamais existé côté API — dérivé ici de la vraie
   // source de vérité (cyclesTontine) pour que le bénéficiaire désigné reste visible
@@ -116,6 +127,10 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
   const [nouvelleEnchereMontant, setNouvelleEnchereMontant] = useState('');
   const [nouvelleEnchereCaisseId, setNouvelleEnchereCaisseId] = useState('');
   const [miseGagnanteCaisseId, setMiseGagnanteCaisseId] = useState('');
+  // Choix manuel du bénéficiaire — disponible pour rotation ET tirage au sort,
+  // comme pour l'enchère (dérogation possible à l'ordre planifié / au hasard).
+  const [choixManuel,          setChoixManuel]          = useState(false);
+  const [beneficiaireManuelId, setBeneficiaireManuelId]  = useState('');
   const [retenueModal, setRetenueModal] = useState(false);
   const [retenueLibelle, setRetenueLibelle] = useState('');
   const [retenueMontant, setRetenueMontant] = useState('');
@@ -149,10 +164,20 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
     }).filter(Boolean);
   }, [tontineSelectee, membresParTontine, membres]);
 
-  const membresEligiblesGain = useMemo(() => membresParTontine
-    .filter(mt => mt.idTontine === tontineSelectee?.id && mt.statut === 'actif')
-    .map(mt => membres.find(m => m.id === mt.idMembre)).filter(Boolean),
-  [tontineSelectee, membresParTontine, membres]);
+  const membresEligiblesGain = useMemo(() => {
+    // Un membre avec plusieurs parts apparaît plusieurs fois dans membresParTontine
+    // (une ligne = une part côté serveur) — on regroupe pour n'afficher qu'une seule
+    // fois chaque membre, avec son nombre de parts entre parenthèses.
+    const partsParMembre = new Map();
+    membresParTontine
+      .filter(mt => mt.idTontine === tontineSelectee?.id && mt.statut === 'actif')
+      .forEach(mt => partsParMembre.set(mt.idMembre, (partsParMembre.get(mt.idMembre) || 0) + 1));
+    return [...partsParMembre.entries()]
+      .map(([idMembre, nombreParts]) => {
+        const membre = membres.find(m => m.id === idMembre);
+        return membre ? { ...membre, nombreParts } : null;
+      }).filter(Boolean);
+  }, [tontineSelectee, membresParTontine, membres]);
 
   const montantPot     = tontineSelectee ? tontineSelectee.cotisation * tontineSelectee.totalParts : 0;
   const totalAttendu   = membresDeLatontine.reduce((s, m) => s + m.montantDu, 0);
@@ -205,39 +230,99 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
     });
   }, [idTontineSelectee, membresDeLatontine, tontineSelectee]);
 
+  // ── Reprise d'un cycle laissé en suspens ──────────────────────────────
+  // Bug corrigé : "Valider et désigner le bénéficiaire" ouvre le cycle
+  // (ouvrirCycle) dès la validation des cotisations — AVANT toute
+  // désignation réelle — pour pouvoir y rattacher les transactions de
+  // cotisation (cf. commentaire dans handleValiderFeuille). Si l'utilisateur
+  // quitte ensuite l'onglet (ex. pour aller pointer les présences) sans
+  // avoir désigné de bénéficiaire, ce cycle "ouvert" reste orphelin en base
+  // : le tour est déjà compté, mais localement `etape`/`cycleActuelId` sont
+  // remis à zéro au remontage du composant. Résultat : en revenant sur
+  // Feuille Cotisation, tout repart de "choix" comme si rien n'avait été
+  // fait, et re-valider les cotisations tente d'ouvrir un DEUXIÈME cycle
+  // pour la même séance → rejeté par le backend ("comporte déjà le nombre
+  // de tours prévu"), avec un message qui ne dit pas pourquoi.
+  //
+  // On détecte donc ici, pour la tontine sélectionnée, un cycle déjà ouvert
+  // pour cette réunion et pas encore clos/annulé, et on reprend directement
+  // à l'étape bénéficiaire au lieu de repartir de zéro.
+  const cycleOuvertPourTontine = (idTontineCandidat) => (cyclesTontine || []).find(c =>
+    c.idReunion === reunion.id && c.idTontine === idTontineCandidat && c.statut !== 'clos' && c.statut !== 'annule');
+
+  useEffect(() => {
+    if (!tontineSelectee) return;
+    if (etape !== 'choix' && etape !== 'cotisation') return;
+    const enSuspens = cycleOuvertPourTontine(tontineSelectee.id);
+    if (enSuspens && enSuspens.id !== cycleActuelId) {
+      setCycleActuelId(enSuspens.id);
+      setEtape('beneficiaire');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tontineSelectee, cyclesTontine]);
+
   const toggleCotise = (idMembre) =>
     setStatutParMembre(prev => ({ ...prev, [idMembre]: prev[idMembre] === 'defaillant' ? 'cotise' : 'defaillant' }));
   const setModePaiementMembre = (idMembre, patch) =>
     setModeParMembre(prev => ({ ...prev, [idMembre]: { ...(prev[idMembre]||{modePaiement:'especes',detailsPaiement:''}), ...patch } }));
 
+  // Anti double-clic : valider la feuille de cotisation, désigner un bénéficiaire
+  // (rotation/tirage/manuel/enchère) et ajouter une enchère sont des séquences
+  // d'appels serveur (parfois plusieurs cotisations puis ouverture/clôture de
+  // cycle) — un second clic pendant que la première séquence tourne encore
+  // pourrait dupliquer les cotisations ou désigner deux bénéficiaires.
+  const [busyCotisationBenef, setBusyCotisationBenef] = useState(false);
+  const runGuarded = async (fn) => {
+    if (busyCotisationBenef) return;
+    setBusyCotisationBenef(true);
+    try { await fn(); } finally { setBusyCotisationBenef(false); }
+  };
+
   // ── Valider la feuille de cotisation ──
   const handleValiderFeuille = async () => {
     if (!tontineSelectee) return;
-    cotises.forEach(m => {
-      const mode = modeParMembre[m.id] || { modePaiement:'especes', detailsPaiement:'' };
-      addSeanceTransaction(reunion.id, {
-        type: 'cotisation', idMembre: m.id, montant: m.montantDu,
-        libelle: `Cotisation ${tontineSelectee.nom} — ${m.nombreParts} part(s)`,
-        idTontine: tontineSelectee.id, idBanque: tontineSelectee.idCaisse,
-        modePaiement: mode.modePaiement, detailsPaiement: mode.detailsPaiement,
-      });
-    });
-    defaillants.forEach(m => {
-      addSanction({
-        idMembre: m.id, nomMembre: `${m.nom} ${m.prenom}`,
-        typeSanction: 'non_paiement',
-        motif: `Défaillance cotisation — ${tontineSelectee.nom} — Séance N°${reunion.numero}`,
-        montant: sanctionMontant ? Number(sanctionMontant) : Math.round(m.montantDu * 0.1),
-        date: reunion.date, reunionId: reunion.id,
-      });
-    });
-
-    // Ouvre un vrai cycle et y rattache les cotisations réellement saisies ci-dessus —
-    // sans ça, designerGagnant/cloturerCycle ne « voient » aucune cotisation et le
-    // bulletin final sort à montant brut nul, quoi que le secrétaire ait coché.
+    // Bug critique corrigé : forEach n'attendait jamais les appels async ci-dessous.
+    // Si une cotisation échouait (ex: aucune caisse assignée à la tontine → "caisse_id
+    // field is required"), l'erreur était totalement ignorée et le code enchaînait quand
+    // même sur l'ouverture du cycle — la cotisation ratée disparaissait silencieusement,
+    // mais le cycle avançait comme si de rien n'était ("cycle déjà effectué" au retour).
+    //
+    // Le cycle doit être ouvert AVANT de créer les transactions de cotisation, pour
+    // pouvoir les rattacher via cycle_tontine_id (idCycle). Sans ce lien, annuler le
+    // cycle plus tard ne pouvait pas retrouver ces transactions pour les contre-passer :
+    // l'argent et la ligne restaient visibles en caisse/historique/PV malgré l'annulation.
     const cycle = await ouvrirCycle(tontineSelectee.id, reunion.id);
     if (!cycle) return; // ouvrirCycle a déjà affiché l'erreur (ex: plus aucune part disponible)
     setCycleActuelId(cycle.id);
+
+    try {
+      for (const m of cotises) {
+        const mode = modeParMembre[m.id] || { modePaiement:'especes', detailsPaiement:'' };
+        // eslint-disable-next-line no-await-in-loop
+        await addSeanceTransaction(reunion.id, {
+          type: 'cotisation', idMembre: m.id, montant: m.montantDu,
+          libelle: `Cotisation ${tontineSelectee.nom} — ${m.nombreParts} part(s)`,
+          idCycle: cycle.id, idBanque: tontineSelectee.idCaisse,
+          modePaiement: mode.modePaiement, detailsPaiement: mode.detailsPaiement,
+        });
+      }
+      for (const m of defaillants) {
+        // eslint-disable-next-line no-await-in-loop
+        await addSanction({
+          idMembre: m.id, nomMembre: `${m.nom} ${m.prenom}`,
+          typeSanction: 'non_paiement',
+          motif: `Défaillance cotisation — ${tontineSelectee.nom} — Séance N°${reunion.numero}`,
+          montant: sanctionMontant ? Number(sanctionMontant) : Math.round(m.montantDu * 0.1),
+          date: reunion.date, reunionId: reunion.id,
+        });
+      }
+    } catch (err) {
+      // Le toast d'erreur est déjà affiché par addSeanceTransaction/addSanction (handleError).
+      // Le cycle est déjà ouvert (aucune cotisation dedans n'a pu bloquer son ouverture),
+      // donc on ne le referme pas ici — mais on n'avance pas non plus à l'étape bénéficiaire :
+      // l'utilisateur peut annuler le cycle (bouton dédié) puis recommencer proprement.
+      return;
+    }
 
     for (const m of cotises) {
       const cotisationsMembre = cycle.cotisations.filter(co => co.idMembre === m.id);
@@ -268,7 +353,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
     await designerGagnantCycle(cycleActuelId, idPart);
     const cycleFinal = await cloturerCycle(cycleActuelId);
     if (!cycleFinal) return;
-    setGagnant({ nomMembre: cycleFinal.gagnantNom, montantPot: cycleFinal.montantCollecteReel, idBulletin: cycleFinal.idBulletin });
+    setGagnant({ nomMembre: cycleFinal.gagnantNom, montantPot: cycleFinal.montantCollecteReel, idBulletin: cycleFinal.idBulletin, statutPaiement: cycleFinal.statutBulletin });
     setEtape('recap');
   };
 
@@ -278,8 +363,27 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
     if (!apresDesignation) return;
     const cycleFinal = await cloturerCycle(cycleActuelId);
     if (!cycleFinal) return;
-    setGagnant({ nomMembre: cycleFinal.gagnantNom, montantPot: cycleFinal.montantCollecteReel, idBulletin: cycleFinal.idBulletin });
+    setGagnant({ nomMembre: cycleFinal.gagnantNom, montantPot: cycleFinal.montantCollecteReel, idBulletin: cycleFinal.idBulletin, statutPaiement: cycleFinal.statutBulletin });
     setTirageEffectue(true);
+    setEtape('recap');
+  };
+
+  // Choix manuel du bénéficiaire — utilisable en mode rotation (dérogation à
+  // l'ordre planifié) et en mode tirage (le serveur accepte part_id pour tout
+  // mode, voir TontineCycleService::designerGagnant). Un membre avec plusieurs
+  // parts peut être choisi tant qu'il lui reste au moins une part disponible ;
+  // resolvePartId() se charge de prendre une part encore 'actif' de ce membre.
+  const handleDesignationManuelle = async () => {
+    if (!cycleActuelId || !beneficiaireManuelId) return;
+    const idPart = resolvePartId(beneficiaireManuelId);
+    if (!idPart) return;
+    const apresDesignation = await designerGagnantCycle(cycleActuelId, idPart);
+    if (!apresDesignation) return;
+    const cycleFinal = await cloturerCycle(cycleActuelId);
+    if (!cycleFinal) return;
+    setGagnant({ nomMembre: cycleFinal.gagnantNom, montantPot: cycleFinal.montantCollecteReel, idBulletin: cycleFinal.idBulletin, statutPaiement: cycleFinal.statutBulletin });
+    setChoixManuel(false);
+    setBeneficiaireManuelId('');
     setEtape('recap');
   };
 
@@ -307,6 +411,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
       montantPot: cycleFinal.montantCollecteReel - cycleFinal.montantEnchere,
       mise: cycleFinal.montantEnchere,
       idBulletin: cycleFinal.idBulletin,
+      statutPaiement: cycleFinal.statutBulletin,
     });
     setEtape('recap');
   };
@@ -352,6 +457,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
     setIdTontineSelectee(''); setEtape('choix'); setStatutParMembre({}); setModeParMembre({});
     setValide(false); setSanctionMontant(''); setGagnant(null);
     setEnchereIdGagnant(''); setMiseGagnante(''); setTirageEffectue(false); setCycleActuelId(null);
+    setChoixManuel(false); setBeneficiaireManuelId('');
   };
 
   // ── Blocage si séance non ouverte ──
@@ -387,6 +493,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
               const progressPct = t.nbTours > 0 ? Math.round(nbEncaisses / t.nbTours * 100) : 0;
               const toursTraites = beneficiairesSeance.filter(b => b.idTontine === t.id).length;
               const dejaTraite  = toursTraites >= (t.maxCyclesParReunion || 1);
+              const enSuspens   = !!cycleOuvertPourTontine(t.id);
               const isSelected  = idTontineSelectee === t.id;
               const tColor      = TYPE_COLORS[t.typeAttribution] || '';
               return (
@@ -394,21 +501,31 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
                   onClick={() => setIdTontineSelectee(String(t.id))}
                   className={clsx('w-full text-left p-3.5 rounded-xl border-2 transition-all',
                     dejaTraite ? 'border-green-300 bg-green-50' :
-                    isSelected ? 'border-primary-500 bg-primary-50 shadow-sm' :
+                    enSuspens ? 'border-amber-400 bg-amber-50' :
+                    isSelected ? 'border-primary-500 bg-primary-50 shadow-sm ring-2 ring-primary-200' :
                     'border-gray-200 hover:border-primary-300'
                   )}>
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2">
                       <span className="text-xl">{TYPE_ICONS[t.typeAttribution] || ''}</span>
                       <div>
-                        <p className="font-bold text-sm text-gray-800">{t.nom}</p>
+                        <p className="font-bold text-sm text-gray-800 flex items-center gap-1.5">
+                          {t.nom}
+                          {isSelected && <CheckCircle size={14} className="text-primary-600"/>}
+                        </p>
                         <p className="text-xs text-gray-400">{fmt(t.cotisation)} / part · {t.totalParts} parts = <strong>{fmt(t.cotisation * t.totalParts)}</strong></p>
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className={clsx('text-xs px-2 py-0.5 rounded-full border font-medium', tColor)}>
-                        {TYPE_LABELS[t.typeAttribution]}
-                      </span>
+                      {enSuspens ? (
+                        <span className="text-xs px-2 py-0.5 rounded-full border font-medium border-amber-300 bg-amber-100 text-amber-700">
+                          Bénéficiaire à désigner
+                        </span>
+                      ) : (
+                        <span className={clsx('text-xs px-2 py-0.5 rounded-full border font-medium', tColor)}>
+                          {TYPE_LABELS[t.typeAttribution]}
+                        </span>
+                      )}
                       <span className="text-xs text-gray-500 font-medium">{toursTraites}/{t.maxCyclesParReunion || 1}</span>
                     </div>
                   </div>
@@ -423,6 +540,11 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
             })}
           </div>
 
+          {idTontineSelectee && tontineSelectee && cycleOuvertPourTontine(tontineSelectee.id) && (
+            <div className="flex items-center gap-2 p-2.5 bg-amber-50 rounded-xl text-xs text-amber-700 border border-amber-200">
+              <AlertTriangle size={13}/> Les cotisations de cette tontine ont déjà été validées pour cette séance — vous allez reprendre directement à la désignation du bénéficiaire.
+            </div>
+          )}
           {idTontineSelectee && tontineSelectee && !benefDejaEnregistre && (
             <button onClick={() => setEtape('cotisation')} className="btn-primary w-full justify-center">
               <ClipboardList size={15}/>
@@ -570,10 +692,10 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
           )}
 
           {!locked && !readOnly && (
-            <button onClick={handleValiderFeuille}
-              disabled={cotises.length + defaillants.length === 0}
-              className={clsx('btn-primary w-full justify-center', cotises.length + defaillants.length === 0 && 'opacity-40 cursor-not-allowed')}>
-              <ClipboardCheck size={15}/> Valider et désigner le bénéficiaire {TYPE_ICONS[typeAttr]}
+            <button onClick={() => runGuarded(handleValiderFeuille)}
+              disabled={cotises.length + defaillants.length === 0 || busyCotisationBenef}
+              className={clsx('btn-primary w-full justify-center', (cotises.length + defaillants.length === 0 || busyCotisationBenef) && 'opacity-40 cursor-not-allowed')}>
+              <ClipboardCheck size={15}/> {busyCotisationBenef ? 'Enregistrement…' : <>Valider et désigner le bénéficiaire {TYPE_ICONS[typeAttr]}</>}
             </button>
           )}
         </div>
@@ -606,44 +728,93 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
 
           {/* ROTATION */}
           {typeAttr === 'rotation' && (
-            tourPlanifieProchain ? (
-              <div className="space-y-3">
-                <div className="p-4 bg-white rounded-2xl border-2 border-primary-400 text-center shadow-sm">
-                  <p className="text-xs text-gray-400 mb-1">Bénéficiaire planifié — Tour N°{tourPlanifieProchain.numeroTour}</p>
-                  <p className="text-2xl font-black text-gray-800 mt-1">{tourPlanifieProchain.nomMembre}</p>
-                  <p className="text-sm font-bold text-primary-600 mt-1">{fmt(montantPot)}</p>
+            <div className="space-y-3">
+              {tourPlanifieProchain && !choixManuel ? (
+                <>
+                  <div className="p-4 bg-white rounded-2xl border-2 border-primary-400 text-center shadow-sm">
+                    <p className="text-xs text-gray-400 mb-1">Bénéficiaire planifié — Tour N°{tourPlanifieProchain.numeroTour}</p>
+                    <p className="text-2xl font-black text-gray-800 mt-1">{tourPlanifieProchain.nomMembre}</p>
+                    <p className="text-sm font-bold text-primary-600 mt-1">{fmt(montantPot)}</p>
+                  </div>
+                  <button onClick={() => runGuarded(handleConfirmerRotation)} disabled={busyCotisationBenef} className="btn-primary w-full justify-center">
+                    <Trophy size={15}/> {busyCotisationBenef ? 'Encaissement…' : 'Confirmer et encaisser le tour'}
+                  </button>
+                  <p className="text-xs text-gray-400 text-center">L'ordre a été défini au préalable dans le module Tontines.</p>
+                  <button onClick={() => { setChoixManuel(true); setBeneficiaireManuelId(''); }} disabled={busyCotisationBenef}
+                    className="text-xs text-gray-400 hover:text-gray-600 w-full text-center hover:underline">
+                    Choisir un autre bénéficiaire manuellement (dérogation)
+                  </button>
+                </>
+              ) : (
+                <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 space-y-3">
+                  {!tourPlanifieProchain && (
+                    <>
+                      <AlertCircle size={24} className="mx-auto text-amber-500"/>
+                      <p className="font-semibold text-amber-800 text-sm text-center">Aucun tour planifié</p>
+                      <p className="text-xs text-amber-600 text-center">Allez dans Tontines - Bénéficiaires pour définir l'ordre de rotation, ou désignez un bénéficiaire manuellement ci-dessous.</p>
+                    </>
+                  )}
+                  <p className="text-xs font-semibold text-amber-700">Désignation manuelle — un membre avec plusieurs parts reste éligible tant qu'il lui en reste une disponible.</p>
+                  <select className="select" value={beneficiaireManuelId} onChange={e => setBeneficiaireManuelId(e.target.value)}>
+                    <option value="">— Sélectionner un membre —</option>
+                    {membresEligiblesGain.map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}{m.nombreParts > 1 ? ` (${m.nombreParts} parts)` : ''}</option>)}
+                  </select>
+                  <button onClick={() => runGuarded(handleDesignationManuelle)} disabled={!beneficiaireManuelId || busyCotisationBenef} className="btn-primary w-full justify-center">
+                    <Trophy size={15}/> {busyCotisationBenef ? 'Confirmation…' : 'Confirmer ce bénéficiaire'}
+                  </button>
+                  <div className="flex justify-between">
+                    {tourPlanifieProchain && (
+                      <button onClick={() => { setChoixManuel(false); setBeneficiaireManuelId(''); }} className="text-xs text-gray-400 hover:text-gray-600 hover:underline">
+                        Revenir au tour planifié
+                      </button>
+                    )}
+                    <button onClick={() => setEtape('recap')} className="text-xs text-gray-400 hover:text-gray-600 hover:underline ml-auto">
+                      Passer sans bénéficiaire
+                    </button>
+                  </div>
                 </div>
-                <button onClick={handleConfirmerRotation} className="btn-primary w-full justify-center">
-                  <Trophy size={15}/> Confirmer et encaisser le tour
-                </button>
-                <p className="text-xs text-gray-400 text-center">L'ordre a été défini au préalable dans le module Tontines.</p>
-              </div>
-            ) : (
-              <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 text-center space-y-2">
-                <AlertCircle size={24} className="mx-auto text-amber-500"/>
-                <p className="font-semibold text-amber-800 text-sm">Aucun tour planifié</p>
-                <p className="text-xs text-amber-600">Allez dans Tontines - Bénéficiaires pour définir l'ordre de rotation de tous les membres.</p>
-                <button onClick={() => setEtape('recap')} className="btn-secondary text-xs">
-                  Passer sans bénéficiaire
-                </button>
-              </div>
-            )
+              )}
+            </div>
           )}
 
           {/* TIRAGE AU SORT */}
           {typeAttr === 'tirage' && (
             <div className="space-y-3">
-              <div className="p-4 bg-white rounded-2xl border-2 border-blue-300 text-center">
-                <Dices size={40} className="mx-auto text-blue-400 mb-3"/>
-                <p className="text-sm text-gray-600 mb-1">Désignation aléatoire en séance</p>
-                <p className="text-xs text-gray-400 mb-4">Seuls les membres n'ayant pas encore bénéficié sont éligibles.</p>
-                <button onClick={handleTirage} className="btn-primary w-full justify-center text-base py-3">
-                  <Dices size={18}/>  Lancer le tirage maintenant
-                </button>
-              </div>
-              <button onClick={() => setEtape('recap')} className="text-xs text-gray-400 hover:text-gray-600 w-full text-center hover:underline">
-                Passer sans tirage
-              </button>
+              {!choixManuel ? (
+                <>
+                  <div className="p-4 bg-white rounded-2xl border-2 border-blue-300 text-center">
+                    <Dices size={40} className="mx-auto text-blue-400 mb-3"/>
+                    <p className="text-sm text-gray-600 mb-1">Désignation aléatoire en séance</p>
+                    <p className="text-xs text-gray-400 mb-4">Seuls les membres n'ayant plus aucune part disponible sont exclus.</p>
+                    <button onClick={() => runGuarded(handleTirage)} disabled={busyCotisationBenef} className="btn-primary w-full justify-center text-base py-3">
+                      <Dices size={18}/>  {busyCotisationBenef ? 'Tirage en cours…' : 'Lancer le tirage maintenant'}
+                    </button>
+                  </div>
+                  <div className="flex justify-between">
+                    <button onClick={() => { setChoixManuel(true); setBeneficiaireManuelId(''); }}
+                      className="text-xs text-gray-400 hover:text-gray-600 hover:underline">
+                      Choisir le bénéficiaire manuellement
+                    </button>
+                    <button onClick={() => setEtape('recap')} className="text-xs text-gray-400 hover:text-gray-600 hover:underline">
+                      Passer sans tirage
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 space-y-3">
+                  <p className="text-xs font-semibold text-amber-700">Désignation manuelle (dérogation au tirage aléatoire)</p>
+                  <select className="select" value={beneficiaireManuelId} onChange={e => setBeneficiaireManuelId(e.target.value)}>
+                    <option value="">— Sélectionner un membre —</option>
+                    {membresEligiblesGain.map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}{m.nombreParts > 1 ? ` (${m.nombreParts} parts)` : ''}</option>)}
+                  </select>
+                  <button onClick={() => runGuarded(handleDesignationManuelle)} disabled={!beneficiaireManuelId || busyCotisationBenef} className="btn-primary w-full justify-center">
+                    <Trophy size={15}/> {busyCotisationBenef ? 'Confirmation…' : 'Confirmer ce bénéficiaire'}
+                  </button>
+                  <button onClick={() => { setChoixManuel(false); setBeneficiaireManuelId(''); }} className="text-xs text-gray-400 hover:text-gray-600 w-full text-center hover:underline">
+                    Revenir au tirage aléatoire
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
@@ -659,7 +830,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
                     <option value="">— Membre —</option>
                     {membresEligiblesGain
                       .filter(m => !encheresEnAttente.some(e => e.idMembre === m.id))
-                      .map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
+                      .map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}{m.nombreParts > 1 ? ` (${m.nombreParts} parts)` : ''}</option>)}
                   </select>
                   <input type="number" min="0" max={cycleActuel?.montantCollecteReel || cycleActuel?.montantCollectePrevu || undefined} className="input text-sm" placeholder="Montant (FCFA)"
                     value={nouvelleEnchereMontant} onChange={e => setNouvelleEnchereMontant(e.target.value)}/>
@@ -668,9 +839,9 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
                   <option value="">— Caisse bénéficiaire de l'enchère —</option>
                   {banques.filter(c => c.statut !== 'inactive').map(c => <option key={c.id} value={c.id}>{c.nom}</option>)}
                 </select>
-                <button onClick={handleAjouterEnchere} disabled={!nouvelleEnchereMembre || !nouvelleEnchereMontant || !nouvelleEnchereCaisseId}
+                <button onClick={() => runGuarded(handleAjouterEnchere)} disabled={!nouvelleEnchereMembre || !nouvelleEnchereMontant || !nouvelleEnchereCaisseId || busyCotisationBenef}
                   className="btn-secondary w-full justify-center text-sm">
-                  <Gavel size={14}/> Ajouter cette enchère
+                  <Gavel size={14}/> {busyCotisationBenef ? 'Ajout…' : 'Ajouter cette enchère'}
                 </button>
               </div>
 
@@ -692,8 +863,8 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
                       {meilleureEnchere?.id === e.id && <Badge variant="amber">Meilleure offre</Badge>}
                     </label>
                   ))}
-                  <button onClick={handleCloturerEncheres} className="btn-primary w-full justify-center">
-                    <Trophy size={15}/> Clôturer les enchères — attribuer au meilleur offrant
+                  <button onClick={() => runGuarded(handleCloturerEncheres)} disabled={busyCotisationBenef} className="btn-primary w-full justify-center">
+                    <Trophy size={15}/> {busyCotisationBenef ? 'Clôture…' : 'Clôturer les enchères — attribuer au meilleur offrant'}
                   </button>
                   {enchereIdGagnant && (
                     <>
@@ -704,9 +875,9 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
                       </div>
                       <button onClick={() => {
                         const enc = encheres.find(e => e.id === enchereIdGagnant);
-                        if (enc) handleConfirmerEnchere(enc.idPart);
-                      }} className="btn-secondary w-full justify-center">
-                        <Trophy size={15}/> Désigner manuellement cette offre
+                        if (enc) runGuarded(() => handleConfirmerEnchere(enc.idPart));
+                      }} disabled={busyCotisationBenef} className="btn-secondary w-full justify-center">
+                        <Trophy size={15}/> {busyCotisationBenef ? 'Désignation…' : 'Désigner manuellement cette offre'}
                       </button>
                     </>
                   )}
@@ -717,7 +888,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
                   <p className="text-xs font-semibold text-amber-700">Aucune offre saisie — enregistrer puis désigner manuellement une offre (dérogation)</p>
                   <select className="select" value={enchereIdGagnant} onChange={e => setEnchereIdGagnant(e.target.value)}>
                     <option value="">— Sélectionner le gagnant —</option>
-                    {membresEligiblesGain.map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
+                    {membresEligiblesGain.map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}{m.nombreParts > 1 ? ` (${m.nombreParts} parts)` : ''}</option>)}
                   </select>
                   <input type="number" className="input" placeholder="Montant de la mise gagnante (FCFA)"
                     value={miseGagnante} onChange={e => setMiseGagnante(e.target.value)}/>
@@ -728,9 +899,9 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
                   {enchereIdGagnant && miseGagnante && (() => {
                     const m = membres.find(x => x.id === enchereIdGagnant);
                     return m ? (
-                      <button onClick={handleEnregistrerEtDesignerManuellement}
+                      <button onClick={() => runGuarded(handleEnregistrerEtDesignerManuellement)} disabled={busyCotisationBenef}
                         className="btn-primary w-full justify-center">
-                        <Trophy size={15}/> Enregistrer l'offre et désigner le gagnant
+                        <Trophy size={15}/> {busyCotisationBenef ? 'Enregistrement…' : "Enregistrer l'offre et désigner le gagnant"}
                       </button>
                     ) : null;
                   })()}
@@ -790,14 +961,25 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
                 </div>
                 {gagnant.idBulletin && (
                   <div className="shrink-0 flex items-center gap-1.5">
-                    <button onClick={() => { setModeVersement('especes'); setReferenceVersement(''); setVersementModal(true); }}
-                      className="text-xs px-2.5 py-1.5 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700">
-                      Verser le gain
-                    </button>
-                    <button onClick={() => { setRetenueLibelle(''); setRetenueMontant(''); setRetenueCaisseId(''); setRetenueModal(true); }}
-                      className="text-xs px-2.5 py-1.5 bg-white border border-amber-300 text-amber-700 rounded-lg font-medium hover:bg-amber-50">
-                      + Retenue
-                    </button>
+                    {(() => {
+                      const dejaVerse = gagnant.statutPaiement === 'paye';
+                      return (<>
+                        <button onClick={() => { if (dejaVerse) return; setModeVersement('especes'); setReferenceVersement(''); setVersementModal(true); }}
+                          disabled={dejaVerse}
+                          title={dejaVerse ? 'Gain déjà versé' : undefined}
+                          className={clsx('text-xs px-2.5 py-1.5 rounded-lg font-medium',
+                            dejaVerse ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700')}>
+                          {dejaVerse ? 'Gain versé' : 'Verser le gain'}
+                        </button>
+                        <button onClick={() => { if (dejaVerse) return; setRetenueLibelle(''); setRetenueMontant(''); setRetenueCaisseId(''); setRetenueModal(true); }}
+                          disabled={dejaVerse}
+                          title={dejaVerse ? 'Le gain a déjà été versé — impossible d\'ajouter une retenue' : undefined}
+                          className={clsx('text-xs px-2.5 py-1.5 rounded-lg font-medium border',
+                            dejaVerse ? 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed' : 'bg-white border-amber-300 text-amber-700 hover:bg-amber-50')}>
+                          + Retenue
+                        </button>
+                      </>);
+                    })()}
                     <button onClick={async () => { const url = await ouvrirBulletinPdf(gagnant.idBulletin); if (url) setBulletinUrl(url); }}
                       className="text-xs px-2.5 py-1.5 bg-amber-600 text-white rounded-lg font-medium hover:bg-amber-700 flex items-center gap-1">
                       <FileText size={12}/> Bulletin
@@ -829,11 +1011,15 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
 
       <Modal open={versementModal} onClose={() => setVersementModal(false)} title="Verser le gain au bénéficiaire"
         footer={<>
-          <button onClick={() => setVersementModal(false)} className="btn-secondary">Annuler</button>
+          <button onClick={() => setVersementModal(false)} disabled={busyPaiement} className="btn-secondary">Annuler</button>
           <button onClick={async () => {
-            const bulletin = await payerBulletin(gagnant.idBulletin, modeVersement, referenceVersement);
-            if (bulletin) setVersementModal(false);
-          }} disabled={modeVersement !== 'especes' && !referenceVersement.trim()} className="btn-primary">Confirmer le versement</button>
+            if (busyPaiement) return;
+            setBusyPaiement(true);
+            try {
+              const bulletin = await payerBulletin(gagnant.idBulletin, modeVersement, referenceVersement);
+              if (bulletin) { setVersementModal(false); setGagnant((g) => g && ({ ...g, statutPaiement: bulletin.statut })); }
+            } finally { setBusyPaiement(false); }
+          }} disabled={busyPaiement || (modeVersement !== 'especes' && !referenceVersement.trim())} className="btn-primary">{busyPaiement ? 'Versement…' : 'Confirmer le versement'}</button>
         </>}>
         <p className="text-xs text-gray-500 mb-4">Le net sort de la caisse de la tontine et les retenues sont imputées dans le PV.</p>
         <FormField label="Mode de versement" required>
@@ -846,16 +1032,20 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
 
       <Modal open={retenueModal} onClose={() => setRetenueModal(false)} title="Ajouter une retenue manuelle"
         footer={<>
-          <button onClick={() => setRetenueModal(false)} className="btn-secondary">Annuler</button>
+          <button onClick={() => setRetenueModal(false)} disabled={busyPaiement} className="btn-secondary">Annuler</button>
           <button
             onClick={async () => {
+              if (busyPaiement) return;
               if (!retenueLibelle.trim() || !retenueMontant || Number(retenueMontant) <= 0) return;
-              const b = await ajouterRetenueBulletin(gagnant.idBulletin, retenueLibelle.trim(), retenueMontant, retenueCaisseId);
-              if (b) setRetenueModal(false);
+              setBusyPaiement(true);
+              try {
+                const b = await ajouterRetenueBulletin(gagnant.idBulletin, retenueLibelle.trim(), retenueMontant, retenueCaisseId);
+                if (b) setRetenueModal(false);
+              } finally { setBusyPaiement(false); }
             }}
-            disabled={!retenueLibelle.trim() || !retenueMontant || Number(retenueMontant) <= 0 || !retenueCaisseId}
-            className={clsx('btn-primary', (!retenueLibelle.trim() || !retenueMontant || Number(retenueMontant) <= 0 || !retenueCaisseId) && 'opacity-40 cursor-not-allowed')}>
-            Ajouter
+            disabled={busyPaiement || !retenueLibelle.trim() || !retenueMontant || Number(retenueMontant) <= 0 || !retenueCaisseId}
+            className={clsx('btn-primary', (busyPaiement || !retenueLibelle.trim() || !retenueMontant || Number(retenueMontant) <= 0 || !retenueCaisseId) && 'opacity-40 cursor-not-allowed')}>
+            {busyPaiement ? 'Ajout…' : 'Ajouter'}
           </button>
         </>}>
         <p className="text-xs text-gray-500 mb-3">
@@ -920,17 +1110,32 @@ function RapportSeance({ reunion, transactions, membres, onClose }) {
     });
 
     return [...groupes.values()].map((groupe) => {
-      const totalEntrees = groupe.items
+      // Les lignes "Imputation sur gain (sans nouvel encaissement)" (voir
+      // BulletinGainService::verser()) ne sont que la trace documentaire de ce qui
+      // reste en caisse sur un gain déjà compté via les cotisations — pas un nouveau
+      // mouvement d'argent. Les inclure dans les totaux compte le même pot deux fois
+      // (cotisations + imputation) et gonfle artificiellement le solde net du PV.
+      // Mouvements bruts : ce qui rentre/sort réellement du tiroir-caisse, imputations comprises
+      // (l'argent des retenues/sanctions passe bel et bien par les mains du trésorier).
+      const totalEntreesBrut = groupe.items
         .filter((tx) => TX_TYPES.find((type) => type.value === tx.type)?.dir === 'entree')
         .reduce((somme, tx) => somme + tx.montant, 0);
-      const totalSorties = groupe.items
+      const totalSortiesBrut = groupe.items
         .filter((tx) => TX_TYPES.find((type) => type.value === tx.type)?.dir === 'sortie')
         .reduce((somme, tx) => somme + tx.montant, 0);
       const totalBanque = groupe.items
-        .filter((tx) => tx.type === 'depot_banque')
+        .filter((tx) => tx.type === 'depot_banque' && !estImputation(tx))
+        .reduce((somme, tx) => somme + tx.montant, 0);
+      // Part des entrées brutes qui n'est qu'une imputation documentaire (déjà comptée une
+      // première fois via les cotisations qui financent le gain) — à retirer du solde net
+      // pour ne pas compter le même pot deux fois.
+      const totalImputations = groupe.items
+        .filter((tx) => TX_TYPES.find((type) => type.value === tx.type)?.dir === 'entree' && estImputation(tx))
         .reduce((somme, tx) => somme + tx.montant, 0);
 
-      return { ...groupe, totalEntrees, totalSorties, totalBanque, soldeNet: totalEntrees - totalSorties };
+      const soldeNet = (totalEntreesBrut - totalImputations) - totalSortiesBrut;
+
+      return { ...groupe, totalEntreesBrut, totalSortiesBrut, totalBanque, totalImputations, soldeNet };
     });
   }, [txs, banques]);
 
@@ -1054,14 +1259,21 @@ function RapportSeance({ reunion, transactions, membres, onClose }) {
                           <tbody className="divide-y divide-gray-100">
                             {groupe.items.map((tx) => {
                               const meta = TX_TYPES.find((type) => type.value === tx.type);
+                              const isImputation = estImputation(tx);
                               const isEntree = meta?.dir === 'entree';
                               const isSortie = meta?.dir === 'sortie';
                               const isBanque = tx.type === 'depot_banque';
-                              const isImputation = tx.note?.includes('Imputation sur gain');
                               return (
-                                <tr key={tx.id} className="hover:bg-gray-50">
+                                <tr key={tx.id} className={clsx('hover:bg-gray-50', isImputation && 'bg-amber-50/50')}>
                                   <td className="p-2.5 text-gray-400 font-mono">{tx.heure}</td>
-                                  <td className="p-2.5"><span>{meta?.icon} {meta?.label || tx.type}{isImputation ? ' (imputation)' : ''}</span></td>
+                                  <td className="p-2.5">
+                                    <span>{meta?.icon} {meta?.label || tx.type}</span>
+                                    {isImputation && (
+                                      <span className="ml-1.5 inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-700 align-middle">
+                                        déjà dans le gain
+                                      </span>
+                                    )}
+                                  </td>
                                   <td className="p-2.5 font-medium text-gray-700">{tx.nomMembre || '—'}</td>
                                   <td className="p-2.5 text-gray-500 italic truncate max-w-[140px]">{tx.libelle || '—'}</td>
                                   <td className="p-2.5 text-right font-bold text-green-600">{isEntree ? fmt(tx.montant) : '—'}</td>
@@ -1073,13 +1285,25 @@ function RapportSeance({ reunion, transactions, membres, onClose }) {
                           </tbody>
                           <tfoot className="bg-gray-50 border-t-2 border-gray-200 font-bold text-xs">
                             <tr>
-                              <td colSpan={4} className="p-2.5 text-gray-700">TOTAUX — {groupe.nomCaisse}</td>
-                              <td className="p-2.5 text-right text-green-600">{fmt(groupe.totalEntrees)}</td>
-                              <td className="p-2.5 text-right text-red-500">{fmt(groupe.totalSorties)}</td>
+                              <td colSpan={4} className="p-2.5 text-gray-700">TOTAUX MOUVEMENTS — {groupe.nomCaisse}</td>
+                              <td className="p-2.5 text-right text-green-600">{fmt(groupe.totalEntreesBrut)}</td>
+                              <td className="p-2.5 text-right text-red-500">{fmt(groupe.totalSortiesBrut)}</td>
                               <td className="p-2.5 text-right text-blue-600">{fmt(groupe.totalBanque)}</td>
                             </tr>
+                            <tr>
+                              <td colSpan={4} className="p-2.5 text-gray-500 font-normal">Solde brut (Entrées − Sorties)</td>
+                              <td colSpan={3} className="p-2.5 text-right text-gray-500 font-normal">{fmt(groupe.totalEntreesBrut - groupe.totalSortiesBrut)}</td>
+                            </tr>
+                            {groupe.totalImputations > 0 && (
+                              <tr>
+                                <td colSpan={4} className="p-2.5 text-amber-700 font-normal italic">
+                                  (−) Imputations déjà comptées dans le gain <span className="not-italic">« déjà dans le gain »</span>
+                                </td>
+                                <td colSpan={3} className="p-2.5 text-right text-amber-700 font-normal">− {fmt(groupe.totalImputations)}</td>
+                              </tr>
+                            )}
                             <tr className="bg-primary-50">
-                              <td colSpan={4} className="p-2.5 text-primary-700 font-bold">SOLDE NET — {groupe.nomCaisse}</td>
+                              <td colSpan={4} className="p-2.5 text-primary-700 font-bold">SOLDE NET RÉEL — {groupe.nomCaisse}</td>
                               <td colSpan={3} className={clsx('p-2.5 text-right text-base font-black', groupe.soldeNet >= 0 ? 'text-primary-700' : 'text-red-600')}>
                                 {groupe.soldeNet >= 0 ? '+' : ''}{fmt(groupe.soldeNet)}
                               </td>
@@ -1242,7 +1466,7 @@ function TypePicker({ onSelect }) {
 // ── Wrapper formulaire intelligent (sans hook conditionnel) ────
 // Tous les états "extra" sont dans form._idTontine pour éviter
 // les hooks conditionnels (violation React)
-function SmartFormWrapper({ type, reunion, membres, banques, prets, sanctions, tontines, membresParTontine, soldeDisponible = Infinity, onSubmit, onCancel }) {
+function SmartFormWrapper({ type, reunion, membres, banques, prets, sanctions, tontines, membresParTontine, soldeDisponible = Infinity, onSubmit, onCancel, submitting = false }) {
   const [form, setForm] = useState({
     type, montant: '', libelle: '', idMembre: '', idSanction: '', idPret: '',
     idBanque: '', sousType: 'autre',
@@ -1255,6 +1479,7 @@ function SmartFormWrapper({ type, reunion, membres, banques, prets, sanctions, t
   const depasseSoldeCaisse = estSortie && Number(form.montant || 0) > soldeDisponible;
 
   const handleSubmit = () => {
+    if (submitting) return; // clic ignoré : enregistrement déjà en cours
     if (!form.montant || Number(form.montant) <= 0) return;
     if (!isModePaiementValid(form.modePaiement, form.detailsPaiement)) return;
     if (depasseSoldeCaisse) return; // RG-CAI-006 : solde caisse jamais négatif
@@ -1298,8 +1523,17 @@ function SmartFormWrapper({ type, reunion, membres, banques, prets, sanctions, t
         <FormField label="Caisse concernée" required>
           <select className="select" value={form.idBanque} onChange={e => sf('idBanque', e.target.value)}>
             <option value="">— Sélectionner la caisse —</option>
-            {banques.map(b => <option key={b.id} value={b.id}>{b.nom} — Solde : {fmt(b.totalSolde)}</option>)}
+            {/* Un octroi de prêt ici ne crée qu'une ligne de caisse (le vrai
+                enregistrement du prêt se fait à part, dans Prêts — cf. l'avertissement
+                affiché plus haut). Sans ce filtre, rien n'empêchait de décaisser un
+                "prêt" depuis une caisse où pret_autorise=false : le backend ne le
+                bloque que côté PretService (création d'un vrai Pret), jamais consulté
+                ici puisqu'aucun Pret n'est réellement créé par ce formulaire. */}
+            {(type === 'pret_accorde' ? banques.filter(b => b.pretAutorise) : banques).map(b => <option key={b.id} value={b.id}>{b.nom} — Solde : {fmt(b.totalSolde)}</option>)}
           </select>
+          {type === 'pret_accorde' && banques.some(b => b.pretAutorise) === false && (
+            <p className="text-xs text-red-600 mt-1">Aucune caisse n'autorise les prêts pour l'instant — activez « Prêt autorisé » sur une caisse (Banques) avant de continuer.</p>
+          )}
         </FormField>
       )}
       <div className="pt-1 border-t border-gray-100">
@@ -1327,10 +1561,10 @@ function SmartFormWrapper({ type, reunion, membres, banques, prets, sanctions, t
         </div>
       )}
       <div className="flex gap-2 pt-1">
-        <button onClick={onCancel} className="btn-secondary flex-1">Annuler</button>
-        <button onClick={handleSubmit} disabled={!isValid}
-          className={clsx('btn-primary flex-1', !isValid && 'opacity-40 cursor-not-allowed')}>
-          <CheckCircle size={14}/> Valider la transaction
+        <button onClick={onCancel} disabled={submitting} className="btn-secondary flex-1">Annuler</button>
+        <button onClick={handleSubmit} disabled={!isValid || submitting}
+          className={clsx('btn-primary flex-1', (!isValid || submitting) && 'opacity-40 cursor-not-allowed')}>
+          <CheckCircle size={14}/> {submitting ? 'Enregistrement…' : 'Valider la transaction'}
         </button>
       </div>
     </div>
@@ -1352,14 +1586,28 @@ function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, san
   const sanctionsImpayees = sanctions.filter(s => s.statut === 'impayee');
 
   const membresEligiblesCotis = tontineChoisie
-    ? membresParTontine
-        .filter(mt => mt.idTontine === tontineChoisie.id && mt.statut === 'actif')
-        .map(mt => { const m = membres.find(x => x.id === mt.idMembre); return m ? { ...m, parts: mt.nombreParts, montantDu: tontineChoisie.cotisation * mt.nombreParts } : null; })
-        .filter(Boolean)
+    ? (() => {
+        // Même bug que les enchères : une ligne par PART côté serveur, il faut
+        // regrouper par membre sinon un membre à N parts apparaît N fois.
+        // Contrairement à l'éligibilité au GAIN (qui exclut les parts déjà
+        // gagnées), la cotisation reste due sur TOUTE part détenue — une part
+        // déjà gagnée continue de cotiser jusqu'à la fin complète du tour de
+        // la tontine. Seule une part réellement bloquée (sanction, litige...)
+        // est exclue.
+        const partsParMembre = new Map();
+        membresParTontine
+          .filter(mt => mt.idTontine === tontineChoisie.id && mt.statut !== 'bloquee')
+          .forEach(mt => partsParMembre.set(mt.idMembre, (partsParMembre.get(mt.idMembre) || 0) + mt.nombreParts));
+        return [...partsParMembre.entries()]
+          .map(([idMembre, parts]) => {
+            const m = membres.find(x => x.id === idMembre);
+            return m ? { ...m, parts, montantDu: tontineChoisie.cotisation * parts } : null;
+          }).filter(Boolean);
+      })()
     : membres;
 
   const membreDansTontine = tontineChoisie && form.idMembre
-    ? membresParTontine.find(mt => mt.idTontine === tontineChoisie.id && mt.idMembre === form.idMembre && mt.statut === 'actif')
+    ? membresParTontine.find(mt => mt.idTontine === tontineChoisie.id && mt.idMembre === form.idMembre && mt.statut !== 'bloquee')
     : null;
 
   const membresAttrTour = tontineChoisie
@@ -1729,6 +1977,7 @@ function BeneficiaireSeancePanel({ reunion }) {
   const [cotisationsCorrection, setCotisationsCorrection] = useState([]); // [{id, nomMembre, montantDu, montantVerse}]
   const [chargementCorrection, setChargementCorrection] = useState(false);
   const [enregistrementCorrection, setEnregistrementCorrection] = useState(false);
+  const [busyPaiement, setBusyPaiement] = useState(false); // anti double-clic : versement / retenue bulletin
 
   // Onglet purement informatif : affiche le(s) bénéficiaire(s) déjà désigné(s)
   // cette séance, quel que soit le mode d'attribution (rotation/tirage/enchère).
@@ -1790,8 +2039,12 @@ function BeneficiaireSeancePanel({ reunion }) {
                 {!b.montantEnchere && <p className="text-xs text-amber-600">Montant : {fmt(b.montantPot)}</p>}
               </div>
               <div className="shrink-0 flex items-center gap-1.5">
-                <button onClick={() => ouvrirCorrection(b.idCycle)}
-                  className="text-xs px-2.5 py-1.5 bg-white border border-blue-300 text-blue-700 rounded-lg font-medium hover:bg-blue-50">
+                <button onClick={() => { if (b.statutBulletin === 'paye') return; ouvrirCorrection(b.idCycle); }}
+                  disabled={b.statutBulletin === 'paye'}
+                  title={b.statutBulletin === 'paye' ? 'Le gain a déjà été versé — impossible de corriger les cotisations' : undefined}
+                  className={"text-xs px-2.5 py-1.5 rounded-lg font-medium border "+(b.statutBulletin === 'paye'
+                    ? 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'
+                    : 'bg-white border-blue-300 text-blue-700 hover:bg-blue-50')}>
                   Corriger cotisations
                 </button>
                 {b.idBulletin && (
@@ -1802,8 +2055,12 @@ function BeneficiaireSeancePanel({ reunion }) {
                       Verser le gain
                     </button>
                   )}
-                  <button onClick={() => { setRetenueLibelle(''); setRetenueMontant(''); setRetenueCaisseId(''); setRetenueModal(b.idBulletin); }}
-                    className="text-xs px-2.5 py-1.5 bg-white border border-amber-300 text-amber-700 rounded-lg font-medium hover:bg-amber-50">
+                  <button onClick={() => { if (b.statutBulletin === 'paye') return; setRetenueLibelle(''); setRetenueMontant(''); setRetenueCaisseId(''); setRetenueModal(b.idBulletin); }}
+                    disabled={b.statutBulletin === 'paye'}
+                    title={b.statutBulletin === 'paye' ? 'Le gain a déjà été versé — impossible d\'ajouter une retenue' : undefined}
+                    className={"text-xs px-2.5 py-1.5 rounded-lg font-medium border "+(b.statutBulletin === 'paye'
+                      ? 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'
+                      : 'bg-white border-amber-300 text-amber-700 hover:bg-amber-50')}>
                     + Retenue
                   </button>
                   <button onClick={async () => { const url = await ouvrirBulletinPdf(b.idBulletin); if (url) setBulletinUrl(url); }}
@@ -1845,11 +2102,15 @@ function BeneficiaireSeancePanel({ reunion }) {
 
       <Modal open={!!versementModal} onClose={() => setVersementModal(null)} title="Verser le gain au bénéficiaire"
         footer={<>
-          <button onClick={() => setVersementModal(null)} className="btn-secondary">Annuler</button>
+          <button onClick={() => setVersementModal(null)} disabled={busyPaiement} className="btn-secondary">Annuler</button>
           <button onClick={async () => {
-            const bulletin = await payerBulletin(versementModal, modeVersement, referenceVersement);
-            if (bulletin) setVersementModal(null);
-          }} disabled={modeVersement !== 'especes' && !referenceVersement.trim()} className="btn-primary">Confirmer le versement</button>
+            if (busyPaiement) return;
+            setBusyPaiement(true);
+            try {
+              const bulletin = await payerBulletin(versementModal, modeVersement, referenceVersement);
+              if (bulletin) setVersementModal(null);
+            } finally { setBusyPaiement(false); }
+          }} disabled={busyPaiement || (modeVersement !== 'especes' && !referenceVersement.trim())} className="btn-primary">{busyPaiement ? 'Versement…' : 'Confirmer le versement'}</button>
         </>}>
         <p className="text-xs text-gray-500 mb-4">
           Le net est décaissé de la caisse de la tontine. Les retenues sont imputées et apparaissent dans le PV.
@@ -1872,16 +2133,20 @@ function BeneficiaireSeancePanel({ reunion }) {
 
       <Modal open={!!retenueModal} onClose={() => setRetenueModal(null)} title="Ajouter une retenue manuelle"
         footer={<>
-          <button onClick={() => setRetenueModal(null)} className="btn-secondary">Annuler</button>
+          <button onClick={() => setRetenueModal(null)} disabled={busyPaiement} className="btn-secondary">Annuler</button>
           <button
             onClick={async () => {
+              if (busyPaiement) return;
               if (!retenueLibelle.trim() || !retenueMontant || Number(retenueMontant) <= 0) return;
-              const b = await ajouterRetenueBulletin(retenueModal, retenueLibelle.trim(), retenueMontant, retenueCaisseId);
-              if (b) setRetenueModal(null);
+              setBusyPaiement(true);
+              try {
+                const b = await ajouterRetenueBulletin(retenueModal, retenueLibelle.trim(), retenueMontant, retenueCaisseId);
+                if (b) setRetenueModal(null);
+              } finally { setBusyPaiement(false); }
             }}
-            disabled={!retenueLibelle.trim() || !retenueMontant || Number(retenueMontant) <= 0 || !retenueCaisseId}
-            className={clsx('btn-primary', (!retenueLibelle.trim() || !retenueMontant || Number(retenueMontant) <= 0 || !retenueCaisseId) && 'opacity-40 cursor-not-allowed')}>
-            Ajouter
+            disabled={busyPaiement || !retenueLibelle.trim() || !retenueMontant || Number(retenueMontant) <= 0 || !retenueCaisseId}
+            className={clsx('btn-primary', (busyPaiement || !retenueLibelle.trim() || !retenueMontant || Number(retenueMontant) <= 0 || !retenueCaisseId) && 'opacity-40 cursor-not-allowed')}>
+            {busyPaiement ? 'Ajout…' : 'Ajouter'}
           </button>
         </>}>
         <p className="text-xs text-gray-500 mb-3">
@@ -1962,6 +2227,18 @@ function PanneauPresences({ reunion, membres }) {
 
   const presencesReunion = presences.filter(p => p.reunionId === reunion.id);
   const getPresence = (idMembre) => presencesReunion.find(p => p.idMembre === idMembre);
+
+  // Durée de retard = arrivée - (heure d'ouverture réelle de la séance).
+  const heureOuverture = reunion.ouverture?.heureOuverture;
+  const dureeRetard = (heureArrivee) => {
+    if (!heureOuverture || !heureArrivee) return null;
+    const [ho, mo] = heureOuverture.split(':').map(Number);
+    const [ha, ma] = heureArrivee.split(':').map(Number);
+    const diff = (ha * 60 + ma) - (ho * 60 + mo);
+    if (diff <= 0) return null;
+    const h = Math.floor(diff / 60), m = diff % 60;
+    return h > 0 ? `${h}h${String(m).padStart(2,'0')}` : `${m} min`;
+  };
 
   const membresActifs = membres.filter(m => m.statut === 'actif');
   const nbPresents = presencesReunion.filter(p => p.statut === 'present' || p.statut === 'en_retard').length;
@@ -2046,7 +2323,12 @@ function PanneauPresences({ reunion, membres }) {
                   <p className="text-[11px] text-amber-600 truncate">Motif : {p.motifAbsence}</p>
                 )}
                 {(statut === 'present' || statut === 'en_retard') && p.heureArrivee && (
-                  <p className="text-[11px] text-gray-400">Arrivée : {p.heureArrivee}</p>
+                  <p className="text-[11px] text-gray-400">
+                    Arrivée : {p.heureArrivee}
+                    {statut === 'en_retard' && dureeRetard(p.heureArrivee) && (
+                      <span className="text-red-500 font-medium"> · Retard : {dureeRetard(p.heureArrivee)}</span>
+                    )}
+                  </p>
                 )}
               </div>
               {statut && (
@@ -2101,11 +2383,274 @@ function PanneauPresences({ reunion, membres }) {
 // Chaque rubrique métier (Remboursement, Prêt, Sanction, Aide sociale,
 // Banque, Divers) a maintenant sa propre interface dédiée au lieu d'un
 // unique onglet "Transactions" fourre-tout avec sélecteur de type.
+// Applique un type de sanction déjà paramétré (Paramètres → Sanctions) à un
+// membre pendant la séance — crée une nouvelle sanction (impayée par défaut,
+// réglable ensuite via le formulaire "Paiement d'amende" juste en dessous).
+function AppliquerSanctionPanel({ reunion, membres, typesSanction, addSanction, showToast }) {
+  const [open, setOpen] = useState(false);
+  const [idMembre, setIdMembre] = useState('');
+  const [idType, setIdType] = useState('');
+
+  const submit = async () => {
+    if (!idMembre || !idType) { showToast?.('Sélectionnez un membre et un type de sanction.', 'error'); return; }
+    const m = membres.find(x => x.id === idMembre);
+    const t = typesSanction.find(x => x.id === idType);
+    await addSanction({
+      idMembre, nomMembre: m ? `${m.nom} ${m.prenom}` : '',
+      typeSanction: idType, motif: t?.libelle, montant: t?.montantFixe || 0,
+      numReunion: reunion.id, dateSanction: new Date().toISOString().split('T')[0],
+    });
+    setIdMembre(''); setIdType(''); setOpen(false);
+  };
+
+  if (!open) return (
+    <button onClick={() => setOpen(true)} className="btn-secondary w-full justify-center text-sm">
+      <AlertTriangle size={14}/> Appliquer une sanction à un membre
+    </button>
+  );
+
+  if (typesSanction.length === 0) return (
+    <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-700">
+      Aucun type de sanction paramétré. Rendez-vous dans <strong>Sanctions → Paramètres</strong> pour en créer un (ex : « Bavardage — 1000 »), puis revenez ici.
+      <button onClick={() => setOpen(false)} className="block mt-2 text-xs text-primary-600 hover:underline">Fermer</button>
+    </div>
+  );
+
+  return (
+    <div className="p-4 bg-white rounded-xl border border-gray-200 shadow-sm space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-bold text-gray-800"><AlertTriangle size={14} className="inline mr-1"/>Appliquer une sanction</p>
+        <button onClick={() => setOpen(false)} className="text-xs text-primary-600 hover:underline">Annuler</button>
+      </div>
+      <FormField label="Membre" required>
+        <select className="select" value={idMembre} onChange={e => setIdMembre(e.target.value)}>
+          <option value="">— Sélectionner —</option>
+          {membres.map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
+        </select>
+      </FormField>
+      <FormField label="Type de sanction (paramétré)" required>
+        <select className="select" value={idType} onChange={e => setIdType(e.target.value)}>
+          <option value="">— Sélectionner —</option>
+          {typesSanction.map(t => <option key={t.id} value={t.id}>{t.libelle} — {fmt(t.montantFixe || 0)}</option>)}
+        </select>
+      </FormField>
+      <button onClick={submit} className="btn-primary w-full justify-center text-sm"><AlertTriangle size={14}/>Appliquer la sanction</button>
+    </div>
+  );
+}
+
+// Déclare une aide sociale à partir d'un type déjà paramétré (Paramètres →
+// Aide sociale) pendant la séance — symétrique à AppliquerSanctionPanel.
+// La déclaration crée une demande "en attente" (RG-SOC) ; validation puis
+// versement (avec choix de caisse si besoin) se font ensuite depuis l'onglet
+// « Aide sociale » (Social.jsx).
+function DeclarerAideSocialePanel({ membres, typesAideSociale, banques, addAide, validerAideSociale, verserAideSociale, showToast }) {
+  const [open, setOpen] = useState(false);
+  const [idMembre, setIdMembre] = useState('');
+  const [idType, setIdType] = useState('');
+  const [description, setDescription] = useState('');
+  const [justificatif, setJustificatif] = useState('');
+  const [verserTout, setVerserTout] = useState(false);
+  const [idCaisse, setIdCaisse] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const typeChoisi = typesAideSociale.find(t => t.id === idType);
+  // Si le type a déjà une caisse par défaut (paramétrée), pas besoin de la
+  // redemander ici — sinon, on l'exige avant de verser immédiatement.
+  const caisseRequise = verserTout && !typeChoisi?.caisseSourceId;
+
+  const reset = () => { setIdMembre(''); setIdType(''); setDescription(''); setJustificatif(''); setVerserTout(false); setIdCaisse(''); setOpen(false); };
+
+  const submit = async () => {
+    if (!idMembre || !idType || !description.trim() || !justificatif.trim()) {
+      showToast?.('Membre, type, description et justificatif sont requis.', 'error');
+      return;
+    }
+    if (caisseRequise && !idCaisse) {
+      showToast?.('Sélectionnez la caisse pour le versement immédiat.', 'error');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const aide = await addAide({
+        idMembre, categorie: idType, description: description.trim(),
+        dateDeclaration: new Date().toISOString().split('T')[0],
+        montant: typeChoisi?.montantFixe, justificatif: justificatif.trim(),
+      });
+      if (!aide) return; // erreur déjà affichée (ex: aucun barème configuré)
+      if (verserTout) {
+        // Enchaîne déclarer → approuver → verser en un clic — pour le cas où la
+        // caisse est là et que tout se règle sur place, dans la même réunion.
+        await validerAideSociale(aide.id, aide.montantDemande);
+        await verserAideSociale(aide.id, { idCaisse: idCaisse || undefined });
+      }
+      reset();
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (!open) return (
+    <button onClick={() => setOpen(true)} className="btn-secondary w-full justify-center text-sm">
+      <HeartHandshake size={14}/> Déclarer une aide sociale pour un membre
+    </button>
+  );
+
+  if (typesAideSociale.length === 0) return (
+    <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-700">
+      Aucun type d'aide paramétré. Rendez-vous dans <strong>Aide sociale → Paramètres</strong> pour en créer un (ex : « Mariage — 5000 »), puis revenez ici.
+      <button onClick={() => setOpen(false)} className="block mt-2 text-xs text-primary-600 hover:underline">Fermer</button>
+    </div>
+  );
+
+  return (
+    <div className="p-4 bg-white rounded-xl border border-gray-200 shadow-sm space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-bold text-gray-800"><HeartHandshake size={14} className="inline mr-1"/>Déclarer une aide sociale</p>
+        <button onClick={() => setOpen(false)} className="text-xs text-primary-600 hover:underline">Annuler</button>
+      </div>
+      <FormField label="Membre bénéficiaire" required>
+        <select className="select" value={idMembre} onChange={e => setIdMembre(e.target.value)}>
+          <option value="">— Sélectionner —</option>
+          {membres.map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
+        </select>
+      </FormField>
+      <FormField label="Type d'aide (paramétré)" required>
+        <select className="select" value={idType} onChange={e => setIdType(e.target.value)}>
+          <option value="">— Sélectionner —</option>
+          {typesAideSociale.map(t => <option key={t.id} value={t.id}>{t.libelle} — {fmt(t.montantFixe || 0)}</option>)}
+        </select>
+      </FormField>
+      <FormField label="Description" required>
+        <input className="input" value={description} onChange={e => setDescription(e.target.value)} placeholder="Ex : Naissance du 2e enfant"/>
+      </FormField>
+      <FormField label="Justificatif" required hint="Référence ou lien du document — obligatoire (RG-SOC-006)">
+        <input className="input" value={justificatif} onChange={e => setJustificatif(e.target.value)}/>
+      </FormField>
+
+      <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer select-none">
+        <input type="checkbox" checked={verserTout} onChange={e => setVerserTout(e.target.checked)} className="w-4 h-4"/>
+        Verser maintenant (la caisse est disponible sur place, en séance)
+      </label>
+      {caisseRequise && (
+        <FormField label="Caisse de versement" required>
+          <select className="select" value={idCaisse} onChange={e => setIdCaisse(e.target.value)}>
+            <option value="">— Sélectionner —</option>
+            {banques.map(b => <option key={b.id} value={b.id}>{b.nom}</option>)}
+          </select>
+        </FormField>
+      )}
+
+      <button onClick={submit} disabled={submitting} className="btn-primary w-full justify-center text-sm">
+        <HeartHandshake size={14}/>{submitting ? 'Traitement…' : verserTout ? "Déclarer et verser maintenant" : "Déclarer l'aide"}
+      </button>
+      <p className="text-xs text-gray-400">
+        {verserTout
+          ? "L'aide sera immédiatement approuvée et versée, ici même en séance."
+          : "La demande sera ensuite à valider puis verser depuis l'onglet « Aide sociale »."}
+      </p>
+    </div>
+  );
+}
+
+// ── Octroi de prêt en réunion — EXACTEMENT le même formulaire que Prets.jsx ──
+// (composant PretFormFields partagé). Contrairement à l'ancien onglet, ceci
+// crée un vrai Pret (même appel addPret que la page Prêts), puis enchaîne
+// automatiquement valider -> approuver -> décaisser puisqu'on est déjà en
+// séance ouverte : le décaissement crée lui-même la SeanceTransaction
+// 'pret_accorde' (voir PretService::decaisser côté backend), donc l'opération
+// apparaît toujours dans le registre de réunion comme avant, mais adossée
+// cette fois à un vrai prêt suivi dans Prêts (échéancier, remboursements).
+// Si l'approbation nécessite le Président (seuil dépassé) ou échoue, la chaîne
+// s'arrête au step atteint : le prêt reste visible et actionnable depuis la
+// page Prêts (boutons Valider/Approuver/Décaisser) au lieu d'échouer en silence.
+function OctroiPretReunion({ reunion, membres, caisses, comptesBanque, onDone, onCancel }) {
+  const { addPret, validerPret, approuverPret, decaisserPret, showToast } = useApp();
+  const [form, setForm] = useState({ ...FORM_PRET_VIDE });
+  const [busy, setBusy] = useState(false);
+
+  const caissesPret = (caisses || []).filter((c) => c.pretAutorise);
+  const caisseSelectionnee = caissesPret.find((c) => c.id === form.caisseId);
+  const pretSimule = useMemo(
+    () => buildAmortization(form.montantPret, form.tauxInteret, form.dureeMois, form.datePret),
+    [form.montantPret, form.tauxInteret, form.dureeMois, form.datePret]
+  );
+  const montantInteret = pretSimule?.totalInteret || 0;
+  const repartitionSimulee = montantInteret > 0 ? simulerRepartitionInterets(comptesBanque, montantInteret) : [];
+
+  const handleAccorder = async () => {
+    const missing = getMissingFields(form, [
+      { key: 'idMembre', label: 'Membre bénéficiaire' },
+      { key: 'caisseId', label: 'Caisse source' },
+      { key: 'montantPret', label: 'Montant' },
+    ]);
+    if (missing.length) { showToast?.(`Champ(s) requis manquant(s) : ${missing.join(', ')}`, 'error'); return; }
+    if (!pretSimule) { showToast?.('Simulation du prêt indisponible — vérifiez les paramètres saisis.', 'error'); return; }
+    const m = membres.find((x) => x.id === form.idMembre);
+    setBusy(true);
+    try {
+      const pret = await addPret({
+        ...form,
+        montantPret: Number(form.montantPret),
+        tauxInteret: Number(form.tauxInteret),
+        dureeMois: Number(form.dureeMois),
+        nomMembre: `${m.nom} ${m.prenom}`,
+        idMembre: form.idMembre,
+        caisseId: form.caisseId,
+        dateEcheance: pretSimule.dateEcheance,
+        montantInteret: pretSimule.totalInteret,
+        montantTotal: pretSimule.montantTotal,
+        montantMensuel: pretSimule.mensualiteMoyenne,
+        ficheAmortissement: pretSimule.ficheAmortissement,
+        amortissementPret: caisseSelectionnee?.amortissementPret || 'unique',
+        echeancesPret: caisseSelectionnee?.echeancesPret || 'mensuel',
+      });
+      if (!pret?.id) return; // addPret a déjà notifié l'erreur
+      await validerPret(pret.id);
+      await approuverPret(pret.id);
+      await decaisserPret(pret.id);
+      showToast('Prêt accordé et décaissé — visible dans Prêts pour le suivi des échéances.');
+      setForm({ ...FORM_PRET_VIDE });
+      onDone?.();
+    } catch {
+      // Chaîne interrompue (ex. seuil d'approbation réservé au Président) :
+      // le prêt reste dans Prêts, au statut atteint, pour être finalisé
+      // manuellement — pas d'écriture perdue, juste une étape restante.
+      showToast('Le prêt est enregistré mais reste à finaliser depuis la page Prêts (validation/approbation/décaissement).', 'info');
+      setForm({ ...FORM_PRET_VIDE });
+      onDone?.();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="p-4 bg-white rounded-xl border border-gray-200 shadow-sm space-y-4">
+      {caissesPret.length === 0 && (
+        <p className="text-xs text-red-600">Aucune caisse n'autorise les prêts pour l'instant — activez « Prêt autorisé » sur une caisse (Banques) avant de continuer.</p>
+      )}
+      <PretFormFields
+        form={form} setForm={setForm}
+        membres={membres} caissesPret={caissesPret}
+        pretSimule={pretSimule} montantInteret={montantInteret}
+        repartitionSimulee={repartitionSimulee} caisseSelectionnee={caisseSelectionnee}
+      />
+      <div className="flex gap-2 pt-1">
+        <button onClick={onCancel} disabled={busy} className="btn-secondary flex-1">Annuler</button>
+        <button onClick={handleAccorder} disabled={busy} className={clsx('btn-primary flex-1', busy && 'opacity-40 cursor-not-allowed')}>
+          <HandCoins size={14} /> {busy ? 'Enregistrement…' : 'Accorder le prêt'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function PanneauRubrique({ reunion, types, titre, readOnly = false }) {
   const {
-    membres, banques, prets, sanctions,
+    membres, banques, prets, sanctions, typesSanction, addSanction,
+    typesAideSociale, addAide, validerAideSociale, verserAideSociale,
     seanceTransactions, addSeanceTransaction, deleteSeanceTransaction,
-    tontines, membresParTontine,
+    tontines, membresParTontine, showToast, comptesBanque,
   } = useApp();
 
   // BUG corrigé : soldeDisponibleCaisse se basait sur caisseJournal, un état qui
@@ -2143,10 +2688,10 @@ function PanneauRubrique({ reunion, types, titre, readOnly = false }) {
     );
   }
 
-  const handleSubmitTx = (form) => {
+  const handleSubmitTx = async (form) => {
     if (!form.montant || Number(form.montant) <= 0) return;
     const m = form.idMembre ? membres.find(x => x.id === form.idMembre) : null;
-    addSeanceTransaction(reunion.id, {
+    await addSeanceTransaction(reunion.id, {
       ...form,
       idMembre:   form.idMembre   || null,
       idSanction: form.idSanction || null,
@@ -2156,6 +2701,7 @@ function PanneauRubrique({ reunion, types, titre, readOnly = false }) {
     });
     if (types.length > 1) setSelectedType(null); else setSelectedType(types[0]);
   };
+  const [guardedHandleSubmitTx, submittingTx] = useAsyncGuard(handleSubmitTx);
 
   return (
     <div className="space-y-4">
@@ -2171,6 +2717,19 @@ function PanneauRubrique({ reunion, types, titre, readOnly = false }) {
             <p className="text-xs text-gray-500">Sorties</p>
           </div>
         </div>
+      )}
+
+      {/* Appliquer un type de sanction déjà paramétré à un membre — distinct du
+          formulaire ci-dessous qui ne fait que RÉGLER une sanction déjà existante.
+          C'est ici qu'on utilise les types créés/modifiés dans Paramètres → Sanctions. */}
+      {!locked && types.includes('amende') && (
+        <AppliquerSanctionPanel reunion={reunion} membres={membres} typesSanction={typesSanction} addSanction={addSanction} showToast={showToast}/>
+      )}
+
+      {/* Symétrique côté aide sociale : déclarer une aide à partir d'un type
+          déjà paramétré dans Paramètres → Aide sociale. */}
+      {!locked && types.includes('aide_sociale') && (
+        <DeclarerAideSocialePanel membres={membres} typesAideSociale={typesAideSociale} banques={banques} addAide={addAide} validerAideSociale={validerAideSociale} verserAideSociale={verserAideSociale} showToast={showToast}/>
       )}
 
       {/* Zone formulaire */}
@@ -2201,18 +2760,30 @@ function PanneauRubrique({ reunion, types, titre, readOnly = false }) {
                   </button>
                 </div>
               )}
-              <SmartFormWrapper
-                type={selectedType}
-                reunion={reunion}
-                membres={membres}
-                banques={banques}
-                prets={prets}
-                sanctions={sanctions}
-                tontines={tontines}
-                membresParTontine={membresParTontine}
-                onSubmit={handleSubmitTx}
-                onCancel={() => setSelectedType(types.length > 1 ? null : types[0])}
-              />
+              {selectedType === 'pret_accorde' ? (
+                <OctroiPretReunion
+                  reunion={reunion}
+                  membres={membres}
+                  caisses={banques}
+                  comptesBanque={comptesBanque}
+                  onDone={() => setSelectedType(types.length > 1 ? null : types[0])}
+                  onCancel={() => setSelectedType(types.length > 1 ? null : types[0])}
+                />
+              ) : (
+                <SmartFormWrapper
+                  type={selectedType}
+                  reunion={reunion}
+                  membres={membres}
+                  banques={banques}
+                  prets={prets}
+                  sanctions={sanctions}
+                  tontines={tontines}
+                  membresParTontine={membresParTontine}
+                  onSubmit={guardedHandleSubmitTx}
+                  submitting={submittingTx}
+                  onCancel={() => setSelectedType(types.length > 1 ? null : types[0])}
+                />
+              )}
             </div>
           )}
         </div>
@@ -2590,7 +3161,7 @@ export function Reunions() {
               <button onClick={()=>{ setShowEdit(r); setFormReunion({date:r.date,lieu:r.lieu,numero:r.numero,observation:r.observation||''}); }} className="btn-secondary text-xs">
                 <Pencil size={13}/> Modifier
               </button>
-              <button onClick={()=>{ setShowOuverture(r); setFormOuv(EMPTY_OUVERTURE); }} className="btn-primary text-xs">
+              <button onClick={()=>{ setShowOuverture(r); setFormOuv({...EMPTY_OUVERTURE, heureOuverture: new Date().toTimeString().slice(0,5)}); }} className="btn-primary text-xs">
                 <PlayCircle size={13}/> Ouvrir la séance
               </button>
             </div>
@@ -2684,7 +3255,7 @@ export function Reunions() {
           <div className="space-y-4">
             <PageHeader
               title={`Réunion N°${r.numero}`}
-              subtitle={`${fmtDate(r.date)} · ${r.lieu}`}
+              subtitle={r.ouverture ? `${fmtDate(r.date)} · ${r.lieu} · Ouverte à ${r.ouverture.heureOuverture}${r.ouverture.presidentSeance ? ' par '+r.ouverture.presidentSeance : ''}` : `${fmtDate(r.date)} · ${r.lieu}`}
               action={<button onClick={()=>navigate('/reunions')} className="btn-secondary">
                 <ArrowLeft size={14}/> Retour aux réunions
               </button>}
@@ -2699,7 +3270,7 @@ export function Reunions() {
                       <button onClick={()=>{ setShowEdit(r); setFormReunion({date:r.date,lieu:r.lieu,numero:r.numero,observation:r.observation||''}); }} className="btn-secondary">
                         <Pencil size={13}/> Modifier
                       </button>
-                      <button onClick={()=>{ setShowOuverture(r); setFormOuv(EMPTY_OUVERTURE); }} className="btn-primary">
+                      <button onClick={()=>{ setShowOuverture(r); setFormOuv({...EMPTY_OUVERTURE, heureOuverture: new Date().toTimeString().slice(0,5)}); }} className="btn-primary">
                         <PlayCircle size={13}/> Ouvrir la séance
                       </button>
                     </>
@@ -3055,7 +3626,9 @@ export function Reunions() {
           <div className="p-3 bg-blue-50 rounded-xl text-sm text-blue-800">
             <strong>{fmtDate(showOuverture?.date)}</strong> — {showOuverture?.lieu}
           </div>
-          <FormField label="Heure d'ouverture" required><FO k="heureOuverture" placeholder="10h00"/></FormField>
+          <FormField label="Heure d'ouverture" required>
+            <input type="time" className="input" value={formOuv.heureOuverture||''} onChange={e=>setFormOuv(f=>({...f,heureOuverture:e.target.value}))}/>
+          </FormField>
           <div className="grid grid-cols-2 gap-3">
             <FormField label="Président de séance" required>
               <select className="select" value={formOuv.presidentSeance||''} onChange={e=>setFormOuv(f=>({...f,presidentSeance:e.target.value}))}>

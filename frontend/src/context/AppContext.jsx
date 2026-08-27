@@ -3,16 +3,20 @@ import { request, getApiToken, setApiToken, clearApiToken, API_BASE } from '../l
 import * as adapt from '../lib/adapters';
 import * as mock from '../data/mockData';
 
-// Les 9 valeurs réellement acceptées par le backend (voir SeanceTransactionController::store
+// Les 10 valeurs réellement acceptées par le backend (voir SeanceTransactionController::store
 // et TYPES_SORTIE) — ce tableau sert à la fois aux boutons de sélection (TypePicker), au
 // calcul des totaux/sens du rapport PV (RapportSeance), et aux libellés affichés partout.
 // Historique : contenait avant 7 valeurs obsolètes (sanction, pret, remboursement, retrait,
 // autre) qui ne correspondaient à aucun type réellement envoyé — les transactions amende /
 // aide_sociale / pret_accorde / paiement_sanction / remboursement_pret / attribution_tour /
 // divers_entree / divers_sortie étaient donc invisibles dans les totaux et le rapport PV.
+// 'paiement_sanction' (distinct de 'amende') a été rajouté à part : c'est le type que
+// BulletinGainService::verser() écrit pour la retenue de sanction imputée sur un gain
+// (voir son absence d'ici → ligne du PV sans icône ni montant, colonnes Entrée/Sortie vides).
 export const TX_TYPES = [
   { value: 'cotisation',         label: 'Cotisation',            dir: 'entree', icon: '💰' },
   { value: 'amende',             label: 'Paiement de sanction',  dir: 'entree', icon: '⚖️' },
+  { value: 'paiement_sanction',  label: 'Sanction imputée',      dir: 'entree', icon: '🧾' },
   { value: 'remboursement_pret', label: 'Remboursement prêt',    dir: 'entree', icon: '🏦' },
   { value: 'divers_entree',      label: 'Entrée diverse',        dir: 'entree', icon: '📥' },
   { value: 'depot_banque',       label: 'Dépôt banque',          dir: 'banque', icon: '🏛️' },
@@ -179,6 +183,31 @@ export const AppProvider = ({ children }) => {
     } catch (err) { return handleError(err); }
   };
 
+  // Pendant CSV/XLSX : le backend traite chaque ligne/groupe independamment et renvoie
+  // {crees, erreurs}, pas de ressources completes comme en JSON — donc pas de mise a jour
+  // des listes locales ici, juste le compte-rendu (voir TabularFileReader, PR du 24/08).
+  const importerHistoriqueFichier = async (type, fichier, tontineId) => {
+    try {
+      const routes = {
+        transactions: '/caisses/import-historique/fichier',
+        decisions: '/decisions-ag/import-historique/fichier',
+        prets: '/prets/import-historique/fichier',
+        sanctions: '/sanctions/import-historique/fichier',
+      };
+      if (type === 'cycles' && !tontineId) {
+        showToast('Choisissez la tontine concernée par ce fichier.', 'error');
+        return;
+      }
+      const chemin = type === 'cycles' ? `/tontines/${tontineId}/cycles/import-historique/fichier` : routes[type];
+      const fd = new FormData();
+      fd.append('fichier', fichier);
+      const resultat = await request(chemin, { method: 'POST', body: fd });
+      const nbErreurs = resultat?.erreurs?.length || 0;
+      showToast(`${resultat.crees} ligne(s) importée(s)${nbErreurs ? `, ${nbErreurs} en erreur` : ''}`, nbErreurs ? 'info' : 'success');
+      return resultat;
+    } catch (err) { return handleError(err); }
+  };
+
   // ── Charge toutes les données de l'association une fois connecté ──
   useEffect(() => {
     if (!user || !currentAssociation) return;
@@ -197,7 +226,7 @@ export const AppProvider = ({ children }) => {
       try {
         const [mRes, tRes, rRes, cRes, pRes, sRes, paramRes, aRes, uRes, typeSancRes, typeAideRes, comptesRes, postesRes, decAgRes, reglRes, rapproRes, transfRes] = await Promise.all([
           request('/membres?per_page=200'),
-          request('/tontines'),
+          request('/tontines?with_details=1'),
           request('/reunions?per_page=100'),
           request('/caisses'),
           request('/prets?per_page=200'),
@@ -208,7 +237,7 @@ export const AppProvider = ({ children }) => {
           request('/types-sanction').catch(() => []),
           request('/types-aide-sociale').catch(() => []),
           request('/comptes-bancaires').catch(() => []),
-          request('/postes').catch(() => []),
+          request('/postes?with_history=1').catch(() => []),
           request('/decisions-ag?per_page=200').catch(() => ({ data: [] })),
           request('/reglements').catch(() => []),
           request('/rapprochements').catch(() => []),
@@ -237,33 +266,36 @@ export const AppProvider = ({ children }) => {
 
         const postesAdapted = (postesRes || []).map(adapt.posteFromApi);
         setPostes(postesAdapted);
-        const histories = await Promise.all(
-          postesAdapted.map((p) => request(`/postes/${p.id}/mandats`).catch(() => []))
-        );
-        setMandats(histories.flatMap((h) => h.map(adapt.mandatFromApi)));
+        // Optimisation N+1 : les mandats de TOUS les postes sont déjà inclus dans
+        // /postes?with_history=1 (voir ci-dessus) — plus besoin d'une requête
+        // GET /postes/{id}/mandats par poste (jusqu'à 30s de latence en plus au
+        // démarrage sur hébergement mutualisé avec peu de workers PHP-FPM).
+        setMandats((postesRes || []).flatMap((p) => (p.mandats || []).map(adapt.mandatFromApi)));
 
         setDecisionsAG((decAgRes.data || decAgRes).map(adapt.decisionAgFromApi));
         setReglements((reglRes || []).map(adapt.reglementFromApi));
         setRapprochements((rapproRes || []).map(adapt.rapprochementFromApi));
         setTransfertsCaisse((transfRes || []).map(transfertDepuisApi));
 
-        // Parts de tontine : agrégées depuis le détail de chaque tontine
-        const tontinesDetail = await Promise.all(
-          (tRes.data || tRes).map((t) => request(`/tontines/${t.id}`))
-        );
-        const parts = tontinesDetail.flatMap((t) => (t.parts || []).map(adapt.partFromApi));
+        // Optimisation N+1 : parts + cycles de TOUTES les tontines sont déjà inclus
+        // dans /tontines?with_details=1 (voir ci-dessus) — plus besoin d'une requête
+        // GET /tontines/{id} par tontine.
+        const tontinesBrutes = tRes.data || tRes;
+        const parts = tontinesBrutes.flatMap((t) => (t.parts || []).map(adapt.partFromApi));
         setMembresParTontine(parts);
 
         // Cycles de tontine : chargés ici une fois pour toutes (Rotations, Encheres, Caisse,
         // Tontines en dépendent tous) plutôt que de dépendre de la page visitée en premier —
-        // /tontines/{id} charge déjà 'cycles.encherites.membre, cycles.gagnant.membre'.
-        const cycles = tontinesDetail.flatMap((t) => (t.cycles || []).map(adapt.cycleFromApi));
+        // /tontines?with_details=1 charge déjà 'cycles.encherites.membre, cycles.gagnant.membre'.
+        const cycles = tontinesBrutes.flatMap((t) => (t.cycles || []).map(adapt.cycleFromApi));
         setCyclesTontine(cycles);
         setRotations(cycles.map(adapt.cycleToRotation));
 
         // Tours planifiés (rotation) : même logique — Reunions.jsx les lit (bénéficiaire
         // planifié pour la tontine sélectionnée) sans jamais déclencher leur chargement.
-        (tRes.data || tRes).filter((t) => t.mode_attribution === 'rotation').forEach((t) => chargerPlanningTours(t.id));
+        await Promise.all(
+          (tRes.data || tRes).filter((t) => t.mode_attribution === 'rotation').map((t) => chargerPlanningTours(t.id))
+        );
       } catch (err) {
         showToast(err.message || 'Impossible de charger les données', 'error');
       }
@@ -616,9 +648,14 @@ export const AppProvider = ({ children }) => {
       setReunions((prev) => prev.map((x) => (x.id === id ? adapt.reunionFromApi(r) : x)));
     } catch (err) { return handleError(err); }
   };
-  const ouvrirReunion = async (id) => {
+  const ouvrirReunion = async (id, details = {}) => {
     try {
-      const r = await request(`/reunions/${id}/ouvrir`, { method: 'POST' });
+      const r = await request(`/reunions/${id}/ouvrir`, { method: 'POST', body: {
+        heure_ouverture_reelle: details.heureOuverture || undefined,
+        president_seance: details.presidentSeance || undefined,
+        secretaire_seance: details.secretaireSeance || undefined,
+        mot_ouverture: details.motOuverture || undefined,
+      } });
       setReunions((prev) => prev.map((x) => (x.id === id ? adapt.reunionFromApi(r) : x)));
       showToast('Réunion ouverte');
     } catch (err) { return handleError(err); }
@@ -873,7 +910,12 @@ export const AppProvider = ({ children }) => {
         body: {
           type: data.type, membre_id: data.idMembre || undefined, montant: Number(data.montant),
           libelle: data.libelle || undefined, reference_sanction_id: data.idSanction || undefined,
-          reference_pret_id: data.idPret || undefined, caisse_id: data.idBanque || undefined, note: data.note || undefined,
+          reference_pret_id: data.idPret || undefined, caisse_id: data.idBanque || undefined,
+          // BUGFIX : sans ce lien, une transaction de cotisation saisie en Feuille
+          // de cotisation reste orpheline vis-à-vis du cycle qui la motive — voir
+          // TontineCycleService::annulerCycleAvantVersement.
+          cycle_tontine_id: data.idCycle || undefined,
+          note: data.note || undefined,
         },
       });
       const item = {
@@ -910,7 +952,7 @@ export const AppProvider = ({ children }) => {
       return c;
     } catch (err) { return handleError(err); }
   };
-  const ouvrirSeance = (id) => ouvrirReunion(id);
+  const ouvrirSeance = (id, details) => ouvrirReunion(id, details);
   const cloturerSeance = async (id, data) => {
     try {
       await request(`/reunions/${id}`, {
@@ -1027,6 +1069,13 @@ export const AppProvider = ({ children }) => {
       showToast('Type de sanction modifié');
     } catch (err) { return handleError(err); }
   };
+  const deleteTypeSanction = async (id) => {
+    try {
+      await request(`/types-sanction/${id}`, { method: 'DELETE' });
+      setTypesSanction((prev) => prev.filter((x) => x.id !== id));
+      showToast('Type de sanction supprimé');
+    } catch (err) { return handleError(err); }
+  };
 
   const addSanction = async (data) => {
     try {
@@ -1100,7 +1149,9 @@ export const AppProvider = ({ children }) => {
   };
   const decaisserPret = async (id) => {
     try {
-      const p = await request(`/prets/${id}/decaisser`, { method: 'POST' });
+      const reunionOuverte = reunions.find((r) => r.statutReunion === 'en_cours');
+      if (!reunionOuverte) { showToast?.('Ouvrez une séance de réunion avant de décaisser un prêt.', 'error'); return; }
+      const p = await request(`/prets/${id}/decaisser`, { method: 'POST', body: { reunion_id: reunionOuverte.id } });
       setPrets((prev) => prev.map((x) => (x.id === id ? adapt.pretFromApi(p) : x)));
       showToast('Prêt décaissé');
     } catch (err) { return handleError(err); }
@@ -1196,7 +1247,13 @@ export const AppProvider = ({ children }) => {
   };
   const verserAideSociale = async (id, options = {}) => {
     try {
+      const reunionOuverte = reunions.find((r) => r.statutReunion === 'en_cours');
+      if (!reunionOuverte) { showToast?.('Ouvrez une séance de réunion avant de verser une aide sociale.', 'error'); return; }
       const a = await request(`/aides-sociales/${id}/verser`, { method: 'POST', body: {
+        reunion_id: reunionOuverte.id,
+        // Caisse choisie au moment du versement si le type n'en a pas une par défaut
+        // (paramétrage du type = barème, pas caisse ; cf addTypeAideSociale).
+        caisse_id: options.idCaisse || undefined,
         mode_paiement: options.modePaiement, details_paiement: options.detailsPaiement,
       } });
       const aide = adapt.aideFromApi(a);
@@ -1207,15 +1264,45 @@ export const AppProvider = ({ children }) => {
   };
   const addTypeAideSociale = async (data) => {
     try {
+      // La caisse N'EST PAS demandée ici : comme pour les sanctions, paramétrer un
+      // type d'aide (libellé + catégorie + montant) ne doit pas exiger de choisir une
+      // caisse -- ce choix a lieu plus tard, lors du versement réel en réunion
+      // (verserAideSociale). Si data.caisseSourceId est fourni malgré tout (caisse
+      // par défaut optionnelle), on le transmet, sinon on l'omet complètement.
       const t = await request('/types-aide-sociale', { method: 'POST', body: {
         libelle: data.libelle, type_evenement: data.typeEvenement, montant_fixe: data.montantFixe,
-        caisse_source_id: data.caisseSourceId, nb_max_par_an: data.nbMaxParAn || 3,
+        caisse_source_id: data.caisseSourceId || undefined, nb_max_par_an: data.nbMaxParAn || 3,
         justificatif_requis: data.justificatifRequis ?? true,
       } });
-      const type = { id: t.id, libelle: t.libelle, typeEvenement: t.type_evenement, montantFixe: Number(t.montant_fixe || 0) };
+      const type = {
+        id: t.id, libelle: t.libelle, typeEvenement: t.type_evenement,
+        montantFixe: Number(t.montant_fixe || 0), caisseSourceId: t.caisse_source_id, actif: t.actif,
+      };
       setTypesAideSociale((prev) => [...prev, type]);
       showToast('Type d\'aide sociale créé');
       return type;
+    } catch (err) { return handleError(err); }
+  };
+  const updateTypeAideSociale = async (id, data) => {
+    try {
+      const t = await request(`/types-aide-sociale/${id}`, { method: 'PUT', body: {
+        libelle: data.libelle, type_evenement: data.typeEvenement, montant_fixe: data.montantFixe,
+        caisse_source_id: data.caisseSourceId, actif: data.actif,
+      } });
+      const type = {
+        id: t.id, libelle: t.libelle, typeEvenement: t.type_evenement,
+        montantFixe: Number(t.montant_fixe || 0), caisseSourceId: t.caisse_source_id, actif: t.actif,
+      };
+      setTypesAideSociale((prev) => prev.map((x) => (x.id === id ? type : x)));
+      showToast('Type d\'aide sociale modifié');
+      return type;
+    } catch (err) { return handleError(err); }
+  };
+  const deleteTypeAideSociale = async (id) => {
+    try {
+      await request(`/types-aide-sociale/${id}`, { method: 'DELETE' });
+      setTypesAideSociale((prev) => prev.filter((x) => x.id !== id));
+      showToast('Type d\'aide sociale supprimé');
     } catch (err) { return handleError(err); }
   };
   const addCompteBancaire = async (data) => {
@@ -1277,6 +1364,19 @@ export const AppProvider = ({ children }) => {
     } catch (err) { return handleError(err); }
   };
 
+  // Recharge les parts d'UNE tontine (statut disponible/réservée/gagnée) — nécessaire
+  // après la clôture d'un cycle : la part gagnante passe à 'gagnee' en base, mais
+  // membresParTontine restait figé en mémoire jusqu'au prochain F5 complet, ce qui
+  // pouvait faire réapparaître (ou disparaître à tort) un membre selon un état obsolète.
+  const rechargerPartsTontine = async (idTontine) => {
+    try {
+      const t = await request(`/tontines/${idTontine}`);
+      const parts = (t.parts || []).map(adapt.partFromApi);
+      setMembresParTontine((prev) => [...prev.filter((p) => p.idTontine !== idTontine), ...parts]);
+      return parts;
+    } catch (err) { return handleError(err); }
+  };
+
   // ── Cycle de tontine — écran 4 « Saisie d'un cycle » ────────────
   // Ces quatre routes existaient côté backend mais n'étaient appelées nulle part
   // côté frontend : impossible d'ouvrir un cycle, de saisir une cotisation ou de
@@ -1324,6 +1424,7 @@ export const AppProvider = ({ children }) => {
       const cycle = await chargerCycle(idCycle);
       await chargerCycles(cycle.idTontine);
       await chargerPlanningTours(cycle.idTontine);
+      await rechargerPartsTontine(cycle.idTontine);
       return cycle;
     } catch (err) { return handleError(err); }
   };
@@ -1381,8 +1482,15 @@ export const AppProvider = ({ children }) => {
   const annulerCycle = async (idCycle, idBulletin) => {
     try {
       await request(`/cycles/${idCycle}`, { method: 'DELETE' });
+      // BUGFIX : le backend contre-passe désormais aussi les transactions de
+      // cotisation liées au cycle (cycle_tontine_id) et le surplus d'enchère,
+      // mais côté client seanceTransactionsState garde encore ces entrées en
+      // mémoire tant qu'on ne recharge pas — elles restaient visibles dans
+      // Caisse, l'historique et le rapport PV malgré l'annulation.
+      const cycleAnnule = cyclesTontine.find((cycle) => cycle.id === idCycle);
       setCyclesTontine((prev) => prev.filter((cycle) => cycle.id !== idCycle));
       setRotations((prev) => prev.filter((rotation) => rotation.id !== idCycle));
+      if (cycleAnnule?.idReunion) await chargerSeanceTransactions(cycleAnnule.idReunion);
       showToast('Cycle annulé : le bénéficiaire et la feuille peuvent être saisis à nouveau');
       return true;
     } catch (err) {
@@ -1485,9 +1593,9 @@ export const AppProvider = ({ children }) => {
     // de transactions par réunion distinct du journal de caisse) — exposés vides pour éviter
     // les crashs sur Membres.jsx/Rapports.jsx ; à construire côté backend si le besoin est confirmé.
     comptesBanque: [], operationsBanque: [], seanceTransactions: seanceTransactionsState, transfertsCaisse, chargerJournalCaisse, chargerJournalGlobal,
-    utilisateurs, planningTours, cyclesTontine, chargerCycles, dashboardStats, repartitionBanques, evolutionCaisse: mock.evolutionCaisse,
+    utilisateurs, planningTours, cyclesTontine, chargerCycles, rechargerPartsTontine, dashboardStats, repartitionBanques, evolutionCaisse: mock.evolutionCaisse,
     portailMoi, chargerPortailMoi,
-    showToast, importerHistorique,
+    showToast, importerHistorique, importerHistoriqueFichier,
     login, logout, changePassword, updateMonProfil, register, updateAssociation, uploadStatutsAssociation, updateParametres,
     addMembre, updateMembre, deleteMembre,
     addPoste, addMandat, cloturerMandat,
@@ -1498,9 +1606,9 @@ export const AppProvider = ({ children }) => {
     setPresenceMembre, signerPV,
     chargerRotations, tirerAuSort, addEnchere, attribuerTour, annulerEncheres, annulerCycle, annulerVersementBulletin,
     addBanque, addCaisse: addBanque, modifierBanque, modifierCaisse: modifierBanque, doOperation, addMembreBanque, transfererCaisse, approuverTransfertCaisse, addCompteBancaire, chargerTransferts,
-    addTypeSanction, updateTypeSanction, addSanction, payerSanction,
+    addTypeSanction, updateTypeSanction, deleteTypeSanction, addSanction, payerSanction,
     addPret, validerPret, approuverPret, refuserPret, decaisserPret, rembourserPret, distribuerInteretsPret,
-    addAide, addAideSociale: addAide, validerAideSociale, verserAideSociale, addTypeAideSociale, membreEligibleAssurance, addCaisseEntry, uploadFichier,
+    addAide, addAideSociale: addAide, validerAideSociale, verserAideSociale, addTypeAideSociale, updateTypeAideSociale, deleteTypeAideSociale, membreEligibleAssurance, addCaisseEntry, uploadFichier,
     addTourPlanning, marquerTourEncaisse, retirerTourPlanning, chargerPlanningTours,
     addSeanceTransaction, deleteSeanceTransaction, enregistrerBeneficiaireSeance, chargerSeanceTransactions,
     addUtilisateur, updateUtilisateur, desactiverUtilisateur, activerUtilisateur,

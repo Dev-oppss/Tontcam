@@ -4,6 +4,7 @@ import { fmt, fmtDate } from '../data/mockData';
 import { useApp } from '../context/AppContext';
 import { PageHeader, Table, Badge, Modal, FormField } from '../components/ui/index';
 import { getMissingFields } from '../lib/validation';
+import { useAsyncGuard } from '../hooks/useAsyncGuard';
 
 export default function Encheres() {
   const { membres, membresParTontine, encheres, rotations, tontines, chargerRotations, addEnchere, attribuerTour, annulerEncheres, showToast } = useApp();
@@ -26,14 +27,14 @@ export default function Encheres() {
     ? encTour.reduce((max, e) => e.montantEnchere > max.montantEnchere ? e : max, encTour[0])
     : null;
 
-  const handleAdd = () => {
+  const handleAdd = async () => {
     const missing = getMissingFields(form, [
       { key: 'idMembre', label: 'Membre' },
       { key: 'montantEnchere', label: "Montant de l'enchère" },
     ]);
     if (missing.length) { showToast?.(`Champ(s) requis manquant(s) : ${missing.join(', ')}`, 'error'); return; }
     const m = membres.find(x => x.id === form.idMembre);
-    addEnchere({
+    await addEnchere({
       idRotation: tourEnCours?.id,
       idTontine: tourEnCours?.idTontine,
       idMembre: form.idMembre,
@@ -44,17 +45,19 @@ export default function Encheres() {
     setAddModal(false);
     setForm({ idMembre:'', montantEnchere:'', dateEnchere: new Date().toISOString().split('T')[0] });
   };
+  const [guardedHandleAdd, addingEnchere] = useAsyncGuard(handleAdd);
 
-  const handleConfirm = () => {
+  const handleConfirm = async () => {
     if (!confirm) return;
     if (confirm.type === 'attribuer') {
       const montantRecu = potTotal - (confirm.gagnant.montantEnchere || 0);
-      attribuerTour(confirm.rotation.id, confirm.gagnant.idMembre, montantRecu);
+      await attribuerTour(confirm.rotation.id, confirm.gagnant.idMembre, montantRecu);
     } else {
-      annulerEncheres(confirm.rotation.id);
+      await annulerEncheres(confirm.rotation.id);
     }
     setConfirm(null);
   };
+  const [guardedHandleConfirm, confirming] = useAsyncGuard(handleConfirm);
 
   const membresDejaMis = encTour.map(e => e.idMembre);
 
@@ -180,7 +183,7 @@ export default function Encheres() {
 
       {/* Modal nouvelle enchère */}
       <Modal open={addModal} onClose={()=>setAddModal(false)} title="Enregistrer une enchère"
-        footer={<><button onClick={()=>setAddModal(false)} className="btn-secondary">Annuler</button><button onClick={handleAdd} className="btn-primary"><Gavel size={14}/>Enregistrer</button></>}>
+        footer={<><button onClick={()=>setAddModal(false)} disabled={addingEnchere} className="btn-secondary">Annuler</button><button onClick={guardedHandleAdd} disabled={addingEnchere} className="btn-primary"><Gavel size={14}/>{addingEnchere ? 'Enregistrement…' : 'Enregistrer'}</button></>}>
         <div className="space-y-4">
           {tourEnCours&&(
             <div className="p-3 bg-amber-50 rounded-xl text-sm text-amber-800">
@@ -210,9 +213,9 @@ export default function Encheres() {
       {/* Modal confirmation */}
       <Modal open={!!confirm} onClose={()=>setConfirm(null)} title={confirm?.type==='attribuer'?'Confirmer l\'attribution':'Confirmer l\'annulation'}
         footer={<>
-          <button onClick={()=>setConfirm(null)} className="btn-secondary">Annuler</button>
-          <button onClick={handleConfirm} className={confirm?.type==='attribuer'?'btn-amber':'btn-danger'}>
-            {confirm?.type==='attribuer'?<><Gavel size={14}/>Confirmer l'attribution</>:<><AlertTriangle size={14}/>Oui, annuler</>}
+          <button onClick={()=>setConfirm(null)} disabled={confirming} className="btn-secondary">Annuler</button>
+          <button onClick={guardedHandleConfirm} disabled={confirming} className={confirm?.type==='attribuer'?'btn-amber':'btn-danger'}>
+            {confirming ? 'Veuillez patienter…' : (confirm?.type==='attribuer'?<><Gavel size={14}/>Confirmer l'attribution</>:<><AlertTriangle size={14}/>Oui, annuler</>)}
           </button>
         </>}>
         {confirm?.type==='attribuer' ? (

@@ -1,5 +1,6 @@
 import { useState, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import { useAsyncGuard } from '../hooks/useAsyncGuard';
 import {
   UserPlus, Search, Eye, Pencil, Trash2, Users, Plus, Minus,
   Phone, MapPin, Briefcase, Calendar, CreditCard,
@@ -494,20 +495,23 @@ export default function Membres() {
     return e;
   };
 
-  const handleAdd = () => {
+  const handleAdd = async () => {
     const e = validate(form, null);
     setErrors(e);
     if (Object.keys(e).length > 0) return;
-    addMembre({ ...form });
+    await addMembre({ ...form });
     setAdd(false);
   };
-  const handleEdit = () => {
+  const [guardedHandleAdd, addingMembre] = useAsyncGuard(handleAdd);
+  const handleEdit = async () => {
     const e = validate(form, edit.id);
     setErrors(e);
     if (Object.keys(e).length > 0) return;
-    updateMembre(edit.id, { ...edit, ...form });
+    await updateMembre(edit.id, { ...edit, ...form });
     setEdit(null);
   };
+  const [guardedHandleEdit, editingMembre] = useAsyncGuard(handleEdit);
+  const [guardedHandleDelete, deletingMembre] = useAsyncGuard(async (id) => { await deleteMembre(id); setConfirm(null); });
 
   const formRef = useRef(form); formRef.current = form;
   const F = useRef(({k,...p}) => <input className="input" value={formRef.current[k]||''} onChange={e=>setForm(f=>({...f,[k]:e.target.value}))} {...p}/>).current;
@@ -517,11 +521,12 @@ export default function Membres() {
   const getTontinesDisponibles = id => tontines.filter(t=>!membresParTontine.some(mt=>mt.idMembre===id&&mt.idTontine===t.id));
   const getTotalParts = id => membresParTontine.filter(mt=>mt.idMembre===id).reduce((s,mt)=>s+mt.nombreParts,0);
 
-  const handleInscrit = () => {
+  const handleInscrit = async () => {
     if (!formInscrit.idTontine) return;
-    addMembreTontine({ idMembre:showInscrit.id, idTontine:formInscrit.idTontine, nombreParts:Number(formInscrit.nombreParts)||1, dateAdhesion:formInscrit.dateAdhesion||new Date().toISOString().split('T')[0] });
+    await addMembreTontine({ idMembre:showInscrit.id, idTontine:formInscrit.idTontine, nombreParts:Number(formInscrit.nombreParts)||1, dateAdhesion:formInscrit.dateAdhesion||new Date().toISOString().split('T')[0] });
     setFormInscrit({idTontine:'',nombreParts:1,dateAdhesion:''});
   };
+  const [guardedHandleInscrit, inscribing] = useAsyncGuard(handleInscrit);
 
   return (
     <div className="space-y-6">
@@ -650,7 +655,7 @@ export default function Membres() {
                     <label className="text-xs text-gray-500">Parts :</label>
                     <input type="number" min="1" className="input w-16 text-center" value={formInscrit.nombreParts} onChange={e=>setFormInscrit(f=>({...f,nombreParts:e.target.value}))}/>
                   </div>
-                  <button onClick={handleInscrit} className="btn-primary"><Plus size={14}/> Inscrire</button>
+                  <button onClick={guardedHandleInscrit} disabled={inscribing} className="btn-primary"><Plus size={14}/> {inscribing ? 'Inscription…' : 'Inscrire'}</button>
                 </div>
               </div>
             )}
@@ -659,11 +664,11 @@ export default function Membres() {
       </Modal>
 
       {/* ── Add / Edit ── */}
-      {[{open:add,onClose:()=>{setAdd(false);setErrors({});},title:'Nouveau membre',onSave:handleAdd,label:'Ajouter'},
-        {open:!!edit,onClose:()=>{setEdit(null);setErrors({});},title:'Modifier le membre',onSave:handleEdit,label:'Enregistrer'}
-      ].map(({open,onClose,title,onSave,label})=>(
+      {[{open:add,onClose:()=>{setAdd(false);setErrors({});},title:'Nouveau membre',onSave:guardedHandleAdd,label:'Ajouter',busy:addingMembre},
+        {open:!!edit,onClose:()=>{setEdit(null);setErrors({});},title:'Modifier le membre',onSave:guardedHandleEdit,label:'Enregistrer',busy:editingMembre}
+      ].map(({open,onClose,title,onSave,label,busy})=>(
         <Modal key={title} open={open} onClose={onClose} title={title}
-          footer={<><button onClick={onClose} className="btn-secondary">Annuler</button><button onClick={onSave} className="btn-primary">{label}</button></>}>
+          footer={<><button onClick={onClose} disabled={busy} className="btn-secondary">Annuler</button><button onClick={onSave} disabled={busy} className="btn-primary">{busy ? 'Enregistrement…' : label}</button></>}>
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
               <FormField label="Nom" required>
@@ -707,7 +712,7 @@ export default function Membres() {
       ))}
 
       <Modal open={!!confirm} onClose={()=>setConfirm(null)} title="Confirmer la suppression"
-        footer={<><button onClick={()=>setConfirm(null)} className="btn-secondary">Annuler</button><button onClick={()=>{deleteMembre(confirm);setConfirm(null);}} className="btn-danger">Supprimer</button></>}>
+        footer={<><button onClick={()=>setConfirm(null)} disabled={deletingMembre} className="btn-secondary">Annuler</button><button onClick={()=>guardedHandleDelete(confirm)} disabled={deletingMembre} className="btn-danger">{deletingMembre ? 'Suppression…' : 'Supprimer'}</button></>}>
         <p className="text-sm text-gray-600">Cette action est irréversible. Le membre sera retiré de toutes les tontines.</p>
       </Modal>
     </div>

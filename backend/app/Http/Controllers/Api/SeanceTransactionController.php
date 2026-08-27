@@ -14,6 +14,7 @@ use App\Services\PretService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use App\Http\Controllers\Api\Concerns\AssertSeanceOuverte;
 
 /**
  * Journal des mouvements de caisse saisis en direct pendant une réunion
@@ -23,6 +24,8 @@ use Illuminate\Support\Facades\DB;
  */
 class SeanceTransactionController extends Controller
 {
+    use AssertSeanceOuverte;
+
     private const TYPES_SORTIE = ['attribution_tour', 'divers_sortie', 'pret_accorde', 'aide_sociale'];
 
     public function __construct(
@@ -44,6 +47,12 @@ class SeanceTransactionController extends Controller
         $reunion = $this->scope->scopeAssociation(Reunion::query())->findOrFail($reunionId);
         $this->authorize('update', $reunion);
 
+        try {
+            $this->assertSeanceOuverte($reunion);
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
         $data = $request->validate([
             'type' => ['required', 'in:cotisation,remboursement_pret,paiement_sanction,amende,depot_banque,attribution_tour,divers_entree,divers_sortie,pret_accorde,aide_sociale'],
             'membre_id' => ['nullable', 'uuid'],
@@ -52,8 +61,22 @@ class SeanceTransactionController extends Controller
             'reference_sanction_id' => ['nullable', 'uuid'],
             'reference_pret_id' => ['nullable', 'uuid', 'required_if:type,remboursement_pret'],
             'caisse_id' => ['nullable', 'uuid', 'required_unless:type,remboursement_pret'],
+            'cycle_tontine_id' => ['nullable', 'uuid'],
             'note' => ['nullable', 'string'],
         ]);
+
+        // Si l'appelant rattache la saisie à un cycle (ex : cotisation validée
+        // depuis la Feuille de cotisation), on vérifie que ce cycle est bien
+        // dans le périmètre accessible avant de créer le lien — sans ça,
+        // annulerCycleAvantVersement() ne pourra jamais retrouver ni
+        // contre-passer cette transaction.
+        if (!empty($data['cycle_tontine_id'])) {
+            $cycleExiste = \App\Models\CycleTontine::whereHas('tontine', fn ($q) => $this->scope->scopeAssociation($q))
+                ->whereKey($data['cycle_tontine_id'])->exists();
+            if (!$cycleExiste) {
+                return response()->json(['message' => 'Cycle de tontine introuvable.'], 422);
+            }
+        }
 
         try {
             return DB::transaction(function () use ($reunion, $data, $request) {

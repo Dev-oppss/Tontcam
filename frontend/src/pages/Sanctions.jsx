@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { ShieldAlert, Plus, Settings2, CreditCard } from 'lucide-react';
+import { ShieldAlert, Plus, Settings2, CreditCard, Pencil, Trash2 } from 'lucide-react';
 import { fmt, fmtDate, typeSancLabel } from '../data/mockData';
 import { useApp } from '../context/AppContext';
 import { PageHeader, Table, Badge, Modal, FormField } from '../components/ui/index';
 import { ModePaiementFields, isModePaiementValid, ModePaiementBadge } from '../components/ui/ModePaiement';
 import { getMissingFields } from '../lib/validation';
+import { useAsyncGuard } from '../hooks/useAsyncGuard';
 
 const PRESET_TYPES = [
   { code: 'retard_cotisation', libelle: 'Retard de cotisation', montantFixe: 2500 },
@@ -27,15 +28,16 @@ const slugify = (value) => String(value || '')
   .replace(/^_+|_+$/g, '');
 
 export default function Sanctions() {
-  const { membres, sanctions, addSanction, payerSanction, typesSanction, addTypeSanction, showToast } = useApp();
+  const { membres, sanctions, addSanction, payerSanction, typesSanction, addTypeSanction, updateTypeSanction, deleteTypeSanction, reunions = [], showToast } = useApp();
   const [add, setAdd] = useState(false);
   const [addType, setAddType] = useState(false);
+  const [editingTypeId, setEditingTypeId] = useState(null);
   const [form, setForm] = useState({
     idMembre: '',
     nomMembre: '',
     typeSanction: 'retard_cotisation',
     montant: 2500,
-    numReunion: '',
+    idReunion: '',
     dateSanction: new Date().toISOString().split('T')[0],
   });
   const [customTypeForm, setCustomTypeForm] = useState(emptyCustomType());
@@ -43,18 +45,25 @@ export default function Sanctions() {
   const [payModePaiement, setPayModePaiement] = useState('especes');
   const [payDetailsPaiement, setPayDetailsPaiement] = useState('');
 
-  const handlePayer = () => {
+  const handlePayer = async () => {
     if (!isModePaiementValid(payModePaiement, payDetailsPaiement)) { showToast?.('Référence de paiement requise pour ce mode de versement.', 'error'); return; }
-    payerSanction(payModal.id, { modePaiement: payModePaiement, detailsPaiement: payDetailsPaiement });
+    await payerSanction(payModal.id, { modePaiement: payModePaiement, detailsPaiement: payDetailsPaiement });
     setPayModal(null);
     setPayModePaiement('especes');
     setPayDetailsPaiement('');
   };
+  const [guardedHandlePayer, payingAmende] = useAsyncGuard(handlePayer);
 
   const impayees = sanctions.filter(s=>s.statut==='impayee');
   const payees   = sanctions.filter(s=>s.statut==='payee');
+  const reunionsOuvertes = reunions.filter(r => r.statutReunion === 'en_cours');
   const typeV    = { retard_cotisation:'amber', absence_non_excusee:'red', insubordination:'red', insulte:'red', autre:'gray' };
-  const montantsParType = Object.fromEntries(PRESET_TYPES.map((t) => [t.code, t.montantFixe]));
+  // Les types réellement paramétrés (association) priment toujours ; PRESET_TYPES
+  // ne sert plus que de suggestions de démarrage si rien n'a encore été paramétré.
+  const typesDisponibles = typesSanction.length
+    ? typesSanction.map((t) => ({ code: t.code, libelle: t.libelle, montantFixe: Number(t.montantFixe || 0) }))
+    : PRESET_TYPES;
+  const montantsParType = Object.fromEntries(typesDisponibles.map((t) => [t.code, t.montantFixe]));
 
   const resetForm = () => {
     setForm({
@@ -62,7 +71,7 @@ export default function Sanctions() {
       nomMembre: '',
       typeSanction: 'retard_cotisation',
       montant: 2500,
-      numReunion: '',
+      idReunion: '',
       dateSanction: new Date().toISOString().split('T')[0],
     });
     setCustomTypeForm(emptyCustomType());
@@ -97,12 +106,12 @@ export default function Sanctions() {
   };
 
   const handleAdd = async () => {
-    const missing = getMissingFields(form, [{ key: 'idMembre', label: 'Membre' }]);
+    const missing = getMissingFields(form, [{ key: 'idMembre', label: 'Membre' }, { key: 'idReunion', label: 'Réunion' }]);
     if (form.typeSanction === 'autre' && !customTypeForm.libelle.trim()) missing.push('Libellé de la sanction');
     if (missing.length) { showToast?.(`Champ(s) requis manquant(s) : ${missing.join(', ')}`, 'error'); return; }
     const m = membres.find(x=>x.id===form.idMembre);
     let typeCode = form.typeSanction;
-    let motif = typeSancLabel[typeCode] || typeCode;
+    let motif = typesDisponibles.find((t) => t.code === typeCode)?.libelle || typeSancLabel[typeCode] || typeCode;
     let montant = Number(form.montant || 0);
 
     if (typeCode === 'autre') {
@@ -119,25 +128,46 @@ export default function Sanctions() {
       typeSanction: typeCode,
       motif,
       montant,
-      numReunion: form.numReunion,
+      numReunion: form.idReunion,
       dateSanction: form.dateSanction,
     });
     setAdd(false);
     resetForm();
   };
+  const [guardedHandleAdd, addingSanction] = useAsyncGuard(handleAdd);
 
-  const handleAddType = () => {
+  const handleAddType = async () => {
     if (!customTypeForm.libelle.trim()) { showToast?.('Libellé requis.', 'error'); return; }
-    addTypeSanction({
-      libelle: customTypeForm.libelle.trim(),
-      code: slugify(customTypeForm.libelle),
-      montantFixe: Number(customTypeForm.montant || 0),
-      delaiReglementJours: 7,
-      estAutomatique: false,
-      modeCalcul: 'fixe',
-    });
+    if (editingTypeId) {
+      await updateTypeSanction(editingTypeId, {
+        libelle: customTypeForm.libelle.trim(),
+        montantFixe: Number(customTypeForm.montant || 0),
+      });
+    } else {
+      await addTypeSanction({
+        libelle: customTypeForm.libelle.trim(),
+        code: slugify(customTypeForm.libelle),
+        montantFixe: Number(customTypeForm.montant || 0),
+        delaiReglementJours: 7,
+        estAutomatique: false,
+        modeCalcul: 'fixe',
+      });
+    }
     setAddType(false);
+    setEditingTypeId(null);
     setCustomTypeForm(emptyCustomType());
+  };
+  const [guardedHandleAddType, savingType] = useAsyncGuard(handleAddType);
+
+  const openEditType = (t) => {
+    setEditingTypeId(t.id);
+    setCustomTypeForm({ libelle: t.libelle || '', montant: t.montantFixe ?? '' });
+    setAddType(true);
+  };
+
+  const handleDeleteType = (t) => {
+    if (!t.id) return; // types PRESET (jamais paramétrés) n'ont pas d'id, rien à supprimer
+    if (window.confirm(`Supprimer le type de sanction « ${t.libelle} » ?`)) deleteTypeSanction(t.id);
   };
 
   return (
@@ -145,7 +175,7 @@ export default function Sanctions() {
       <PageHeader title="Sanctions" subtitle="Types de sanction paramétrables et pénalités des membres"
         action={
           <div className="flex gap-2">
-            <button onClick={()=>setAddType(true)} className="btn-secondary"><Settings2 size={15}/> Paramètres</button>
+            <button onClick={()=>{setEditingTypeId(null); setCustomTypeForm(emptyCustomType()); setAddType(true);}} className="btn-secondary"><Settings2 size={15}/> Paramètres</button>
             <button onClick={()=>setAdd(true)} className="btn-primary"><Plus size={15}/> Nouvelle sanction</button>
           </div>
         }/>
@@ -171,9 +201,19 @@ export default function Sanctions() {
         <h3 className="font-semibold text-gray-800 mb-3">Catalogue des sanctions</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           {(typesSanction.length ? typesSanction : PRESET_TYPES).map((t) => (
-            <div key={t.code || t.libelle} className="p-3 rounded-xl border border-surface-200 bg-surface-50">
-              <p className="text-sm font-semibold text-ink-800">{t.libelle}</p>
+            <div key={t.id || t.code || t.libelle} className="p-3 rounded-xl border border-surface-200 bg-surface-50 group relative">
+              <p className="text-sm font-semibold text-ink-800 pr-10">{t.libelle}</p>
               <p className="text-xs text-ink-600/50 mt-1">{fmt(t.montantFixe || 0)}</p>
+              {t.id && (
+                <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button onClick={() => openEditType(t)} title="Modifier" className="p-1 hover:bg-white rounded-lg text-ink-600/50 hover:text-primary-600">
+                    <Pencil size={12}/>
+                  </button>
+                  <button onClick={() => handleDeleteType(t)} title="Supprimer" className="p-1 hover:bg-white rounded-lg text-ink-600/50 hover:text-red-600">
+                    <Trash2 size={12}/>
+                  </button>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -197,7 +237,7 @@ export default function Sanctions() {
           {sanctions.map(s=>(
             <tr key={s.id} className="hover:bg-gray-50 transition-colors">
               <td className="td font-medium text-gray-800">{s.nomMembre}</td>
-              <td className="td text-gray-500">N°{s.numReunion}</td>
+              <td className="td text-gray-500">{reunions.find(r => r.id === s.numReunion)?.numero ? `N°${reunions.find(r => r.id === s.numReunion).numero}` : '—'}</td>
               <td className="td"><Badge variant={typeV[s.typeSanction]}>{typeSancLabel[s.typeSanction]||s.typeSanction}</Badge></td>
               <td className="td font-bold text-red-600">{fmt(s.montant)}</td>
               <td className="td text-gray-500">{fmtDate(s.dateSanction)}</td>
@@ -220,7 +260,7 @@ export default function Sanctions() {
       </div>
 
       <Modal open={add} onClose={()=>setAdd(false)} title="Nouvelle sanction"
-        footer={<><button onClick={()=>setAdd(false)} className="btn-secondary">Annuler</button><button onClick={handleAdd} className="btn-danger"><ShieldAlert size={14}/>Enregistrer</button></>}>
+        footer={<><button onClick={()=>setAdd(false)} disabled={addingSanction} className="btn-secondary">Annuler</button><button onClick={guardedHandleAdd} disabled={addingSanction} className="btn-danger"><ShieldAlert size={14}/>{addingSanction ? 'Enregistrement…' : 'Enregistrer'}</button></>}>
         <div className="space-y-4">
           <FormField label="Membre" required>
             <select className="select" value={form.idMembre} onChange={e=>setForm(f=>({...f,idMembre:e.target.value}))}>
@@ -230,8 +270,8 @@ export default function Sanctions() {
           </FormField>
           <FormField label="Type de sanction" required>
             <select className="select" value={form.typeSanction} onChange={e=>handleSelectType(e.target.value)}>
-              {PRESET_TYPES.map((type) => <option key={type.code} value={type.code}>{type.libelle}</option>)}
-              <option value="autre">Autre</option>
+              {typesDisponibles.map((type) => <option key={type.code} value={type.code}>{type.libelle} — {fmt(type.montantFixe)}</option>)}
+              <option value="autre">Autre (créer un nouveau type)</option>
             </select>
           </FormField>
           {form.typeSanction === 'autre' && (
@@ -255,15 +295,21 @@ export default function Sanctions() {
               <FormField label="Montant (FCFA)">
                 <input type="number" className="input" value={form.montant} onChange={e=>setForm(f=>({...f,montant:e.target.value}))}/>
               </FormField>
-              <FormField label="N° Réunion concernée">
-                <input type="number" className="input" placeholder="7" value={form.numReunion} onChange={e=>setForm(f=>({...f,numReunion:e.target.value}))}/>
+              <FormField label="Réunion concernée" required hint={reunionsOuvertes.length === 0 ? 'Aucune séance ouverte actuellement.' : undefined}>
+                <select className="select" value={form.idReunion} onChange={e=>setForm(f=>({...f,idReunion:e.target.value}))}>
+                  <option value="">— Sélectionner —</option>
+                  {reunionsOuvertes.map(r => <option key={r.id} value={r.id}>N°{r.numero} — {fmtDate(r.date)}</option>)}
+                </select>
               </FormField>
             </div>
           )}
           {form.typeSanction === 'autre' && (
             <div className="grid grid-cols-2 gap-3">
-              <FormField label="N° Réunion concernée">
-                <input type="number" className="input" placeholder="7" value={form.numReunion} onChange={e=>setForm(f=>({...f,numReunion:e.target.value}))}/>
+              <FormField label="Réunion concernée" required hint={reunionsOuvertes.length === 0 ? 'Aucune séance ouverte actuellement.' : undefined}>
+                <select className="select" value={form.idReunion} onChange={e=>setForm(f=>({...f,idReunion:e.target.value}))}>
+                  <option value="">— Sélectionner —</option>
+                  {reunionsOuvertes.map(r => <option key={r.id} value={r.id}>N°{r.numero} — {fmtDate(r.date)}</option>)}
+                </select>
               </FormField>
               <div className="hidden md:block" />
             </div>
@@ -274,8 +320,8 @@ export default function Sanctions() {
         </div>
       </Modal>
 
-      <Modal open={addType} onClose={()=>setAddType(false)} title="Paramétrer un type de sanction"
-        footer={<><button onClick={()=>setAddType(false)} className="btn-secondary">Annuler</button><button onClick={handleAddType} className="btn-primary"><Settings2 size={14}/>Enregistrer</button></>}>
+      <Modal open={addType} onClose={()=>{setAddType(false); setEditingTypeId(null); setCustomTypeForm(emptyCustomType());}} title={editingTypeId ? 'Modifier le type de sanction' : 'Paramétrer un type de sanction'}
+        footer={<><button onClick={()=>{setAddType(false); setEditingTypeId(null); setCustomTypeForm(emptyCustomType());}} disabled={savingType} className="btn-secondary">Annuler</button><button onClick={guardedHandleAddType} disabled={savingType} className="btn-primary"><Settings2 size={14}/>{savingType ? 'Enregistrement…' : 'Enregistrer'}</button></>}>
         <div className="space-y-4">
           <FormField label="Libellé" required>
             <input className="input" value={customTypeForm.libelle} onChange={e=>setCustomTypeForm(f=>({...f,libelle:e.target.value}))} placeholder="Ex : Retard de cotisation" />
@@ -288,10 +334,10 @@ export default function Sanctions() {
 
       <Modal open={!!payModal} onClose={()=>setPayModal(null)} title="Régler la sanction"
         footer={<>
-          <button onClick={()=>setPayModal(null)} className="btn-secondary">Annuler</button>
-          <button onClick={handlePayer} disabled={!isModePaiementValid(payModePaiement, payDetailsPaiement)}
-            className={`btn-primary ${!isModePaiementValid(payModePaiement, payDetailsPaiement) ? 'opacity-40 cursor-not-allowed' : ''}`}>
-            <CreditCard size={14}/>Confirmer le paiement
+          <button onClick={()=>setPayModal(null)} disabled={payingAmende} className="btn-secondary">Annuler</button>
+          <button onClick={guardedHandlePayer} disabled={payingAmende || !isModePaiementValid(payModePaiement, payDetailsPaiement)}
+            className={`btn-primary ${(payingAmende || !isModePaiementValid(payModePaiement, payDetailsPaiement)) ? 'opacity-40 cursor-not-allowed' : ''}`}>
+            <CreditCard size={14}/>{payingAmende ? 'Paiement…' : 'Confirmer le paiement'}
           </button>
         </>}>
         {payModal && (

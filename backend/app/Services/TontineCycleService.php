@@ -2,13 +2,16 @@
 
 namespace App\Services;
 
+use App\Models\BulletinGain;
 use App\Models\CotisationTontine;
 use App\Models\CycleTontine;
 use App\Models\Encherite;
 use App\Models\PlanningTour;
 use App\Models\Reunion;
+use App\Models\SeanceTransaction;
 use App\Models\Tontine;
 use App\Models\TontinePart;
+use App\Models\Transaction;
 use App\Models\Utilisateur;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
@@ -377,19 +380,17 @@ class TontineCycleService
     private function designerParRotation(CycleTontine $cycle, Tontine $tontine, ?string $partIdForcee = null): TontinePart
     {
         // Lorsqu'un ordre est planifié, la réunion applique strictement le tour
-        // correspondant au numéro du cycle. Une part réservée reste donc éligible
-        // uniquement pour son propre tour, jamais pour un autre.
+        // correspondant au numéro du cycle par défaut. Une dérogation manuelle reste
+        // possible (comme pour l'enchère) : le président peut désigner explicitement
+        // un autre membre, tant que sa part est réellement disponible/réservée.
         $tour = PlanningTour::where('tontine_id', $tontine->id)
             ->where('numero_tour', $cycle->numero_cycle)
             ->where('statut', 'planifie')
             ->first();
-        if ($tour) {
-            if ($partIdForcee && $partIdForcee !== $tour->tontine_part_id) {
-                throw new RuntimeException('Le bénéficiaire sélectionné ne correspond pas à l’ordre de rotation planifié.');
-            }
+        if ($partIdForcee) {
+            $part = $tontine->parts()->whereKey($partIdForcee)->whereIn('statut', ['disponible', 'reservee'])->first();
+        } elseif ($tour) {
             $part = $tontine->parts()->whereKey($tour->tontine_part_id)->where('statut', 'reservee')->first();
-        } elseif ($partIdForcee) {
-            $part = $tontine->parts()->whereKey($partIdForcee)->where('statut', 'disponible')->first();
         } else {
             $part = $tontine->parts()->where('statut', 'disponible')->orderBy('ordre_rotation')->first();
         }
@@ -459,7 +460,14 @@ class TontineCycleService
                 $surplusRedistribue = $surplus;
             } else {
                 $surplusCaisse = $surplus;
-                app(CaisseService::class)->entree($tontine->caisse, $surplus, "Surplus enchère cycle n°{$cycle->numero_cycle}");
+                // BUGFIX : sans reference_type/reference_id, cette transaction est
+                // orpheline — annulerCycleAvantVersement() ne peut alors ni la
+                // retrouver ni la contre-passer, et l'argent reste visible en
+                // caisse/rapport PV même après annulation du cycle.
+                app(CaisseService::class)->entree($tontine->caisse, $surplus, "Surplus enchère cycle n°{$cycle->numero_cycle}", [
+                    'reference_type' => 'cycle_tontine_surplus',
+                    'reference_id' => $cycle->id,
+                ]);
             }
         }
 
@@ -522,20 +530,77 @@ class TontineCycleService
 
     /**
      * Retour contrôlé avant la clôture de séance. Un bulletin non payé ne porte
-     * encore aucun décaissement : on peut donc défaire le bénéficiaire et les
-     * cotisations du cycle sans altérer le livre de caisse.
+     * encore aucun décaissement propre au bulletin : on peut donc défaire le
+     * bénéficiaire et les cotisations du cycle sans laisser d'écriture de
+     * caisse orpheline, à condition de contre-passer les deux mouvements qui,
+     * eux, sont déjà effectifs en caisse dès avant le versement du bulletin :
+     *
+     * 1. Le surplus d'enchère mis en caisse (designerParEnchere), tracé via
+     *    reference_type='cycle_tontine_surplus'.
+     * 2. Les cotisations saisies en séance (Feuille de cotisation), qui créent
+     *    une vraie Transaction de caisse via SeanceTransactionController::store
+     *    — indépendamment des lignes CotisationTontine du cycle, et tracées
+     *    ici via seance_transactions.cycle_tontine_id.
+     *
+     * Sans cette contre-passation, l'argent et les transactions restaient
+     * visibles en caisse, dans l'historique et dans le rapport PV malgré
+     * l'annulation du cycle.
      */
-    public function annulerCycleAvantVersement(CycleTontine $cycle): void
+    public function annulerCycleAvantVersement(CycleTontine $cycle, ?Utilisateur $auteur = null): void
     {
         $cycle->loadMissing('reunion', 'bulletin.retenues', 'gagnant');
         if (in_array($cycle->reunion->statut, ['cloturee', 'annulee'], true)) {
             throw new RuntimeException('Une réunion clôturée ou annulée ne peut plus être modifiée.');
         }
-        if ($cycle->bulletin?->statut === 'paye') {
+        // Interroger directement la table plutôt que la relation hasOne
+        // ($cycle->bulletin) : en l'absence de contrainte UNIQUE sur
+        // bulletins_gain.cycle_id, un bulletin dupliqué (double-clic avant la
+        // protection anti-double-clic, retry réseau, etc.) est invisible via
+        // hasOne mais bloquerait quand même la suppression du cycle plus bas.
+        $bulletins = BulletinGain::where('cycle_id', $cycle->id)->get();
+        if ($bulletins->contains(fn (BulletinGain $b) => $b->statut === 'paye')) {
             throw new RuntimeException('Le gain a déjà été versé : enregistrez d’abord le retour des fonds avant d’annuler le cycle.');
         }
 
-        DB::transaction(function () use ($cycle) {
+        $seancesCotisation = SeanceTransaction::where('cycle_tontine_id', $cycle->id)
+            ->where('annulee', false)->get();
+
+        DB::transaction(function () use ($cycle, $auteur, $seancesCotisation, $bulletins) {
+            $besoinContrePassation = (float) $cycle->surplus_mis_en_caisse > 0 || $seancesCotisation->isNotEmpty();
+            if ($besoinContrePassation && ! $auteur) {
+                throw new RuntimeException('De l’argent a déjà été mouvementé en caisse pour ce cycle (cotisations et/ou surplus) : l’annulation doit être effectuée par un utilisateur authentifié pour être contre-passée.');
+            }
+
+            $caisseService = app(CaisseService::class);
+
+            if ((float) $cycle->surplus_mis_en_caisse > 0) {
+                $transactionSurplus = Transaction::where('reference_type', 'cycle_tontine_surplus')
+                    ->where('reference_id', $cycle->id)
+                    ->where('annulee', false)
+                    ->latest('created_at')
+                    ->first();
+                if ($transactionSurplus) {
+                    $caisseService->annuler($transactionSurplus, $auteur, "Annulation cycle n°{$cycle->numero_cycle}");
+                }
+            }
+
+            foreach ($seancesCotisation as $seance) {
+                $transactionCotisation = Transaction::where('reference_type', 'seance_transaction')
+                    ->where('reference_id', $seance->id)
+                    ->where('annulee', false)
+                    ->latest('created_at')
+                    ->first();
+                if ($transactionCotisation) {
+                    $caisseService->annuler($transactionCotisation, $auteur, "Annulation cycle n°{$cycle->numero_cycle}");
+                }
+                $seance->update([
+                    'annulee' => true,
+                    'annulee_at' => now(),
+                    'annulee_par' => $auteur?->id,
+                    'motif_annulation' => "Annulation cycle n°{$cycle->numero_cycle}",
+                ]);
+            }
+
             if ($cycle->gagnant) {
                 $cycle->gagnant->update(['statut' => 'disponible', 'date_attribution' => null]);
             }
@@ -544,8 +609,13 @@ class TontineCycleService
                     ->where('tontine_part_id', $cycle->gagnant_part_id)
                     ->where('statut', 'encaisse')->update(['statut' => 'planifie']);
             }
-            $cycle->bulletin?->retenues()->delete();
-            $cycle->bulletin?->delete();
+            // retenues_bulletin.bulletin_id est en ON DELETE CASCADE côté base : pas
+            // besoin de les supprimer explicitement, la suppression des bulletins
+            // (potentiellement plusieurs, cf. commentaire plus haut) suffit et évite
+            // le même problème d'orphelins que pour les cycles.
+            foreach ($bulletins as $bulletin) {
+                $bulletin->delete();
+            }
             $cycle->encherites()->delete();
             $cycle->cotisations()->delete();
             $cycle->delete();

@@ -216,6 +216,12 @@ export const reunionFromApi = (r) => !r ? null : ({
   heureDebut: r.heure_debut,
   lieu: r.lieu,
   statutReunion: { ouverte: 'en_cours', cloturee: 'cloturee', tenue: 'tenue', annulee: 'annulee' }[r.statut] || 'planifiee',
+  ouverture: r.heure_ouverture_reelle ? {
+    heureOuverture: r.heure_ouverture_reelle,
+    presidentSeance: r.president_seance,
+    secretaireSeance: r.secretaire_seance,
+    motOuverture: r.mot_ouverture,
+  } : null,
   verrouillee: r.statut === 'cloturee',
   quorumRequis: r.quorum_requis,
   quorumAtteint: r.quorum_atteint,
@@ -405,6 +411,13 @@ export const transactionFromApi = (t) => !t ? null : ({
   soldeApres: Number(t.solde_apres),
   modePaiement: t.mode_paiement,
   categorie: t.type === 'transfert_entrant' || t.type === 'transfert_sortant' ? 'transfert' : deriveCategorie(t),
+  // Une transaction annulée (annulee=true) et sa contre-passation
+  // (referenceType='annulation_transaction') ne représentent aucun argent
+  // réel — juste une correction comptable qui, ensemble, s'annule à zéro.
+  // Sans ce marquage, les KPI Entrées/Sorties comptaient les deux comme de
+  // l'argent réel, doublant artificiellement le total affiché.
+  annulee: !!t.annulee,
+  referenceType: t.reference_type,
 });
 
 // ── Utilisateurs ────────────────────────────────────────────────
