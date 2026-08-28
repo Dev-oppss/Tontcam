@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import clsx from 'clsx';
 import { ShieldAlert, Plus, Settings2, CreditCard, Pencil, Trash2 } from 'lucide-react';
 import { fmt, fmtDate, typeSancLabel } from '../data/mockData';
 import { useApp } from '../context/AppContext';
@@ -44,6 +45,40 @@ export default function Sanctions() {
   const [payModal, setPayModal] = useState(null);
   const [payModePaiement, setPayModePaiement] = useState('especes');
   const [payDetailsPaiement, setPayDetailsPaiement] = useState('');
+
+  // ── Sanction automatique de retard à l'arrivée (declencheur 'retard_presence') ──
+  // Un seul type par association pour ce déclencheur (voir SanctionService::retardPresence,
+  // qui prend le premier trouvé) : on l'édite s'il existe déjà, sinon on en crée un.
+  const typeRetard = typesSanction.find((t) => t.declencheur === 'retard_presence');
+  const [retardModalOpen, setRetardModalOpen] = useState(false);
+  const [retardForm, setRetardForm] = useState({ actif: false, libelle: 'Retard à l\'arrivée', paliers: [{ minutes: '15', montant: '' }] });
+
+  const openRetardModal = () => {
+    setRetardForm(typeRetard
+      ? { actif: !!typeRetard.estAutomatique, libelle: typeRetard.libelle, paliers: (typeRetard.paliersRetard?.length ? typeRetard.paliersRetard : [{ minutes: '15', montant: '' }]).map(p => ({ minutes: String(p.minutes), montant: String(p.montant) })) }
+      : { actif: true, libelle: 'Retard à l\'arrivée', paliers: [{ minutes: '15', montant: '' }] });
+    setRetardModalOpen(true);
+  };
+  const setPalier = (i, patch) => setRetardForm(f => ({ ...f, paliers: f.paliers.map((p, idx) => idx === i ? { ...p, ...patch } : p) }));
+  const addPalier = () => setRetardForm(f => ({ ...f, paliers: [...f.paliers, { minutes: '', montant: '' }] }));
+  const removePalier = (i) => setRetardForm(f => ({ ...f, paliers: f.paliers.filter((_, idx) => idx !== i) }));
+
+  const handleSaveRetard = async () => {
+    const paliersValides = retardForm.paliers.filter(p => p.minutes && p.montant);
+    if (retardForm.actif && paliersValides.length === 0) {
+      showToast?.('Ajoutez au moins un palier (ex. « à partir de 15 min → 100 FCFA »).', 'error');
+      return;
+    }
+    const payload = {
+      libelle: retardForm.libelle.trim() || 'Retard à l\'arrivée',
+      montantFixe: 0, modeCalcul: 'fixe', declencheur: 'retard_presence',
+      estAutomatique: retardForm.actif, paliersRetard: paliersValides,
+    };
+    if (typeRetard) await updateTypeSanction(typeRetard.id, payload);
+    else await addTypeSanction({ ...payload, code: 'retard_presence' });
+    setRetardModalOpen(false);
+  };
+  const [guardedSaveRetard, savingRetard] = useAsyncGuard(handleSaveRetard);
 
   const handlePayer = async () => {
     if (!isModePaiementValid(payModePaiement, payDetailsPaiement)) { showToast?.('Référence de paiement requise pour ce mode de versement.', 'error'); return; }
@@ -175,10 +210,32 @@ export default function Sanctions() {
       <PageHeader title="Sanctions" subtitle="Types de sanction paramétrables et pénalités des membres"
         action={
           <div className="flex gap-2">
+            <button onClick={openRetardModal} className="btn-secondary"><ShieldAlert size={15}/> Retards automatiques</button>
             <button onClick={()=>{setEditingTypeId(null); setCustomTypeForm(emptyCustomType()); setAddType(true);}} className="btn-secondary"><Settings2 size={15}/> Paramètres</button>
             <button onClick={()=>setAdd(true)} className="btn-primary"><Plus size={15}/> Nouvelle sanction</button>
           </div>
         }/>
+
+      <div className={clsx('card border-l-4', typeRetard?.estAutomatique ? 'border-l-green-400' : 'border-l-gray-300')}>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-gray-800 flex items-center gap-2">
+              Sanction automatique de retard
+              <Badge variant={typeRetard?.estAutomatique ? 'green' : 'gray'}>{typeRetard?.estAutomatique ? 'Activée' : 'Désactivée'}</Badge>
+            </p>
+            {typeRetard?.estAutomatique && typeRetard.paliersRetard?.length > 0 ? (
+              <p className="text-xs text-gray-400 mt-1">
+                {typeRetard.paliersRetard.map((p, i) => (
+                  <span key={i}>{i > 0 && ' · '}À partir de {p.minutes} min → {fmt(p.montant)}</span>
+                ))}
+              </p>
+            ) : (
+              <p className="text-xs text-gray-400 mt-1">Un membre marqué « En retard » lors du pointage des présences peut être sanctionné automatiquement selon la durée de son retard.</p>
+            )}
+          </div>
+          <button onClick={openRetardModal} className="btn-secondary text-xs py-1.5 shrink-0"><Pencil size={12}/> Configurer</button>
+        </div>
+      </div>
 
       <div className="grid grid-cols-3 gap-4">
         <div className="card text-center border-t-4 border-t-red-400">
@@ -258,6 +315,40 @@ export default function Sanctions() {
           ))}
         </Table>
       </div>
+
+      <Modal open={retardModalOpen} onClose={() => setRetardModalOpen(false)} title="Sanction automatique de retard"
+        footer={<><button onClick={() => setRetardModalOpen(false)} disabled={savingRetard} className="btn-secondary">Annuler</button><button onClick={guardedSaveRetard} disabled={savingRetard} className="btn-primary"><ShieldAlert size={14}/>{savingRetard ? 'Enregistrement…' : 'Enregistrer'}</button></>}>
+        <div className="space-y-4">
+          <label className="flex items-center gap-2 p-3 bg-gray-50 rounded-xl cursor-pointer">
+            <input type="checkbox" checked={retardForm.actif} onChange={e => setRetardForm(f => ({ ...f, actif: e.target.checked }))} className="w-4 h-4"/>
+            <span className="text-sm font-medium text-gray-700">Appliquer automatiquement une sanction aux membres marqués « En retard »</span>
+          </label>
+          <FormField label="Libellé" required>
+            <input className="input" value={retardForm.libelle} onChange={e => setRetardForm(f => ({ ...f, libelle: e.target.value }))} />
+          </FormField>
+          <div>
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Paliers de retard</p>
+            <p className="text-xs text-gray-400 mb-3">
+              Le montant appliqué est celui du plus grand palier atteint — ce ne sont pas des tranches
+              cumulées. Ex : « à partir de 15 min → 100 FCFA » et « à partir de 3h → 250 FCFA » veut dire
+              qu'un retard de 3h ou plus coûte 250 FCFA (pas 100 + 250).
+            </p>
+            <div className="space-y-2">
+              {retardForm.paliers.map((p, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <span className="text-xs text-gray-400 shrink-0">À partir de</span>
+                  <input type="number" min="1" className="input" placeholder="15" value={p.minutes} onChange={e => setPalier(i, { minutes: e.target.value })}/>
+                  <span className="text-xs text-gray-400 shrink-0">min →</span>
+                  <input type="number" min="0" className="input" placeholder="100" value={p.montant} onChange={e => setPalier(i, { montant: e.target.value })}/>
+                  <span className="text-xs text-gray-400 shrink-0">FCFA</span>
+                  <button type="button" onClick={() => removePalier(i)} className="p-1.5 text-gray-400 hover:text-red-600 shrink-0"><Trash2 size={14}/></button>
+                </div>
+              ))}
+            </div>
+            <button type="button" onClick={addPalier} className="btn-secondary text-xs py-1.5 mt-2"><Plus size={12}/> Ajouter un palier</button>
+          </div>
+        </div>
+      </Modal>
 
       <Modal open={add} onClose={()=>setAdd(false)} title="Nouvelle sanction"
         footer={<><button onClick={()=>setAdd(false)} disabled={addingSanction} className="btn-secondary">Annuler</button><button onClick={guardedHandleAdd} disabled={addingSanction} className="btn-danger"><ShieldAlert size={14}/>{addingSanction ? 'Enregistrement…' : 'Enregistrer'}</button></>}>

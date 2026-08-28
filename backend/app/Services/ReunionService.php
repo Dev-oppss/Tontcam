@@ -68,6 +68,7 @@ class ReunionService
         // séance (+ 15 minutes), pas l'heure planifiée. Un président peut ouvrir bien après
         // l'heure prévue (quorum, retard du président…) ; comparer à l'heure planifiée
         // marquerait à tort "en retard" des membres arrivés avant même que la séance ouvre.
+        $minutesRetard = null;
         if ($statut === 'present' || $statut === 'en_retard') {
             if ($heureArrivee) {
                 // Import historique : jamais passé par ouvrir(), pas de vraie heure
@@ -76,9 +77,17 @@ class ReunionService
                 $date = $reunion->date_reunion->format('Y-m-d');
                 $refCourte = substr((string) $reference, 0, 5);
                 $arriveeSaisie = substr($heureArrivee, 0, 5);
-                $limite = \Carbon\Carbon::createFromFormat('Y-m-d H:i', "{$date} {$refCourte}")->addMinutes(15);
+                $referenceCarbon = \Carbon\Carbon::createFromFormat('Y-m-d H:i', "{$date} {$refCourte}");
+                $limite = $referenceCarbon->copy()->addMinutes(15);
                 $arrivee = \Carbon\Carbon::createFromFormat('Y-m-d H:i', "{$date} {$arriveeSaisie}");
                 $statut = $arrivee->gt($limite) ? 'en_retard' : 'present';
+                // Retard affiché côté UI ("Retard : Xh34") = écart à l'heure d'ouverture réelle,
+                // PAS à la limite de grâce +15min (qui ne sert qu'à décider present/en_retard) —
+                // c'est cette même durée qui doit être comparée aux paliers de sanction pour rester
+                // cohérente avec ce que voit l'utilisateur.
+                if ($statut === 'en_retard') {
+                    $minutesRetard = max(0, $arrivee->diffInMinutes($referenceCarbon));
+                }
             } else {
                 $statut = 'present';
             }
@@ -94,9 +103,12 @@ class ReunionService
             ]
         );
 
-        // Sanction automatique pour absence non excusée (RG-SAN déclencheur)
+        // Sanctions automatiques (RG-SAN déclencheurs)
         if ($statut === 'absent') {
             app(SanctionService::class)->absenceNonExcusee($membre, $reunion);
+        }
+        if ($statut === 'en_retard' && $minutesRetard !== null) {
+            app(SanctionService::class)->retardPresence($membre, $reunion, $minutesRetard);
         }
 
         $this->recalculerQuorum($reunion);

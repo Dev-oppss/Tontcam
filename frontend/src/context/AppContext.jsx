@@ -1053,6 +1053,7 @@ export const AppProvider = ({ children }) => {
       const t = await request('/types-sanction', { method: 'POST', body: {
         libelle: data.libelle, mode_calcul: data.modeCalcul || 'fixe', montant_fixe: data.montantFixe,
         declencheur: data.declencheur || undefined, est_automatique: !!data.estAutomatique, description: data.description,
+        paliers_retard: data.paliersRetard?.length ? data.paliersRetard.map(p => ({ minutes: Number(p.minutes), montant: Number(p.montant) })) : undefined,
       } });
       const type = adapt.typeSanctionFromApi(t);
       setTypesSanction((prev) => [...prev, type]);
@@ -1064,6 +1065,11 @@ export const AppProvider = ({ children }) => {
     try {
       const t = await request(`/types-sanction/${id}`, { method: 'PUT', body: {
         libelle: data.libelle, montant_fixe: data.montantFixe, actif: data.actif,
+        declencheur: data.declencheur !== undefined ? (data.declencheur || null) : undefined,
+        est_automatique: data.estAutomatique !== undefined ? !!data.estAutomatique : undefined,
+        paliers_retard: data.paliersRetard !== undefined
+          ? (data.paliersRetard?.length ? data.paliersRetard.map(p => ({ minutes: Number(p.minutes), montant: Number(p.montant) })) : null)
+          : undefined,
       } });
       setTypesSanction((prev) => prev.map((x) => (x.id === id ? adapt.typeSanctionFromApi(t) : x)));
       showToast('Type de sanction modifié');
