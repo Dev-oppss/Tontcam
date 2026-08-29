@@ -22,7 +22,7 @@ class PretController extends Controller
     public function index(Request $request): JsonResponse
     {
         $this->authorize('viewAny', Pret::class);
-        $query = Pret::whereHas('caisse', fn ($q) => $this->scope->scopeAssociation($q))->with('emprunteur', 'caisse');
+        $query = Pret::whereHas('caisse', fn ($q) => $this->scope->scopeAssociation($q))->with('emprunteur', 'caisse', 'avaliste');
         if ($request->filled('statut')) {
             $query->where('statut', $request->statut);
         }
@@ -178,6 +178,7 @@ class PretController extends Controller
             'montant_principal' => ['required', 'numeric', 'min:1'],
             'nb_echeances' => ['required', 'integer', 'min:1'],
             'avaliste_id' => ['nullable', 'uuid', 'different:emprunteur_id'],
+            'garantie_type' => ['nullable', 'in:caution_membre,blocage_epargne,retenue_tontine,aucune'],
             'notes' => ['nullable', 'string'],
         ]);
 

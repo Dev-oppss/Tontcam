@@ -253,6 +253,13 @@ export const reunionToApi = (r) => ({
 });
 
 // ── Prêt ────────────────────────────────────────────────────────
+export const GARANTIE_LABELS = {
+  caution_membre: "Caution d'un membre",
+  blocage_epargne: 'Blocage épargne',
+  retenue_tontine: 'Retenue sur tontine',
+  aucune: 'Aucune',
+};
+
 export const pretFromApi = (p) => !p ? null : ({
   id: p.id,
   idMembre: p.emprunteur_id,
@@ -267,6 +274,10 @@ export const pretFromApi = (p) => !p ? null : ({
   resteAPayer: Number(p.capital_restant),
   datePret: p.date_debut || p.date_demande,
   statut: mapStatutPret(p.statut),
+  idAvaliste: p.avaliste_id,
+  nomAvaliste: p.avaliste ? `${p.avaliste.nom} ${p.avaliste.prenom}` : undefined,
+  garantie: p.garantie_type || 'aucune',
+  garantieLabel: GARANTIE_LABELS[p.garantie_type] || GARANTIE_LABELS.aucune,
   echeances: (p.echeances || []).map((e) => ({
     id: e.id,
     numero: e.numero_echeance,
@@ -294,6 +305,11 @@ export const pretToApi = (p) => ({
   montant_principal: Number(p.montantPret),
   nb_echeances: Number(p.nbEcheances || p.dureeMois || 12),
   avaliste_id: p.idAvaliste || undefined,
+  // "Garantie" avait longtemps été un simple texte décoratif jamais transmis
+  // à l'API (le champ n'existait même pas dans ce payload). Le formulaire
+  // envoie désormais un vrai code (caution_membre/blocage_epargne/
+  // retenue_tontine/aucune), vérifié et appliqué côté serveur.
+  garantie_type: p.garantie || undefined,
   notes: p.notes || undefined,
 });
 

@@ -326,7 +326,7 @@ function FicheMembre({ membre, onClose, onEdit }) {
                       </div>
                       <span className="text-xs text-gray-500 font-medium">{pct}%</span>
                     </div>
-                    <p className="text-xs text-gray-400 mt-1.5">Échéance : {fmtDate(p.dateEcheance)} · Garantie : {p.garantie}</p>
+                    <p className="text-xs text-gray-400 mt-1.5">Échéance : {fmtDate(p.dateEcheance)} · Garantie : {p.garantieLabel || p.garantie}</p>
                   </div>
                 );
               })}

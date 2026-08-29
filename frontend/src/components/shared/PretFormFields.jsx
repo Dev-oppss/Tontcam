@@ -10,6 +10,7 @@ import { calcEcheance } from '../../lib/amortissement';
 export function PretFormFields({ form, setForm, membres, caissesPret, pretSimule, montantInteret, repartitionSimulee, caisseSelectionnee }) {
   const onDureeChange = (val) => setForm((f) => ({ ...f, dureeMois: val, dateEcheance: calcEcheance(f.datePret, val) }));
   const onDateChange = (val) => setForm((f) => ({ ...f, datePret: val, dateEcheance: calcEcheance(val, f.dureeMois) }));
+  const avalistesPossibles = membres.filter((m) => m.statut === 'actif' && m.id !== form.idMembre);
 
   return (
     <div className="space-y-4">
@@ -157,12 +158,26 @@ export function PretFormFields({ form, setForm, membres, caissesPret, pretSimule
       )}
       <FormField label="Garantie">
         <select className="select" value={form.garantie} onChange={(e) => setForm((f) => ({ ...f, garantie: e.target.value }))}>
-          <option>Caution d'un membre</option>
-          <option>Blocage épargne</option>
-          <option>Retenue sur tontine</option>
-          <option>Aucune</option>
+          <option value="caution_membre">Caution d'un membre</option>
+          <option value="blocage_epargne">Blocage épargne</option>
+          <option value="retenue_tontine">Retenue sur tontine</option>
+          <option value="aucune">Aucune</option>
         </select>
       </FormField>
+      {form.garantie === 'caution_membre' && (
+        <FormField label="Avaliste (caution)" required hint="Membre qui se porte garant — requis pour cette garantie, vérifié par le serveur.">
+          <select className="select" value={form.idAvaliste || ''} onChange={(e) => setForm((f) => ({ ...f, idAvaliste: e.target.value }))}>
+            <option value="">Sélectionner un avaliste…</option>
+            {avalistesPossibles.map((m) => <option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
+          </select>
+        </FormField>
+      )}
+      {form.garantie === 'retenue_tontine' && (
+        <p className="text-xs text-amber-600 -mt-2">Le membre doit détenir au moins une part de tontine active — vérifié à la validation.</p>
+      )}
+      {form.garantie === 'blocage_epargne' && (
+        <p className="text-xs text-amber-600 -mt-2">Module épargne pas encore disponible — cette garantie est acceptée mais non encore appliquée automatiquement.</p>
+      )}
       <FormField label="Observation">
         <textarea className="input h-14 resize-none" value={form.observation}
           onChange={(e) => setForm((f) => ({ ...f, observation: e.target.value }))} />

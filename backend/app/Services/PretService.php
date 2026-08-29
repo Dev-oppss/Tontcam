@@ -38,6 +38,33 @@ class PretService
             throw new RuntimeException("Durée maximale autorisée : {$dureeMax} mois.");
         }
 
+        // Garantie réellement vérifiée (RG-PRET-GARANTIE) — jusqu'ici ce champ
+        // n'était qu'un texte décoratif jamais transmis à l'API. Chaque type
+        // choisi a désormais une vraie conséquence :
+        $garantieType = $options['garantie_type'] ?? 'aucune';
+        if ($garantieType === 'caution_membre') {
+            if (empty($options['avaliste_id'])) {
+                throw new RuntimeException("Garantie « Caution d'un membre » : un avaliste doit être sélectionné.");
+            }
+            $avaliste = Membre::where('association_id', $emprunteur->association_id)
+                ->where('id', $options['avaliste_id'])->where('statut', 'actif')->first();
+            if (! $avaliste) {
+                throw new RuntimeException("L'avaliste sélectionné doit être un membre actif de l'association.");
+            }
+        } elseif ($garantieType === 'retenue_tontine') {
+            // Une retenue sur gain de tontine (déjà appliquée automatiquement à
+            // tout prêt en cours, voir BulletinGainService::calculerRetenues)
+            // n'a de sens comme garantie que si le membre a effectivement une
+            // part de tontine sur laquelle un gain futur pourra être retenu.
+            $aUnePart = \App\Models\TontinePart::whereHas('tontine', fn ($q) => $q->where('association_id', $emprunteur->association_id))
+                ->where('membre_id', $emprunteur->id)
+                ->whereIn('statut', ['disponible', 'reservee'])
+                ->exists();
+            if (! $aUnePart) {
+                throw new RuntimeException("Garantie « Retenue sur tontine » impossible : le membre ne détient aucune part de tontine active.");
+            }
+        }
+
         $tauxInteret = $options['taux_interet_mensuel'] ?? $caisse->taux_interet_mensuel;
         $methode = $options['methode_amortissement'] ?? $caisse->methode_amortissement ?? 'lineaire';
 
@@ -59,6 +86,7 @@ class PretService
                 'capital_restant' => $montant,
                 'statut' => 'demande',
                 'avaliste_id' => $options['avaliste_id'] ?? null,
+                'garantie_type' => $garantieType,
                 'notes' => $options['notes'] ?? null,
                 'created_by' => $options['created_by'] ?? null,
             ]);

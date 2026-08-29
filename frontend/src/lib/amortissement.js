@@ -71,5 +71,5 @@ export const simulerRepartitionInterets = (comptesBanque, montantInteret) => {
 export const FORM_PRET_VIDE = {
   idMembre: '', caisseId: '', montantPret: '', tauxInteret: 10, dureeMois: 3,
   datePret: new Date().toISOString().split('T')[0],
-  dateEcheance: '', garantie: "Caution d'un membre", observation: '',
+  dateEcheance: '', garantie: 'caution_membre', idAvaliste: '', observation: '',
 };

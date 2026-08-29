@@ -18,6 +18,7 @@ class Pret extends Model
         'montant_principal',
         'taux_interet_mensuel',
         'taux_penalite_mensuel',
+        'garantie_type',
         'methode_amortissement',
         'nb_echeances',
         'montant_echeance',

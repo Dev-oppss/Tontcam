@@ -2585,6 +2585,9 @@ function OctroiPretReunion({ reunion, membres, caisses, comptesBanque, onDone, o
       { key: 'montantPret', label: 'Montant' },
     ]);
     if (missing.length) { showToast?.(`Champ(s) requis manquant(s) : ${missing.join(', ')}`, 'error'); return; }
+    if (form.garantie === 'caution_membre' && !form.idAvaliste) {
+      showToast?.("Garantie « Caution d'un membre » : sélectionnez un avaliste.", 'error'); return;
+    }
     if (!pretSimule) { showToast?.('Simulation du prêt indisponible — vérifiez les paramètres saisis.', 'error'); return; }
     const m = membres.find((x) => x.id === form.idMembre);
     setBusy(true);
