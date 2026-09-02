@@ -16,6 +16,7 @@ use App\Http\Controllers\Api\Concerns\AssertSeanceOuverte;
 class PretController extends Controller
 {
     use AssertSeanceOuverte;
+    use \App\Http\Controllers\Api\Concerns\FormateErreurImport;
 
     public function __construct(private AccessScopeService $scope, private PretService $service) {}
 
@@ -87,7 +88,7 @@ class PretController extends Controller
      * montant_interet, statut_echeance, montant_verse (optionnel),
      * date_versement_reel (optionnel).
      */
-    public function importHistoriqueFichier(Request $request, \App\Services\Import\TabularFileReader $reader): JsonResponse
+    public function importHistoriqueFichier(Request $request, \App\Services\Import\TabularFileReader $reader, \App\Services\Import\ImportResolver $resolveur): JsonResponse
     {
         if ($request->user()->role !== 'super_admin') {
             return response()->json(['message' => "Réservé au super_admin."], 403);
@@ -116,6 +117,17 @@ class PretController extends Controller
         foreach ($groupes as $ref => $groupe) {
             try {
                 $pretLigne = $groupe['pret'];
+                // Noms/dates lisibles acceptés en plus des UUID/ISO stricts.
+                foreach (['caisse_id', 'emprunteur_id', 'avaliste_id'] as $champ) {
+                    if (! empty($pretLigne[$champ])) {
+                        $pretLigne[$champ] = $champ === 'caisse_id' ? $resolveur->caisse($pretLigne[$champ]) : $resolveur->membre($pretLigne[$champ]);
+                    }
+                }
+                foreach (['date_demande', 'date_debut'] as $champ) {
+                    if (! empty($pretLigne[$champ])) {
+                        $pretLigne[$champ] = $resolveur->date($pretLigne[$champ]);
+                    }
+                }
                 $data = \Illuminate\Support\Facades\Validator::make($pretLigne, [
                     'caisse_id' => ['required', 'uuid'],
                     'emprunteur_id' => ['required', 'uuid'],
@@ -129,7 +141,12 @@ class PretController extends Controller
                     'notes' => ['nullable', 'string'],
                 ])->validate();
 
-                $echeances = collect($groupe['echeances'])->map(function ($e) {
+                $echeances = collect($groupe['echeances'])->map(function ($e) use ($resolveur) {
+                    foreach (['date_echeance', 'date_versement_reel'] as $champ) {
+                        if (! empty($e[$champ])) {
+                            $e[$champ] = $resolveur->date($e[$champ]);
+                        }
+                    }
                     return \Illuminate\Support\Facades\Validator::make($e, [
                         'numero_echeance' => ['required', 'integer', 'min:1'],
                         'date_echeance' => ['required', 'date'],
@@ -156,10 +173,7 @@ class PretController extends Controller
                 $this->service->importerHistorique($data, $request->user());
                 $crees++;
             } catch (\Throwable $e) {
-                $message = $e instanceof \Illuminate\Validation\ValidationException
-                    ? implode(' ', $e->validator->errors()->all())
-                    : $e->getMessage();
-                $erreurs[] = ['pret_ref' => $ref, 'lignes' => $groupe['lignes_source'], 'erreur' => $message];
+                $erreurs[] = ['pret_ref' => $ref, 'lignes' => $groupe['lignes_source'], 'erreur' => $this->messageLisible($e)];
             }
         }
 
