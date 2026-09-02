@@ -16,6 +16,8 @@ use App\Http\Controllers\Controller;
 
 class CycleTontineController extends Controller
 {
+    use \App\Http\Controllers\Api\Concerns\FormateErreurImport;
+
     public function __construct(
         private AccessScopeService $scope,
         private TontineCycleService $service,
@@ -81,7 +83,7 @@ class CycleTontineController extends Controller
      * où les colonnes cotisation_tontine_part_id/cotisation_montant_verse
      * sont laissées vides.
      */
-    public function importHistoriqueFichier(Request $request, string $tontineId, \App\Services\Import\TabularFileReader $reader): JsonResponse
+    public function importHistoriqueFichier(Request $request, string $tontineId, \App\Services\Import\TabularFileReader $reader, \App\Services\Import\ImportResolver $resolveur): JsonResponse
     {
         if ($request->user()->role !== 'super_admin') {
             return response()->json(['message' => "Réservé au super_admin."], 403);
@@ -113,6 +115,12 @@ class CycleTontineController extends Controller
         foreach ($groupes as $ref => $groupe) {
             try {
                 $cycleLigne = $groupe['cycle'];
+                // Noms/dates lisibles : réunion par date, gagnant par nom du membre.
+                if (! empty($cycleLigne['reunion_id'])) { $cycleLigne['reunion_id'] = $resolveur->reunion($cycleLigne['reunion_id']); }
+                if (! empty($cycleLigne['gagnant_part_id'])) { $cycleLigne['gagnant_part_id'] = $resolveur->partTontine($cycleLigne['gagnant_part_id'], $tontineId); }
+                foreach (['date_ouverture', 'date_cloture'] as $champ) {
+                    if (! empty($cycleLigne[$champ])) { $cycleLigne[$champ] = $resolveur->date($cycleLigne[$champ]); }
+                }
                 $data = \Illuminate\Support\Facades\Validator::make($cycleLigne, [
                     'reunion_id' => ['required', 'uuid'],
                     'gagnant_part_id' => ['required', 'uuid'],
@@ -126,7 +134,13 @@ class CycleTontineController extends Controller
                 ])->validate();
                 $data['gain_verse'] = $data['gain_verse'] ?? true;
 
-                $data['cotisations'] = collect($groupe['cotisations'] ?? [])->map(function ($c) {
+                $data['cotisations'] = collect($groupe['cotisations'] ?? [])->map(function ($c) use ($resolveur, $tontineId) {
+                    if (! empty($c['cotisation_tontine_part_id'])) {
+                        $c['cotisation_tontine_part_id'] = $resolveur->partTontine($c['cotisation_tontine_part_id'], $tontineId);
+                    }
+                    if (! empty($c['cotisation_date_versement'])) {
+                        $c['cotisation_date_versement'] = $resolveur->date($c['cotisation_date_versement']);
+                    }
                     return \Illuminate\Support\Facades\Validator::make($c, [
                         'cotisation_tontine_part_id' => ['required', 'uuid'],
                         'cotisation_montant_verse' => ['required', 'numeric', 'min:0'],
@@ -141,10 +155,7 @@ class CycleTontineController extends Controller
                 $this->service->importerHistorique($tontine, $data, $request->user());
                 $crees++;
             } catch (\Throwable $e) {
-                $message = $e instanceof \Illuminate\Validation\ValidationException
-                    ? implode(' ', $e->validator->errors()->all())
-                    : $e->getMessage();
-                $erreurs[] = ['cycle_ref' => $ref, 'lignes' => $groupe['lignes_source'], 'erreur' => $message];
+                $erreurs[] = ['cycle_ref' => $ref, 'lignes' => $groupe['lignes_source'], 'erreur' => $this->messageLisible($e)];
             }
         }
 
