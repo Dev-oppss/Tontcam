@@ -14,6 +14,7 @@ use App\Http\Controllers\Api\Concerns\AssertSeanceOuverte;
 class DecisionAgController extends Controller
 {
     use AssertSeanceOuverte;
+    use \App\Http\Controllers\Api\Concerns\FormateErreurImport;
 
     public function __construct(private AccessScopeService $scope, private DecisionAgService $service) {}
 
@@ -105,7 +106,7 @@ class DecisionAgController extends Controller
      * Une ligne par decision - traitees independamment (rapport creee/erreur
      * par ligne), contrairement au JSON qui est tout-ou-rien.
      */
-    public function importHistoriqueFichier(Request $request, \App\Services\Import\TabularFileReader $reader): JsonResponse
+    public function importHistoriqueFichier(Request $request, \App\Services\Import\TabularFileReader $reader, \App\Services\Import\ImportResolver $resolveur): JsonResponse
     {
         if ($request->user()->role !== 'super_admin') {
             return response()->json(['message' => 'Réservé au super_admin.'], 403);
@@ -122,6 +123,8 @@ class DecisionAgController extends Controller
         $erreurs = [];
         foreach ($lignes as $i => $ligne) {
             try {
+                if (! empty($ligne['reunion_id'])) { $ligne['reunion_id'] = $resolveur->reunion($ligne['reunion_id']); }
+                if (! empty($ligne['date_effet'])) { $ligne['date_effet'] = $resolveur->date($ligne['date_effet']); }
                 $validee = \Illuminate\Support\Facades\Validator::make($ligne, [
                     'reunion_id' => ['required', 'uuid'],
                     // Même alignement que importHistorique() ci-dessus (colonne VARCHAR(30)).
@@ -142,10 +145,7 @@ class DecisionAgController extends Controller
                 DecisionAg::create(['association_id' => $this->scope->associationId(), ...$validee]);
                 $crees++;
             } catch (\Throwable $e) {
-                $message = $e instanceof \Illuminate\Validation\ValidationException
-                    ? implode(' ', $e->validator->errors()->all())
-                    : $e->getMessage();
-                $erreurs[] = ['ligne' => $i + 2, 'donnees' => $ligne, 'erreur' => $message];
+                $erreurs[] = ['ligne' => $i + 2, 'donnees' => $ligne, 'erreur' => $this->messageLisible($e)];
             }
         }
 
