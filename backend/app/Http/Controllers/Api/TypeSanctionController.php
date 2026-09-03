@@ -38,10 +38,21 @@ class TypeSanctionController extends Controller
             'paliers_retard' => ['nullable', 'array'],
             'paliers_retard.*.minutes' => ['required_with:paliers_retard', 'integer', 'min:1'],
             'paliers_retard.*.montant' => ['required_with:paliers_retard', 'numeric', 'min:0'],
+            // Paliers d'absences CUMULÉES (déclencheur 'absence_non_excusee') : sanction
+            // supplémentaire ponctuelle quand le nombre total d'absences non excusées du
+            // membre atteint un seuil paramétré — ex. 3000 FCFA à la 5e absence cumulée
+            // (voir SanctionService::sanctionnerPalierAbsencesCumulees). S'ajoute à la
+            // sanction normale par absence, ne la remplace pas.
+            'paliers_absence' => ['nullable', 'array'],
+            'paliers_absence.*.nombre' => ['required_with:paliers_absence', 'integer', 'min:1'],
+            'paliers_absence.*.montant' => ['required_with:paliers_absence', 'numeric', 'min:0'],
             'description' => ['nullable', 'string'],
         ]);
         if (! empty($data['paliers_retard'])) {
             usort($data['paliers_retard'], fn ($a, $b) => $a['minutes'] <=> $b['minutes']);
+        }
+        if (! empty($data['paliers_absence'])) {
+            usort($data['paliers_absence'], fn ($a, $b) => $a['nombre'] <=> $b['nombre']);
         }
         $data['association_id'] = $this->scope->associationId();
         $data['actif'] = true;
@@ -65,10 +76,16 @@ class TypeSanctionController extends Controller
             'paliers_retard' => ['sometimes', 'nullable', 'array'],
             'paliers_retard.*.minutes' => ['required_with:paliers_retard', 'integer', 'min:1'],
             'paliers_retard.*.montant' => ['required_with:paliers_retard', 'numeric', 'min:0'],
+            'paliers_absence' => ['sometimes', 'nullable', 'array'],
+            'paliers_absence.*.nombre' => ['required_with:paliers_absence', 'integer', 'min:1'],
+            'paliers_absence.*.montant' => ['required_with:paliers_absence', 'numeric', 'min:0'],
             'actif' => ['sometimes', 'boolean'],
         ]);
         if (! empty($data['paliers_retard'])) {
             usort($data['paliers_retard'], fn ($a, $b) => $a['minutes'] <=> $b['minutes']);
+        }
+        if (! empty($data['paliers_absence'])) {
+            usort($data['paliers_absence'], fn ($a, $b) => $a['nombre'] <=> $b['nombre']);
         }
 
         $type->update($data);
