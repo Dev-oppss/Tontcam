@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { ChevronDown, ChevronUp, DatabaseBackup, FileJson, LockKeyhole } from 'lucide-react';
+import { useMemo, useState, useRef } from 'react';
+import { ChevronDown, ChevronUp, DatabaseBackup, FileJson, FileUp, LockKeyhole } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { PageHeader, SectionCard } from '../components/ui/index';
 import AssistantImportHistorique from '../components/import/AssistantImportHistorique';
@@ -55,6 +55,19 @@ export default function ImportHistorique() {
     try { await importerHistorique(type, payload); } catch (err) { setErreurAvance(err?.message || 'Import refusé.'); } finally { setBusy(false); }
   };
 
+  const inputFichierRef = useRef(null);
+  const [resultatFichierBrut, setResultatFichierBrut] = useState(null);
+  const importerFichierBrut = async (e) => {
+    const fichier = e.target.files?.[0];
+    if (!fichier) return;
+    if (type === 'cycles' && !tontineId) { setErreurAvance('Sélectionnez d\u2019abord la tontine concernée ci-dessus.'); return; }
+    setBusy(true); setErreurAvance(''); setResultatFichierBrut(null);
+    try {
+      const res = await importerHistoriqueFichier(type, fichier, tontineId);
+      if (res) setResultatFichierBrut(res);
+    } finally { setBusy(false); if (inputFichierRef.current) inputFichierRef.current.value = ''; }
+  };
+
   return <div className="space-y-6">
     <PageHeader title="Reprise d\u2019historique" subtitle="Import initial d\u2019une association déjà active avant TONTIX." />
     <SectionCard title="Accès exceptionnel" subtitle="Réservé au super administrateur. Importez dans l\u2019ordre chronologique ; les écritures ne peuvent pas être annulées automatiquement.">
@@ -92,13 +105,21 @@ export default function ImportHistorique() {
     </button>
 
     {modeAvance && <SectionCard title="Mode avancé" subtitle="Réservé aux utilisateurs à l\u2019aise avec l\u2019informatique — collez un lot JSON ou déposez un fichier.">
-      <div className="grid lg:grid-cols-2 gap-4">
-        <div><p className="text-xs font-semibold text-ink-700 mb-2">Données à importer (JSON)</p><textarea className="input min-h-[300px] font-mono text-xs" value={texte} onChange={(e) => setTexte(e.target.value)} spellCheck="false" /></div>
+      <div>
+        <p className="text-xs font-semibold text-ink-700 mb-2">Déposer un fichier CSV / XLSX déjà prêt</p>
+        <div className="flex items-center gap-3">
+          <input ref={inputFichierRef} type="file" accept=".csv,.txt,.xlsx" onChange={importerFichierBrut} disabled={busy || (type === 'cycles' && !tontineId)} className="text-xs" />
+          <FileUp size={15} className="text-ink-400 shrink-0" />
+        </div>
+        {resultatFichierBrut && <p className="mt-2 text-xs text-ink-600">{resultatFichierBrut.crees} ligne(s)/groupe(s) importé(s){resultatFichierBrut.erreurs?.length ? `, ${resultatFichierBrut.erreurs.length} en erreur — voir le détail dans l\u2019assistant ci-dessus` : ''}.</p>}
+      </div>
+      <div className="grid lg:grid-cols-2 gap-4 mt-6">
+        <div><p className="text-xs font-semibold text-ink-700 mb-2">Ou coller les données à importer (JSON)</p><textarea className="input min-h-[300px] font-mono text-xs" value={texte} onChange={(e) => setTexte(e.target.value)} spellCheck="false" /></div>
         <div><p className="text-xs font-semibold text-ink-700 mb-2">Modèle attendu</p><pre className="min-h-[300px] overflow-auto rounded-xl bg-slate-950 p-4 text-xs text-slate-100">{exemple}</pre></div>
       </div>
       {erreurAvance && <p className="mt-3 text-sm text-red-600">{erreurAvance}</p>}
       <div className="mt-4 flex justify-end"><button onClick={importerJson} disabled={busy} className="btn-primary"><FileJson size={15} />{busy ? 'Import en cours…' : 'Importer ce lot JSON'}</button></div>
-      <p className="mt-4 text-xs text-ink-500">Les noms (membre, caisse, réunion par sa date...) sont acceptés partout où un identifiant est attendu, aussi bien en JSON qu\u2019en CSV/XLSX déposé depuis l\u2019assistant ci-dessus.</p>
+      <p className="mt-4 text-xs text-ink-500">Les noms (membre, caisse, réunion par sa date...) sont acceptés partout où un identifiant est attendu, aussi bien en JSON qu\u2019en CSV/XLSX.</p>
     </SectionCard>}
   </div>;
 }
