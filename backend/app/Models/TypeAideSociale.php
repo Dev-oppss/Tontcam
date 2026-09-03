@@ -22,6 +22,7 @@ class TypeAideSociale extends Model
         'delai_versement_jours',
         'caisse_source_id',
         'nb_max_par_an',
+        'nb_max_vie',
         'justificatif_requis',
         'actif',
         'date_effet',
@@ -33,6 +34,7 @@ class TypeAideSociale extends Model
             'montant_max' => 'decimal:2',
             'delai_versement_jours' => 'integer',
             'nb_max_par_an' => 'integer',
+            'nb_max_vie' => 'integer',
             'justificatif_requis' => 'boolean',
             'actif' => 'boolean',
             'date_effet' => 'date'
