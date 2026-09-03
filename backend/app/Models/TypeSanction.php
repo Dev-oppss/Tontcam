@@ -21,6 +21,7 @@ class TypeSanction extends Model
         'est_automatique',
         'declencheur',
         'paliers_retard',
+        'paliers_absence',
         'actif',
         'description',
     ];
@@ -31,6 +32,7 @@ class TypeSanction extends Model
             'montant_journalier' => 'decimal:2',
             'est_automatique' => 'boolean',
             'paliers_retard' => 'array',
+            'paliers_absence' => 'array',
             'actif' => 'boolean'
     ];
 
