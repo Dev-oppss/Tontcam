@@ -234,6 +234,19 @@ export const AppProvider = ({ children }) => {
     } catch (err) { return handleError(err); }
   };
 
+  // ── Initialisation membre (RG-INIT) : point de départ résumé, distinct de l'import historique ──
+  const chargerInitialisationMembre = async (membreId) => {
+    try { return await request(`/membres/${membreId}/initialisation`); } catch (err) { return handleError(err); }
+  };
+
+  const enregistrerInitialisationMembre = async (membreId, payload) => {
+    try {
+      const res = await request(`/membres/${membreId}/initialisation`, { method: 'POST', body: payload });
+      showToast('Point de départ enregistré.', 'success');
+      return res;
+    } catch (err) { return handleError(err); }
+  };
+
   // ── Charge toutes les données de l'association une fois connecté ──
   useEffect(() => {
     if (!user || !currentAssociation) return;
@@ -1637,6 +1650,7 @@ export const AppProvider = ({ children }) => {
     portailMoi, chargerPortailMoi,
     showToast, importerHistorique, importerHistoriqueFichier,
     activerCagnotte, chargerPropositionCagnotte, chargerRemisesGain, creerRemiseGain,
+    chargerInitialisationMembre, enregistrerInitialisationMembre,
     login, logout, changePassword, updateMonProfil, register, updateAssociation, uploadStatutsAssociation, updateParametres,
     addMembre, updateMembre, deleteMembre,
     addPoste, addMandat, cloturerMandat,
