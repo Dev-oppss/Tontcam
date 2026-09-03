@@ -11,6 +11,7 @@ import {
 import { fmtDate, fmt, periodeLabel, typeAttrLabel, STATUTS_MEMBRE, statutMembreLabel, statutMembreColor } from '../data/mockData';
 import { useApp } from '../context/AppContext';
 import { PageHeader, Table, Badge, Modal, FormField } from '../components/ui/index';
+import InitialisationMembreTab from '../components/membres/InitialisationMembreTab';
 import clsx from 'clsx';
 
 // RG-MBR-003 : statut_membre = actif | suspendu | exclu | en_attente (ENUM DB).
@@ -25,7 +26,7 @@ function FicheMembre({ membre, onClose, onEdit }) {
   const {
     tontines, membresParTontine, banques, comptesBanque, operationsBanque,
     prets, sanctions, planningTours, aidesAssurance, seanceTransactions,
-    reunions,
+    reunions, user,
   } = useApp();
 
   const [activeTab, setActiveTab] = useState('identite');
@@ -78,6 +79,9 @@ function FicheMembre({ membre, onClose, onEdit }) {
     { id:'sanctions', label:'Sanctions',   icon: ShieldAlert,badge: sanctionsImpa.length > 0 ? sanctionsImpa.length : null },
     { id:'assurance', label:'Fond Assur.', icon: Shield,     badge: aidesMembre.length > 0 ? aidesMembre.length : null },
   ];
+  if (user?.role === 'super_admin') {
+    tabs.push({ id:'initialisation', label:'Point de départ', icon: RefreshCw });
+  }
 
   return createPortal((
     <div className="modal-overlay" onClick={onClose}>
@@ -424,6 +428,11 @@ function FicheMembre({ membre, onClose, onEdit }) {
                 </>
               )}
             </div>
+          )}
+
+          {/* ── INITIALISATION (point de départ, super_admin) ── */}
+          {activeTab === 'initialisation' && (
+            <InitialisationMembreTab membre={membre} />
           )}
 
         </div>
