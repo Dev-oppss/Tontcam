@@ -48,13 +48,29 @@ class AideSocialeController extends Controller
         $membre = Membre::where('association_id', $this->scope->associationId())->findOrFail($data['membre_id']);
         $type = TypeAideSociale::where('association_id', $this->scope->associationId())->findOrFail($data['type_aide_id']);
 
+        // Les demandes refusées ne consomment pas le quota (annuel ni à vie) —
+        // seules celles effectivement approuvées ou versées comptent.
         $dejaAccorde = EvenementSocial::where('membre_id', $membre->id)
             ->where('type_aide_id', $type->id)
+            ->whereIn('statut', ['demandee', 'en_validation', 'approuvee', 'versee'])
             ->whereYear('date_declaration', now()->year)
             ->count();
 
         if ($dejaAccorde >= ($type->nb_max_par_an ?? 3)) {
             return response()->json(['message' => "Limite de {$type->nb_max_par_an} aide(s)/an atteinte pour cette catégorie."], 422);
+        }
+
+        // Plafond à vie (RG-SOC, distinct du plafond annuel) : au-delà, le membre
+        // ne peut plus jamais recevoir ce type d'aide, quelle que soit l'année.
+        if ($type->nb_max_vie !== null) {
+            $recuAVie = EvenementSocial::where('membre_id', $membre->id)
+                ->where('type_aide_id', $type->id)
+                ->whereIn('statut', ['demandee', 'en_validation', 'approuvee', 'versee'])
+                ->count();
+
+            if ($recuAVie >= $type->nb_max_vie) {
+                return response()->json(['message' => "Plafond à vie de {$type->nb_max_vie} aide(s) « {$type->libelle} » déjà atteint pour ce membre — plus aucune aide de ce type ne pourra lui être accordée."], 422);
+            }
         }
 
         if ($type->justificatif_requis && empty($data['pieces_jointes'])) {
