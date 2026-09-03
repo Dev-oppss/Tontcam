@@ -3,7 +3,7 @@ import {
   Plus, Calendar, Users, UserPlus, Trash2, Pencil,
   BadgeCheck, TrendingUp, Info, Trophy, Shuffle, ChevronRight,
   CheckCircle, Clock, Banknote, Star, X,
-  ListOrdered, Gavel, Dices, FileText,
+  ListOrdered, Gavel, Dices, FileText, Coins,
 } from 'lucide-react';
 import { fmt, fmtDate, typeAttrLabel, periodeLabel } from '../data/mockData';
 import { getMissingFields } from '../lib/validation';
@@ -13,6 +13,7 @@ import { ModePaiementFields, isModePaiementValid } from '../components/ui/ModePa
 import { NavLink, useSearchParams } from 'react-router-dom';
 import clsx from 'clsx';
 import { useAsyncGuard } from '../hooks/useAsyncGuard';
+import CagnotteModal from '../components/tontines/CagnotteModal';
 
 const TYPE_CONFIG = {
   rotation: {
@@ -100,6 +101,7 @@ export default function Tontines() {
   const [showAdd,         setShowAdd]         = useState(false);
   const [showEdit,        setShowEdit]        = useState(null);
   const [showMembres,     setShowMembres]     = useState(null);
+  const [showCagnotte,    setShowCagnotte]    = useState(null);
   const [showBenef,       setShowBenef]       = useState(null);
   const [bulkParts,       setBulkParts]       = useState({});
   const [bulkAvalistes,   setBulkAvalistes]   = useState({});
@@ -455,9 +457,13 @@ export default function Tontines() {
                   <FileText size={12}/> Bulletin
                 </button>
               </div>
+              <button onClick={() => setShowCagnotte(t)} className={`mt-2 w-full text-xs py-1.5 rounded-xl justify-center flex items-center gap-1.5 ${t.modeCagnotte ? 'btn-secondary' : 'text-ink-400 hover:text-ink-600'}`}>
+                <Coins size={12}/> {t.modeCagnotte ? 'Cagnotte — remise de gains' : 'Activer le mode cagnotte'}
+              </button>
             </div>
           );
         })}
+        {showCagnotte && <CagnotteModal tontine={showCagnotte} onClose={() => setShowCagnotte(null)} />}
       </div>
 
       {filteredTontines.length === 0 && (
