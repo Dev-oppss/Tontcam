@@ -51,7 +51,7 @@ class SanctionService
             return null;
         }
 
-        return SanctionMembre::create([
+        $sanction = SanctionMembre::create([
             'association_id' => $membre->association_id,
             'membre_id' => $membre->id,
             'type_sanction_id' => $type->id,
@@ -61,6 +61,52 @@ class SanctionService
             'statut' => 'due',
             'est_automatique' => true,
         ]);
+
+        $this->sanctionnerPalierAbsencesCumulees($membre, $type, $reunion);
+
+        return $sanction;
+    }
+
+    /**
+     * Sanction SUPPLÉMENTAIRE, ponctuelle, quand le nombre total d'absences
+     * non excusées du membre (cumulé depuis toujours, tous types
+     * absence_non_excusee confondus) atteint un seuil paramétré sur
+     * paliers_absence — ex: 5 absences → 3000 FCFA en plus de la sanction
+     * normale par absence. Se déclenche une seule fois par seuil franchi
+     * (pas à chaque absence au-delà du seuil).
+     */
+    private function sanctionnerPalierAbsencesCumulees(Membre $membre, TypeSanction $typeBase, Reunion $reunion): void
+    {
+        $paliers = $typeBase->paliers_absence ?? [];
+        if (empty($paliers)) {
+            return;
+        }
+
+        // On compte les RÉUNIONS distinctes (pas les lignes) : la sanction de palier
+        // elle-même est enregistrée avec le même type_sanction_id et la même
+        // réunion que l'absence qui la déclenche — sans ce distinct, elle se
+        // compterait deux fois et décalerait tous les seuils suivants.
+        $nbAbsences = SanctionMembre::where('membre_id', $membre->id)
+            ->where('type_sanction_id', $typeBase->id)
+            ->where('est_automatique', true)
+            ->distinct('reunion_id')
+            ->count('reunion_id');
+
+        foreach ($paliers as $palier) {
+            if ((int) $palier['nombre'] === $nbAbsences) {
+                SanctionMembre::create([
+                    'association_id' => $membre->association_id,
+                    'membre_id' => $membre->id,
+                    'type_sanction_id' => $typeBase->id,
+                    'reunion_id' => $reunion->id,
+                    'montant' => (float) $palier['montant'],
+                    'motif' => "Palier de {$nbAbsences} absences non excusées cumulées atteint",
+                    'statut' => 'due',
+                    'est_automatique' => true,
+                ]);
+                return; // un seul seuil ne peut être franchi qu'une fois par cette absence
+            }
+        }
     }
 
     /**
