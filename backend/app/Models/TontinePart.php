@@ -21,13 +21,15 @@ class TontinePart extends Model
         'avaliste_id',
         'date_attribution',
         'notes',
+        'montant_accumule_initial',
     ];
 
     protected $casts = [
             'date_gain_calendrier' => 'date',
             'date_attribution' => 'datetime',
             'numero_part' => 'integer',
-            'ordre_rotation' => 'integer'
+            'ordre_rotation' => 'integer',
+            'montant_accumule_initial' => 'decimal:2'
     ];
 
     public function planningTour()
