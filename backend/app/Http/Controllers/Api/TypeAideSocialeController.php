@@ -37,6 +37,7 @@ class TypeAideSocialeController extends Controller
             // pas de caisse non plus à la création.
             'caisse_source_id' => ['nullable', 'uuid'],
             'nb_max_par_an' => ['sometimes', 'integer', 'min:1'],
+            'nb_max_vie' => ['sometimes', 'nullable', 'integer', 'min:1'],
             'justificatif_requis' => ['sometimes', 'boolean'],
         ]);
         $data['association_id'] = $this->scope->associationId();
@@ -63,6 +64,7 @@ class TypeAideSocialeController extends Controller
             'montant_max' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'caisse_source_id' => ['sometimes', 'nullable', 'uuid'],
             'nb_max_par_an' => ['sometimes', 'integer', 'min:1'],
+            'nb_max_vie' => ['sometimes', 'nullable', 'integer', 'min:1'],
             'actif' => ['sometimes', 'boolean'],
         ]));
 
