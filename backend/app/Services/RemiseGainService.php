@@ -29,7 +29,7 @@ class RemiseGainService
         $verse = (float) $part->cotisations()->sum('montant_verse');
         $dejaRemis = (float) DB::table('remise_gain_lignes')->where('tontine_part_id', $part->id)->sum('montant_verse');
 
-        return round($verse - $dejaRemis, 2);
+        return round((float) $part->montant_accumule_initial + $verse - $dejaRemis, 2);
     }
 
     /**

@@ -63,7 +63,8 @@ class AideSocialeController extends Controller
         // Plafond à vie (RG-SOC, distinct du plafond annuel) : au-delà, le membre
         // ne peut plus jamais recevoir ce type d'aide, quelle que soit l'année.
         if ($type->nb_max_vie !== null) {
-            $recuAVie = EvenementSocial::where('membre_id', $membre->id)
+            $initial = \App\Models\AideSocialeInitiale::where('membre_id', $membre->id)->where('type_aide_id', $type->id)->value('nombre_deja_recu') ?? 0;
+            $recuAVie = $initial + EvenementSocial::where('membre_id', $membre->id)
                 ->where('type_aide_id', $type->id)
                 ->whereIn('statut', ['demandee', 'en_validation', 'approuvee', 'versee'])
                 ->count();

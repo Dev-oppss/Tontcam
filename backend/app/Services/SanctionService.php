@@ -86,7 +86,7 @@ class SanctionService
         // elle-même est enregistrée avec le même type_sanction_id et la même
         // réunion que l'absence qui la déclenche — sans ce distinct, elle se
         // compterait deux fois et décalerait tous les seuils suivants.
-        $nbAbsences = SanctionMembre::where('membre_id', $membre->id)
+        $nbAbsences = $membre->absences_cumulees_initiales + SanctionMembre::where('membre_id', $membre->id)
             ->where('type_sanction_id', $typeBase->id)
             ->where('est_automatique', true)
             ->distinct('reunion_id')
