@@ -282,7 +282,7 @@ export const AppProvider = ({ children }) => {
         setTypesSanction((typeSancRes || []).map(adapt.typeSanctionFromApi));
         setTypesAideSociale((typeAideRes || []).map((t) => ({
           id: t.id, libelle: t.libelle, typeEvenement: t.type_evenement,
-          montantFixe: Number(t.montant_fixe || 0), nbMaxParAn: t.nb_max_par_an,
+          montantFixe: Number(t.montant_fixe || 0), nbMaxParAn: t.nb_max_par_an, nbMaxVie: t.nb_max_vie,
           justificatifRequis: t.justificatif_requis, caisseSourceId: t.caisse_source_id,
         })));
         setComptesBancaire((comptesRes || []).map((c) => ({
@@ -1304,11 +1304,13 @@ export const AppProvider = ({ children }) => {
       const t = await request('/types-aide-sociale', { method: 'POST', body: {
         libelle: data.libelle, type_evenement: data.typeEvenement, montant_fixe: data.montantFixe,
         caisse_source_id: data.caisseSourceId || undefined, nb_max_par_an: data.nbMaxParAn || 3,
+        nb_max_vie: data.nbMaxVie || undefined,
         justificatif_requis: data.justificatifRequis ?? true,
       } });
       const type = {
         id: t.id, libelle: t.libelle, typeEvenement: t.type_evenement,
-        montantFixe: Number(t.montant_fixe || 0), caisseSourceId: t.caisse_source_id, actif: t.actif,
+        montantFixe: Number(t.montant_fixe || 0), nbMaxParAn: t.nb_max_par_an, nbMaxVie: t.nb_max_vie,
+        caisseSourceId: t.caisse_source_id, actif: t.actif,
       };
       setTypesAideSociale((prev) => [...prev, type]);
       showToast('Type d\'aide sociale créé');
@@ -1320,10 +1322,12 @@ export const AppProvider = ({ children }) => {
       const t = await request(`/types-aide-sociale/${id}`, { method: 'PUT', body: {
         libelle: data.libelle, type_evenement: data.typeEvenement, montant_fixe: data.montantFixe,
         caisse_source_id: data.caisseSourceId, actif: data.actif,
+        nb_max_par_an: data.nbMaxParAn, nb_max_vie: data.nbMaxVie ?? null,
       } });
       const type = {
         id: t.id, libelle: t.libelle, typeEvenement: t.type_evenement,
-        montantFixe: Number(t.montant_fixe || 0), caisseSourceId: t.caisse_source_id, actif: t.actif,
+        montantFixe: Number(t.montant_fixe || 0), nbMaxParAn: t.nb_max_par_an, nbMaxVie: t.nb_max_vie,
+        caisseSourceId: t.caisse_source_id, actif: t.actif,
       };
       setTypesAideSociale((prev) => prev.map((x) => (x.id === id ? type : x)));
       showToast('Type d\'aide sociale modifié');
