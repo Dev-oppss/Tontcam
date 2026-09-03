@@ -9,6 +9,7 @@ use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\CaisseController;
 use App\Http\Controllers\Api\CompteBancaireController;
 use App\Http\Controllers\Api\CycleTontineController;
+use App\Http\Controllers\Api\CagnotteController;
 use App\Http\Controllers\Api\DecisionAgController;
 use App\Http\Controllers\Api\ExportController;
 use App\Http\Controllers\Api\MembreController;
@@ -91,6 +92,10 @@ Route::middleware(['auth:sanctum', 'association.context'])->group(function () {
     Route::post('/tontines/{id}/cycles/import-historique', [CycleTontineController::class, 'importHistorique']);
     Route::post('/tontines/{id}/cycles/import-historique/fichier', [CycleTontineController::class, 'importHistoriqueFichier']);
     Route::post('/tontines/{id}/enregistrer-beneficiaire', [CycleTontineController::class, 'enregistrerBeneficiaire']);
+    Route::post('/tontines/{id}/activer-cagnotte', [TontineController::class, 'activerCagnotte']);
+    Route::get('/tontines/{id}/cagnotte/proposition', [CagnotteController::class, 'proposition']);
+    Route::get('/tontines/{id}/remises-gain', [CagnotteController::class, 'index']);
+    Route::post('/tontines/{id}/remises-gain', [CagnotteController::class, 'store']);
     Route::get('/cycles/{id}', [CycleTontineController::class, 'show']);
     Route::post('/cycles/{id}/cotisations', [CycleTontineController::class, 'saisirCotisations']);
     Route::post('/cycles/{id}/encheres', [CycleTontineController::class, 'placerEnchere']);
