@@ -208,6 +208,32 @@ export const AppProvider = ({ children }) => {
     } catch (err) { return handleError(err); }
   };
 
+  // ── Mode cagnotte (RG-TON) : remise de gains à un nombre libre de bénéficiaires ──
+  const activerCagnotte = async (tontineId) => {
+    try {
+      const t = await request(`/tontines/${tontineId}/activer-cagnotte`, { method: 'POST' });
+      setTontines((prev) => prev.map((x) => (x.id === tontineId ? { ...x, modeCagnotte: true } : x)));
+      showToast('Mode cagnotte activé.', 'success');
+      return t;
+    } catch (err) { return handleError(err); }
+  };
+
+  const chargerPropositionCagnotte = async (tontineId) => {
+    try { return await request(`/tontines/${tontineId}/cagnotte/proposition`); } catch (err) { return handleError(err); }
+  };
+
+  const chargerRemisesGain = async (tontineId) => {
+    try { return await request(`/tontines/${tontineId}/remises-gain`); } catch (err) { return handleError(err); }
+  };
+
+  const creerRemiseGain = async (tontineId, payload) => {
+    try {
+      const res = await request(`/tontines/${tontineId}/remises-gain`, { method: 'POST', body: payload });
+      showToast('Remise de gains enregistrée.', 'success');
+      return res;
+    } catch (err) { return handleError(err); }
+  };
+
   // ── Charge toutes les données de l'association une fois connecté ──
   useEffect(() => {
     if (!user || !currentAssociation) return;
@@ -1602,6 +1628,7 @@ export const AppProvider = ({ children }) => {
     utilisateurs, planningTours, cyclesTontine, chargerCycles, rechargerPartsTontine, dashboardStats, repartitionBanques, evolutionCaisse: mock.evolutionCaisse,
     portailMoi, chargerPortailMoi,
     showToast, importerHistorique, importerHistoriqueFichier,
+    activerCagnotte, chargerPropositionCagnotte, chargerRemisesGain, creerRemiseGain,
     login, logout, changePassword, updateMonProfil, register, updateAssociation, uploadStatutsAssociation, updateParametres,
     addMembre, updateMembre, deleteMembre,
     addPoste, addMandat, cloturerMandat,

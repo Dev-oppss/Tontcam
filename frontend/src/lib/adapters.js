@@ -134,6 +134,7 @@ export const tontineFromApi = (t) => !t ? null : ({
   idCaisse: t.caisse_id,
   dateDebut: t.date_debut,
   dateFin: t.date_fin_prevue,
+  modeCagnotte: !!t.mode_cagnotte,
 });
 
 export const cycleFromApi = (c) => !c ? null : ({
