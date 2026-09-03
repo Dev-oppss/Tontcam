@@ -338,6 +338,10 @@ export const typeSanctionFromApi = (t) => !t ? null : ({
   // Paliers de retard (déclencheur 'retard_presence') : [{minutes, montant}, ...] triés
   // par 'minutes' croissant côté serveur. Voir SanctionService::retardPresence.
   paliersRetard: t.paliers_retard || [],
+  // Paliers d'absences cumulées (déclencheur 'absence_non_excusee') : [{nombre,
+  // montant}, ...] triés par 'nombre' croissant. Voir
+  // SanctionService::sanctionnerPalierAbsencesCumulees.
+  paliersAbsence: t.paliers_absence || [],
 });
 
 // ── Aide sociale (FondAssurance) ───────────────────────────────
