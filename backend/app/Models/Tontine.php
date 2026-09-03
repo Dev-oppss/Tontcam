@@ -33,6 +33,7 @@ class Tontine extends Model
         'date_cloture',
         'caisse_id',
         'config',
+        'mode_cagnotte',
         'created_by',
     ];
 
@@ -49,7 +50,8 @@ class Tontine extends Model
             'date_debut' => 'date',
             'date_fin_prevue' => 'date',
             'date_cloture' => 'date',
-            'config' => 'array'
+            'config' => 'array',
+            'mode_cagnotte' => 'boolean'
     ];
 
     public function association()
