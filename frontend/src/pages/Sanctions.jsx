@@ -63,6 +63,32 @@ export default function Sanctions() {
   const addPalier = () => setRetardForm(f => ({ ...f, paliers: [...f.paliers, { minutes: '', montant: '' }] }));
   const removePalier = (i) => setRetardForm(f => ({ ...f, paliers: f.paliers.filter((_, idx) => idx !== i) }));
 
+  // ── Sanction automatique sur absences cumulées (declencheur 'absence_non_excusee') ──
+  // S'ajoute à la sanction normale par absence (qui existe déjà via typesDisponibles) —
+  // ne la remplace pas. Voir SanctionService::sanctionnerPalierAbsencesCumulees.
+  const typeAbsence = typesSanction.find((t) => t.declencheur === 'absence_non_excusee');
+  const [absenceModalOpen, setAbsenceModalOpen] = useState(false);
+  const [absenceForm, setAbsenceForm] = useState({ paliers: [{ nombre: '5', montant: '' }] });
+
+  const openAbsenceModal = () => {
+    setAbsenceForm({ paliers: typeAbsence?.paliersAbsence?.length ? typeAbsence.paliersAbsence.map(p => ({ nombre: String(p.nombre), montant: String(p.montant) })) : [{ nombre: '5', montant: '' }] });
+    setAbsenceModalOpen(true);
+  };
+  const setPalierAbsence = (i, patch) => setAbsenceForm(f => ({ ...f, paliers: f.paliers.map((p, idx) => idx === i ? { ...p, ...patch } : p) }));
+  const addPalierAbsence = () => setAbsenceForm(f => ({ ...f, paliers: [...f.paliers, { nombre: '', montant: '' }] }));
+  const removePalierAbsence = (i) => setAbsenceForm(f => ({ ...f, paliers: f.paliers.filter((_, idx) => idx !== i) }));
+
+  const handleSaveAbsence = async () => {
+    if (! typeAbsence) {
+      showToast?.('Paramétrez d\'abord le type « Absence non excusée » dans le catalogue ci-dessous.', 'error');
+      return;
+    }
+    const paliersValides = absenceForm.paliers.filter(p => p.nombre && p.montant);
+    await updateTypeSanction(typeAbsence.id, { paliersAbsence: paliersValides });
+    setAbsenceModalOpen(false);
+  };
+  const [guardedSaveAbsence, savingAbsence] = useAsyncGuard(handleSaveAbsence);
+
   const handleSaveRetard = async () => {
     const paliersValides = retardForm.paliers.filter(p => p.minutes && p.montant);
     if (retardForm.actif && paliersValides.length === 0) {
@@ -211,6 +237,7 @@ export default function Sanctions() {
         action={
           <div className="flex gap-2">
             <button onClick={openRetardModal} className="btn-secondary"><ShieldAlert size={15}/> Retards automatiques</button>
+            <button onClick={openAbsenceModal} className="btn-secondary"><ShieldAlert size={15}/> Absences cumulées</button>
             <button onClick={()=>{setEditingTypeId(null); setCustomTypeForm(emptyCustomType()); setAddType(true);}} className="btn-secondary"><Settings2 size={15}/> Paramètres</button>
             <button onClick={()=>setAdd(true)} className="btn-primary"><Plus size={15}/> Nouvelle sanction</button>
           </div>
@@ -234,6 +261,27 @@ export default function Sanctions() {
             )}
           </div>
           <button onClick={openRetardModal} className="btn-secondary text-xs py-1.5 shrink-0"><Pencil size={12}/> Configurer</button>
+        </div>
+      </div>
+
+      <div className={clsx('card border-l-4', typeAbsence?.paliersAbsence?.length ? 'border-l-green-400' : 'border-l-gray-300')}>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-gray-800 flex items-center gap-2">
+              Sanction supplémentaire sur absences cumulées
+              <Badge variant={typeAbsence?.paliersAbsence?.length ? 'green' : 'gray'}>{typeAbsence?.paliersAbsence?.length ? 'Activée' : 'Non paramétrée'}</Badge>
+            </p>
+            {typeAbsence?.paliersAbsence?.length > 0 ? (
+              <p className="text-xs text-gray-400 mt-1">
+                {typeAbsence.paliersAbsence.map((p, i) => (
+                  <span key={i}>{i > 0 && ' · '}À la {p.nombre}ᵉ absence cumulée → +{fmt(p.montant)}</span>
+                ))}
+              </p>
+            ) : (
+              <p className="text-xs text-gray-400 mt-1">En plus de la sanction normale par absence, une sanction ponctuelle supplémentaire peut se déclencher quand le nombre total d'absences non excusées d'un membre atteint un seuil paramétré.</p>
+            )}
+          </div>
+          <button onClick={openAbsenceModal} className="btn-secondary text-xs py-1.5 shrink-0"><Pencil size={12}/> Configurer</button>
         </div>
       </div>
 
@@ -347,6 +395,34 @@ export default function Sanctions() {
             </div>
             <button type="button" onClick={addPalier} className="btn-secondary text-xs py-1.5 mt-2"><Plus size={12}/> Ajouter un palier</button>
           </div>
+        </div>
+      </Modal>
+
+      <Modal open={absenceModalOpen} onClose={() => setAbsenceModalOpen(false)} title="Sanction supplémentaire sur absences cumulées"
+        footer={<><button onClick={() => setAbsenceModalOpen(false)} disabled={savingAbsence} className="btn-secondary">Annuler</button><button onClick={guardedSaveAbsence} disabled={savingAbsence} className="btn-primary"><ShieldAlert size={14}/>{savingAbsence ? 'Enregistrement…' : 'Enregistrer'}</button></>}>
+        <div className="space-y-4">
+          {! typeAbsence && (
+            <p className="text-xs text-amber-600 bg-amber-50 rounded-xl p-3">Le type « Absence non excusée » n'est pas encore paramétré — paramétrez-le d'abord dans le catalogue ci-dessous (bouton « Paramètres »), puis revenez ici configurer les paliers.</p>
+          )}
+          <p className="text-xs text-gray-400">
+            En plus de la sanction normale appliquée à chaque absence, une sanction ponctuelle
+            supplémentaire se déclenche quand le nombre total d'absences non excusées cumulées
+            d'un membre atteint un seuil que vous choisissez — une seule fois par seuil franchi
+            (le membre paie les 2 sanctions ce jour-là, pas seulement celle du palier).
+          </p>
+          <div className="space-y-2">
+            {absenceForm.paliers.map((p, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <span className="text-xs text-gray-400 shrink-0">À la</span>
+                <input type="number" min="1" className="input" placeholder="5" value={p.nombre} onChange={e => setPalierAbsence(i, { nombre: e.target.value })}/>
+                <span className="text-xs text-gray-400 shrink-0">ᵉ absence cumulée →</span>
+                <input type="number" min="0" className="input" placeholder="3000" value={p.montant} onChange={e => setPalierAbsence(i, { montant: e.target.value })}/>
+                <span className="text-xs text-gray-400 shrink-0">FCFA</span>
+                <button type="button" onClick={() => removePalierAbsence(i)} className="p-1.5 text-gray-400 hover:text-red-600 shrink-0"><Trash2 size={14}/></button>
+              </div>
+            ))}
+          </div>
+          <button type="button" onClick={addPalierAbsence} className="btn-secondary text-xs py-1.5 mt-2"><Plus size={12}/> Ajouter un seuil</button>
         </div>
       </Modal>
 
