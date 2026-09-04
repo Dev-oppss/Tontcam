@@ -1479,6 +1479,7 @@ function TypePicker({ onSelect }) {
 // Tous les états "extra" sont dans form._idTontine pour éviter
 // les hooks conditionnels (violation React)
 function SmartFormWrapper({ type, reunion, membres, banques, prets, sanctions, tontines, membresParTontine, soldeDisponible = Infinity, onSubmit, onCancel, submitting = false }) {
+  const { epargneMembresParCaisse, chargerMembresEpargneCaisse } = useApp();
   const [form, setForm] = useState({
     type, montant: '', libelle: '', idMembre: '', idSanction: '', idPret: '',
     idBanque: '', sousType: 'autre',
@@ -1489,6 +1490,20 @@ function SmartFormWrapper({ type, reunion, membres, banques, prets, sanctions, t
   const meta = TX_TYPES.find(t => t.value === type);
   const estSortie = meta?.dir === 'sortie' || meta?.dir === 'banque';
   const depasseSoldeCaisse = estSortie && Number(form.montant || 0) > soldeDisponible;
+
+  // Dépôt en banque : le "membre déposant" doit être un membre déjà connu de
+  // cette caisse (suivi épargne — RG-CAI-009), pas n'importe qui. On charge la
+  // liste dès que la banque est choisie ; si le suivi épargne n'est pas actif
+  // sur cette caisse, aucune notion de membre "connu" n'existe encore, donc
+  // pas de restriction possible dans ce cas (voir note affichée côté UI).
+  const banqueChoisie = banques.find(b => b.id === form.idBanque);
+  useEffect(() => {
+    if (type !== 'depot_banque' || !form.idBanque || !banqueChoisie?.suiviEpargne) return;
+    if (epargneMembresParCaisse[form.idBanque] === undefined) {
+      chargerMembresEpargneCaisse(form.idBanque);
+    }
+  }, [type, form.idBanque, banqueChoisie?.suiviEpargne]);
+  const membresConnusCaisse = form.idBanque ? epargneMembresParCaisse[form.idBanque] : undefined;
 
   const handleSubmit = () => {
     if (submitting) return; // clic ignoré : enregistrement déjà en cours
@@ -1525,6 +1540,7 @@ function SmartFormWrapper({ type, reunion, membres, banques, prets, sanctions, t
         type={type} form={form} sf={sf} reunion={reunion}
         membres={membres} banques={banques} prets={prets} sanctions={sanctions}
         tontines={tontines} membresParTontine={membresParTontine}
+        membresConnusCaisse={membresConnusCaisse} banqueChoisie={banqueChoisie}
       />
       {/* Caisse concernée — obligatoire partout sauf dépôt banque (a son propre
           sélecteur dédié plus riche ci-dessus) et remboursement de prêt (la caisse
@@ -1587,7 +1603,7 @@ function SmartFormWrapper({ type, reunion, membres, banques, prets, sanctions, t
 // Tous les hooks sont appelés inconditionnellement en haut.
 // Les états "internes" des sous-formulaires (ex: idTontine pour cotisation
 // et attribution) sont stockés dans form._idTontine via sf().
-function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, sanctions, tontines, membresParTontine }) {
+function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, sanctions, tontines, membresParTontine, membresConnusCaisse, banqueChoisie }) {
   const meta      = TX_TYPES.find(t => t.value === type);
   const isEntree  = meta?.dir === 'entree';
 
@@ -1664,10 +1680,9 @@ function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, san
   };
   const onBanqueChange = (val) => {
     sf('idBanque', val);
+    sf('idMembre', ''); // la liste des déposants dépend de la caisse choisie, on réinitialise
     const b = banques.find(x => x.id === val);
-    const m = membres.find(x => x.id === form.idMembre);
-    const depositaire = m ? `${m.nom} ${m.prenom}` : '';
-    if (b) sf('libelle', `Dépôt ${b.nom}${depositaire ? ' — ' + depositaire : ''} — Séance N°${reunion.numero}`);
+    if (b) sf('libelle', `Dépôt ${b.nom} — Séance N°${reunion.numero}`);
   };
   const onDeposantChange = (val) => {
     sf('idMembre', val);
@@ -1898,33 +1913,38 @@ function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, san
     </div>
   );
 
-  if (type === 'depot_banque') return (
+  if (type === 'depot_banque') {
+    // Épargne activée + liste chargée -> on restreint aux membres déjà connus
+    // de cette caisse (RG-CAI-009). Sinon (pas de banque choisie, suivi
+    // épargne non activé, ou chargement en cours) -> pas de restriction
+    // possible, on propose tous les membres.
+    const restreint = !!banqueChoisie?.suiviEpargne && Array.isArray(membresConnusCaisse);
+    const optionsDeposant = restreint
+      ? membres.filter(m => membresConnusCaisse.some(c => c.membre_id === m.id))
+      : membres;
+    return (
     <div className="space-y-3">
       <div className="flex items-center gap-2 p-2.5 bg-teal-50 rounded-xl border border-teal-100">
         <span className="text-lg"></span>
-        <div><p className="text-xs font-bold text-teal-800">Dépôt en banque</p><p className="text-xs text-teal-600">Identifiez le déposant et la banque destinataire</p></div>
+        <div><p className="text-xs font-bold text-teal-800">Dépôt en banque</p><p className="text-xs text-teal-600">Identifiez la banque destinataire puis le déposant</p></div>
       </div>
-      {/* DÉPOSANT — champ manquant corrigé */}
-      <FormField label="Membre déposant" required>
-        <select className="select" value={form.idMembre} onChange={e => onDeposantChange(e.target.value)}>
-          <option value="">— Sélectionner le membre déposant —</option>
-          {membres.map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
+      <FormField label="Banque de destination" required>
+        <select className="select" value={form.idBanque} onChange={e => onBanqueChange(e.target.value)}>
+          <option value="">— Sélectionner la banque —</option>
+          {banques.map(b => <option key={b.id} value={b.id}>{b.nom} — Solde : {fmt(b.totalSolde)}</option>)}
         </select>
       </FormField>
-      <FormField label="Banque de destination" required>
-        <div className="grid grid-cols-1 gap-2">
-          {banques.map(b => (
-            <button key={b.id} type="button" onClick={() => onBanqueChange(String(b.id))}
-              className={clsx('p-3 rounded-xl border-2 text-left transition-all',
-                form.idBanque === b.id ? 'border-teal-400 bg-teal-50' : 'border-gray-200 bg-white hover:border-teal-200')}>
-              <div className="flex items-center justify-between">
-                <p className="text-sm font-semibold text-gray-800">{b.nom}</p>
-                <p className="text-xs text-teal-600 font-bold">Solde : {fmt(b.totalSolde)}</p>
-              </div>
-              <p className="text-xs text-gray-400 mt-0.5">{b.description}</p>
-            </button>
-          ))}
-        </div>
+      {/* DÉPOSANT — champ manquant corrigé, restreint aux membres suivis */}
+      <FormField label="Membre déposant" required>
+        <select className="select" value={form.idMembre} onChange={e => onDeposantChange(e.target.value)} disabled={!form.idBanque}>
+          <option value="">— Sélectionner le membre déposant —</option>
+          {optionsDeposant.map(m => <option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
+        </select>
+        {form.idBanque && !restreint && (
+          <p className="text-xs text-gray-400 mt-1">
+            {banqueChoisie?.suiviEpargne ? 'Chargement des membres connus de cette caisse…' : "Suivi épargne non activé sur cette caisse — tous les membres sont proposés."}
+          </p>
+        )}
       </FormField>
       <div className="grid grid-cols-2 gap-2">
         <FormField label="Montant à déposer (FCFA)" required>
@@ -1941,7 +1961,8 @@ function SmartFormFields({ type, form, sf, reunion, membres, banques, prets, san
         </div>
       )}
     </div>
-  );
+    );
+  }
 
   // divers_entree / divers_sortie
   return (
@@ -2693,6 +2714,12 @@ function PanneauRubrique({ reunion, types, titre, readOnly = false }) {
 
   // Un seul type -> formulaire direct. Plusieurs types (ex: Divers) -> petit choix parmi eux seulement.
   const [selectedType, setSelectedType] = useState(types.length === 1 ? types[0] : null);
+  // Compteur de soumissions : sert de `key` sur SmartFormWrapper pour forcer son
+  // remontage après chaque enregistrement. Sans ça, quand la rubrique n'a qu'un
+  // seul type (ex: Banque), setSelectedType(types[0]) après succès ne change pas
+  // la valeur de l'état -> le formulaire ne se démonte jamais et garde les
+  // anciens champs remplis (membre, banque, montant) au lieu de repartir à vide.
+  const [formResetKey, setFormResetKey] = useState(0);
 
   const totalEntrees = txs.filter(t => TX_TYPES.find(tt => tt.value === t.type)?.dir === 'entree').reduce((s, t) => s + t.montant, 0);
   const totalSorties = txs.filter(t => TX_TYPES.find(tt => tt.value === t.type)?.dir === 'sortie').reduce((s, t) => s + t.montant, 0);
@@ -2721,6 +2748,7 @@ function PanneauRubrique({ reunion, types, titre, readOnly = false }) {
       nomMembre:  m ? `${m.nom} ${m.prenom}` : (form.nomMembre || ''),
     });
     if (types.length > 1) setSelectedType(null); else setSelectedType(types[0]);
+    setFormResetKey(k => k + 1);
   };
   const [guardedHandleSubmitTx, submittingTx] = useAsyncGuard(handleSubmitTx);
 
@@ -2792,6 +2820,7 @@ function PanneauRubrique({ reunion, types, titre, readOnly = false }) {
                 />
               ) : (
                 <SmartFormWrapper
+                  key={formResetKey}
                   type={selectedType}
                   reunion={reunion}
                   membres={membres}

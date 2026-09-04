@@ -274,6 +274,33 @@ class PretController extends Controller
         return $this->wrap(fn () => $this->service->rembourser($pret, $echeance, $data['montant_verse'], $request->user()));
     }
 
+    /**
+     * Remboursement « libre » : le trésorier saisit un montant global (ex : solder
+     * le prêt en une fois alors qu'il reste plusieurs mensualités). Contrairement à
+     * rembourser() qui n'impute qu'une seule échéance précise, ce montant est réparti
+     * sur les échéances impayées les plus anciennes d'abord (capital + intérêt de
+     * chacune) — voir PretService::rembourserLibre(). Corrige le bug où un paiement
+     * couvrant plusieurs mensualités n'en soldait qu'une seule, laissant les
+     * suivantes affichées comme dues alors que l'argent avait déjà été encaissé.
+     */
+    public function rembourserLibre(Request $request, string $id): JsonResponse
+    {
+        $pret = $this->pretScope($id);
+        $data = $request->validate([
+            'montant' => ['required', 'numeric', 'min:0.01'],
+            'mode_paiement' => ['nullable', 'in:especes,cheque,virement,mobile_money,carte_bancaire'],
+            'reference_paiement' => ['nullable', 'string', 'max:100'],
+        ]);
+
+        return $this->wrap(fn () => [
+            'echeances' => $this->service->rembourserLibre(
+                $pret, (float) $data['montant'], $request->user(), true,
+                ['mode_paiement' => $data['mode_paiement'] ?? null, 'reference_paiement' => $data['reference_paiement'] ?? null]
+            ),
+            'pret' => $pret->fresh('echeances'),
+        ]);
+    }
+
     public function echeances(string $id): JsonResponse
     {
         $pret = $this->pretScope($id);

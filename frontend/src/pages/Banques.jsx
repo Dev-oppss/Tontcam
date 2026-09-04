@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Plus, ArrowDownCircle, ArrowUpCircle, Eye, UserPlus, Users, Landmark, Pencil, Lock } from 'lucide-react';
 import { fmt, fmtDate } from '../data/mockData';
 import { useApp } from '../context/AppContext';
@@ -34,7 +34,8 @@ const createEmptyBanque = () => ({
 export default function Banques() {
   const {
     membres, banques, comptesBanque, operationsBanque, comptesBancaire,
-    addBanque, modifierBanque, doOperation, addMembreBanque, showToast,
+    addBanque, modifierBanque, doOperation, showToast,
+    activerEpargneCaisse, deposerEpargne,
   } = useApp();
 
   const [addModal,    setAddModal]    = useState(false);
@@ -46,7 +47,7 @@ export default function Banques() {
   const [newBanque,  setNewBanque]  = useState(createEmptyBanque());
   const [editBanque, setEditBanque] = useState(createEmptyBanque());
   const [opForm,     setOpForm]     = useState({ montant:'', observation:'', dateOperation: new Date().toISOString().split('T')[0], modePaiement: 'especes', detailsPaiement: '' });
-  const [enrollForm, setEnrollForm] = useState({ idMembre:'' });
+  const [enrollForm, setEnrollForm] = useState({ idMembre:'', montant:'' });
 
   // L'ancien second écran « opérations autorisées » a été retiré : ces
   // opérations ne faisaient l'objet d'aucune règle métier ni persistance.
@@ -132,14 +133,18 @@ export default function Banques() {
   const [guardedHandleEditBanque, editingBanque] = useAsyncGuard(handleEditBanque);
 
   /* ─── Inscription membre ───────────────────────────────────── */
+  // "Inscrire" un membre n'est plus une étape à part : il devient suivi dans
+  // la caisse (module épargne) dès son premier dépôt. Le suivi épargne est
+  // activé automatiquement sur la caisse si ce n'est pas déjà fait.
   const handleEnroll = async () => {
     if (!enrollModal) return;
     if (!enrollForm.idMembre) { showToast?.('Membre à inscrire requis.', 'error'); return; }
-    const mEnroll = membres.find(m => m.id === enrollForm.idMembre);
-    await addMembreBanque({ idMembre: enrollForm.idMembre, idBanque: enrollModal.id, nomBanque: enrollModal.nom,
-      nomMembre: mEnroll ? `${mEnroll.nom} ${mEnroll.prenom}` : '—',
-    });
-    setEnrollForm({ idMembre:'' });
+    if (!enrollForm.montant || Number(enrollForm.montant) <= 0) { showToast?.('Montant du premier dépôt requis.', 'error'); return; }
+    if (!enrollModal.suiviEpargne) {
+      await activerEpargneCaisse(enrollModal.id);
+    }
+    await deposerEpargne(enrollModal.id, enrollForm.idMembre, Number(enrollForm.montant));
+    setEnrollForm({ idMembre:'', montant:'' });
     setEnrollModal(null);
   };
   const [guardedHandleEnroll, enrolling] = useAsyncGuard(handleEnroll);
@@ -700,10 +705,10 @@ export default function Banques() {
       {/* ══ MODAL INSCRIRE MEMBRE ══════════════════════════ */}
       <Modal
         open={!!enrollModal}
-        onClose={() => { setEnrollModal(null); setEnrollForm({ idMembre:'' }); }}
+        onClose={() => { setEnrollModal(null); setEnrollForm({ idMembre:'', montant:'' }); }}
         title={`Inscrire un membre — ${enrollModal?.nom}`}
         footer={<>
-          <button onClick={() => { setEnrollModal(null); setEnrollForm({ idMembre:'' }); }} disabled={enrolling} className="btn-secondary">Annuler</button>
+          <button onClick={() => { setEnrollModal(null); setEnrollForm({ idMembre:'', montant:'' }); }} disabled={enrolling} className="btn-secondary">Annuler</button>
           <button onClick={guardedHandleEnroll} disabled={enrolling} className="btn-primary"><UserPlus size={14} /> {enrolling ? 'Inscription…' : 'Inscrire'}</button>
         </>}
       >
@@ -717,6 +722,7 @@ export default function Banques() {
             <>
               <div className="p-3 bg-blue-50 rounded-xl text-xs text-blue-700 border border-blue-100">
                  Un membre peut être inscrit dans plusieurs caisses différentes. Chaque compte est géré indépendamment.
+                 L'inscription se fait via un premier dépôt épargne dans la caisse.
               </div>
               <FormField label="Membre à inscrire" required>
                 <select className="select" value={enrollForm.idMembre}
@@ -726,6 +732,10 @@ export default function Banques() {
                     <option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>
                   ))}
                 </select>
+              </FormField>
+              <FormField label="Premier dépôt (FCFA)" required>
+                <input type="number" min="1" className="input" placeholder="Ex : 5 000"
+                  value={enrollForm.montant} onChange={e => setEnrollForm(f => ({ ...f, montant: e.target.value }))}/>
               </FormField>
             </>
           )}

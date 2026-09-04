@@ -1122,7 +1122,53 @@ export const AppProvider = ({ children }) => {
       return res;
     } catch (err) { return handleError(err); }
   };
-  const addMembreBanque = () => showToast('Comptes bancaires individuels non modélisés côté serveur (RG-CAI = caisses uniquement).', 'warning');
+  // ── Épargne caisse (RG-EPA) ─────────────────────────────────────
+  // Remplace l'ancien addMembreBanque (stub qui n'écrivait rien côté serveur)
+  // et l'ancien comptesBanque (toujours []). "Inscrire un membre" n'existe
+  // plus comme étape séparée : un membre devient suivi dès son premier
+  // dépôt épargne dans la caisse. epargneMembresParCaisse met en cache la
+  // liste des membres déjà suivis par caisse (id -> [{membre_id, membre_nom}]),
+  // utilisée notamment pour restreindre le sélecteur "Membre déposant" du
+  // formulaire de dépôt en banque aux membres réellement connus de la caisse.
+  const [epargneMembresParCaisse, setEpargneMembresParCaisse] = useState({});
+  const [epargneSoldesParCaisse, setEpargneSoldesParCaisse] = useState({});
+
+  const activerEpargneCaisse = async (caisseId) => {
+    try {
+      const c = await request(`/caisses/${caisseId}/activer-epargne`, { method: 'POST' });
+      setBanques((prev) => prev.map((b) => (b.id === caisseId ? { ...b, suiviEpargne: true } : b)));
+      showToast('Suivi épargne activé sur cette caisse');
+      return c;
+    } catch (err) { return handleError(err); }
+  };
+
+  const chargerMembresEpargneCaisse = async (caisseId) => {
+    try {
+      const membres = await request(`/caisses/${caisseId}/epargne/membres`);
+      setEpargneMembresParCaisse((prev) => ({ ...prev, [caisseId]: membres }));
+      return membres;
+    } catch (err) { return handleError(err); }
+  };
+
+  const chargerSoldesEpargneCaisse = async (caisseId) => {
+    try {
+      const soldes = await request(`/caisses/${caisseId}/epargne/soldes`);
+      setEpargneSoldesParCaisse((prev) => ({ ...prev, [caisseId]: soldes }));
+      return soldes;
+    } catch (err) { return handleError(err); }
+  };
+
+  const deposerEpargne = async (caisseId, membreId, montant, modePaiement) => {
+    try {
+      await request(`/caisses/${caisseId}/epargne/depots`, { method: 'POST', body: {
+        membre_id: membreId, montant: Number(montant), mode_paiement: modePaiement || undefined,
+      } });
+      showToast('Dépôt épargne enregistré');
+      await Promise.all([chargerSoldesEpargneCaisse(caisseId), chargerMembresEpargneCaisse(caisseId)]);
+      const c = await request(`/caisses/${caisseId}`);
+      setBanques((prev) => prev.map((b) => (b.id === caisseId ? adapt.caisseFromApi(c) : b)));
+    } catch (err) { return handleError(err); }
+  };
 
   // ── Sanctions ─────────────────────────────────────────────────
   const addTypeSanction = async (data) => {
@@ -1250,13 +1296,22 @@ export const AppProvider = ({ children }) => {
   const rembourserPret = async (id, montant, options) => {
     try {
       const echeanceId = typeof options === 'string' ? options : options?.echeanceId;
-      const pret = await request(`/prets/${id}`);
-      const echeance = echeanceId
-        ? pret.echeances.find((e) => e.id === echeanceId)
-        : pret.echeances.find((e) => e.statut !== 'payee');
-      if (!echeance) return showToast('Aucune échéance à rembourser.', 'error');
-
-      await request(`/prets/${id}/rembourser`, { method: 'POST', body: { echeance_id: echeance.id, montant_verse: Number(montant) } });
+      // Si une échéance précise est visée, on impute directement dessus (cas d'usage
+      // ponctuel). Sinon — cas courant du modal "Enregistrer un remboursement" — on
+      // passe par /rembourser-libre qui répartit le montant sur les échéances
+      // impayées les plus anciennes d'abord (capital + intérêt inclus). Avant ce
+      // correctif, un paiement couvrant 2 mensualités ou plus n'en soldait qu'une
+      // seule : les suivantes restaient affichées comme dues alors que l'argent
+      // avait déjà été intégralement encaissé.
+      if (echeanceId) {
+        await request(`/prets/${id}/rembourser`, { method: 'POST', body: { echeance_id: echeanceId, montant_verse: Number(montant) } });
+      } else {
+        await request(`/prets/${id}/rembourser-libre`, { method: 'POST', body: {
+          montant: Number(montant),
+          mode_paiement: options?.modePaiement || undefined,
+          reference_paiement: options?.referencePaiement || options?.detailsPaiement || undefined,
+        } });
+      }
       const p = await request(`/prets/${id}`);
       setPrets((prev) => prev.map((x) => (x.id === id ? adapt.pretFromApi(p) : x)));
       showToast('Remboursement enregistré');
@@ -1699,7 +1754,8 @@ export const AppProvider = ({ children }) => {
     addPointODJ, updatePointODJ, removePointODJ, movePointODJ, chargerRubriquesODJ, creerRubriqueODJ,
     setPresenceMembre, signerPV,
     chargerRotations, tirerAuSort, addEnchere, attribuerTour, annulerEncheres, annulerCycle, annulerVersementBulletin,
-    addBanque, addCaisse: addBanque, modifierBanque, modifierCaisse: modifierBanque, doOperation, addMembreBanque, transfererCaisse, approuverTransfertCaisse, addCompteBancaire, chargerTransferts,
+    addBanque, addCaisse: addBanque, modifierBanque, modifierCaisse: modifierBanque, doOperation, transfererCaisse, approuverTransfertCaisse, addCompteBancaire, chargerTransferts,
+    epargneMembresParCaisse, epargneSoldesParCaisse, activerEpargneCaisse, chargerMembresEpargneCaisse, chargerSoldesEpargneCaisse, deposerEpargne,
     addTypeSanction, updateTypeSanction, deleteTypeSanction, addSanction, payerSanction,
     addPret, validerPret, approuverPret, refuserPret, decaisserPret, rembourserPret, distribuerInteretsPret,
     addAide, addAideSociale: addAide, validerAideSociale, verserAideSociale, addTypeAideSociale, updateTypeAideSociale, deleteTypeAideSociale, membreEligibleAssurance, addCaisseEntry, uploadFichier,

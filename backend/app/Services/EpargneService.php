@@ -43,6 +43,23 @@ class EpargneService
             })->values()->all();
     }
 
+    /**
+     * Tous les membres ayant déjà au moins un mouvement dans cette caisse
+     * épargne (dépôt, intérêt, retrait...), qu'ils aient ou non un solde
+     * positif actuellement — sert à restreindre les sélecteurs "membre
+     * connu de cette caisse" (ex: déposant d'un versement) sans faire
+     * disparaître un membre qui a simplement tout retiré. Contrairement à
+     * soldes(), pas de filtre sur le solde.
+     */
+    public function membresSuivis(Caisse $caisse): array
+    {
+        $membreIds = EpargneMouvement::where('caisse_id', $caisse->id)->distinct()->pluck('membre_id');
+
+        return Membre::whereIn('id', $membreIds)->get()
+            ->map(fn ($m) => ['membre_id' => $m->id, 'membre_nom' => "{$m->nom} {$m->prenom}"])
+            ->values()->all();
+    }
+
     public function deposer(Caisse $caisse, string $membreId, float $montant, ?string $modePaiement, Utilisateur $auteur): EpargneMouvement
     {
         if (! $caisse->suivi_epargne) {

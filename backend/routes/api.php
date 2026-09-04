@@ -102,6 +102,7 @@ Route::middleware(['auth:sanctum', 'association.context'])->group(function () {
     Route::post('/membres/{id}/initialisation', [InitialisationMembreController::class, 'store']);
     Route::post('/caisses/{id}/activer-epargne', [EpargneController::class, 'activer']);
     Route::get('/caisses/{id}/epargne/soldes', [EpargneController::class, 'soldes']);
+    Route::get('/caisses/{id}/epargne/membres', [EpargneController::class, 'membres']);
     Route::post('/caisses/{id}/epargne/depots', [EpargneController::class, 'deposer']);
     Route::post('/caisses/{id}/epargne/cassation', [EpargneController::class, 'cassation']);
     Route::post('/caisses/{id}/epargne/couper-garantie', [EpargneController::class, 'couperGarantie']);
@@ -146,6 +147,7 @@ Route::middleware(['auth:sanctum', 'association.context'])->group(function () {
     Route::post('/prets/{id}/refuser', [PretController::class, 'refuser']);
     Route::post('/prets/{id}/decaisser', [PretController::class, 'decaisser']);
     Route::post('/prets/{id}/rembourser', [PretController::class, 'rembourser']);
+    Route::post('/prets/{id}/rembourser-libre', [PretController::class, 'rembourserLibre']);
     Route::get('/prets/{id}/echeances', [PretController::class, 'echeances']);
 
     // ── Sanctions & Social ──────────────────────────────────────

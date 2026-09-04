@@ -40,6 +40,19 @@ class EpargneController extends Controller
         return response()->json($this->service->soldes($caisse));
     }
 
+    /**
+     * GET /caisses/{id}/epargne/membres — membres déjà suivis dans cette
+     * caisse épargne (au moins un mouvement), utilisé pour restreindre les
+     * sélecteurs "membre connu de cette caisse" ailleurs dans l'app.
+     */
+    public function membres(string $caisseId): JsonResponse
+    {
+        $caisse = $this->scope->scopeAssociation(Caisse::query())->findOrFail($caisseId);
+        $this->authorize('view', $caisse);
+
+        return response()->json($this->service->membresSuivis($caisse));
+    }
+
     /** POST /caisses/{id}/epargne/depots */
     public function deposer(Request $request, string $caisseId): JsonResponse
     {
