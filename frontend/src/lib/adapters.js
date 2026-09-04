@@ -384,6 +384,7 @@ export const caisseFromApi = (c) => !c ? null : ({
   // Une caisse n'est modifiable (hors activation/désactivation) que tant
   // qu'aucune transaction réelle n'y a été enregistrée.
   modifiable: !c.has_transactions,
+  suiviEpargne: !!c.suivi_epargne,
 });
 
 export const caisseToApi = (c) => ({

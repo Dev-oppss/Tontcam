@@ -247,6 +247,44 @@ export const AppProvider = ({ children }) => {
     } catch (err) { return handleError(err); }
   };
 
+  // ── Épargne (RG-EPA) : caisse "tirelire commune", voir EpargneService ──
+  const activerEpargne = async (caisseId) => {
+    try {
+      const res = await request(`/caisses/${caisseId}/activer-epargne`, { method: 'POST' });
+      setBanques((prev) => prev.map((b) => (b.id === caisseId ? { ...b, suiviEpargne: true } : b)));
+      showToast('Suivi épargne activé.', 'success');
+      return res;
+    } catch (err) { return handleError(err); }
+  };
+
+  const chargerSoldesEpargne = async (caisseId) => {
+    try { return await request(`/caisses/${caisseId}/epargne/soldes`); } catch (err) { return handleError(err); }
+  };
+
+  const deposerEpargne = async (caisseId, payload) => {
+    try {
+      const res = await request(`/caisses/${caisseId}/epargne/depots`, { method: 'POST', body: payload });
+      showToast('Dépôt enregistré.', 'success');
+      return res;
+    } catch (err) { return handleError(err); }
+  };
+
+  const cassationEpargne = async (caisseId) => {
+    try {
+      const res = await request(`/caisses/${caisseId}/epargne/cassation`, { method: 'POST' });
+      showToast('Cassation générale effectuée.', 'success');
+      return res;
+    } catch (err) { return handleError(err); }
+  };
+
+  const couperGarantieEpargne = async (caisseId, payload) => {
+    try {
+      const res = await request(`/caisses/${caisseId}/epargne/couper-garantie`, { method: 'POST', body: payload });
+      showToast('Montant prélevé sur l\u2019épargne.', 'success');
+      return res;
+    } catch (err) { return handleError(err); }
+  };
+
   // ── Charge toutes les données de l'association une fois connecté ──
   useEffect(() => {
     if (!user || !currentAssociation) return;
@@ -1651,6 +1689,7 @@ export const AppProvider = ({ children }) => {
     showToast, importerHistorique, importerHistoriqueFichier,
     activerCagnotte, chargerPropositionCagnotte, chargerRemisesGain, creerRemiseGain,
     chargerInitialisationMembre, enregistrerInitialisationMembre,
+    activerEpargne, chargerSoldesEpargne, deposerEpargne, cassationEpargne, couperGarantieEpargne,
     login, logout, changePassword, updateMonProfil, register, updateAssociation, uploadStatutsAssociation, updateParametres,
     addMembre, updateMembre, deleteMembre,
     addPoste, addMandat, cloturerMandat,
