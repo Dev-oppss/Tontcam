@@ -250,6 +250,18 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
   const cycleOuvertPourTontine = (idTontineCandidat) => (cyclesTontine || []).find(c =>
     c.idReunion === reunion.id && c.idTontine === idTontineCandidat && c.statut !== 'clos' && c.statut !== 'annule');
 
+  // Par défaut, la caisse bénéficiaire d'une enchère est la caisse liée à la
+  // tontine (tontineSelectee.idCaisse) — l'utilisateur reste libre de choisir
+  // une autre caisse via les select dédiés, mais on évite de le forcer à le
+  // faire à chaque enchère alors que 99% du temps c'est la caisse de la tontine.
+  // On ne pré-remplit que les champs encore vides pour ne jamais écraser un
+  // choix déjà fait par l'utilisateur.
+  useEffect(() => {
+    if (etape !== 'beneficiaire' || typeAttr !== 'enchere' || !tontineSelectee?.idCaisse) return;
+    if (!nouvelleEnchereCaisseId) setNouvelleEnchereCaisseId(tontineSelectee.idCaisse);
+    if (!miseGagnanteCaisseId) setMiseGagnanteCaisseId(tontineSelectee.idCaisse);
+  }, [etape, typeAttr, tontineSelectee, nouvelleEnchereCaisseId, miseGagnanteCaisseId]);
+
   useEffect(() => {
     if (!tontineSelectee) return;
     if (etape !== 'choix' && etape !== 'cotisation') return;
