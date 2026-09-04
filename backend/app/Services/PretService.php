@@ -184,6 +184,12 @@ class PretService
                 'transaction_decaissement_id' => $transaction->id,
             ]);
 
+            // Épargne (RG-EPA) : si la caisse source suit les soldes épargne, on fige
+            // (« snapshot ») la part de chaque membre à cet instant précis — l'intérêt
+            // perçu au remboursement sera partagé sur cette base, pas sur les soldes
+            // du jour du remboursement (qui peuvent avoir bougé entre-temps).
+            app(\App\Services\EpargneService::class)->snapshotPourPret($pret->fresh('caisse'));
+
             $this->loguerStatut($pret, 'approuve', 'en_cours', 'Décaissé', $tresorier);
 
             return $pret;
@@ -213,6 +219,13 @@ class PretService
                 'date_versement_reel' => now()->toDateString(),
                 'transaction_id' => $transaction?->id,
             ]);
+
+            // Épargne (RG-EPA) : dès que l'échéance est intégralement soldée, l'intérêt
+            // qu'elle porte est partagé entre les membres au prorata de leur solde
+            // snapshotté au décaissement (si la caisse source suit l'épargne).
+            if ($deficit <= 0 && (float) $echeance->montant_interet > 0) {
+                app(\App\Services\EpargneService::class)->distribuerInteret($pret->fresh('caisse'), (float) $echeance->montant_interet);
+            }
 
             $capitalRembourseReel = min($montantVerse, (float) $echeance->montant_capital);
             $pret->update([
