@@ -31,6 +31,7 @@ class Caisse extends Model
         'date_ouverture',
         'date_cloture',
         'config',
+        'suivi_epargne',
     ];
 
     protected $casts = [
@@ -44,7 +45,8 @@ class Caisse extends Model
             'actif' => 'boolean',
             'date_ouverture' => 'date',
             'date_cloture' => 'date',
-            'config' => 'array'
+            'config' => 'array',
+            'suivi_epargne' => 'boolean'
     ];
 
     public function association()
