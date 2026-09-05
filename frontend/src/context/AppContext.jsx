@@ -1234,9 +1234,10 @@ export const AppProvider = ({ children }) => {
   };
   const payerSanction = async (id, options = {}) => {
     try {
-      // Sanctions.jsx appelle payerSanction(id, { modePaiement, detailsPaiement }) — pas un
-      // id de caisse. La caisse est optionnelle (le serveur prend la 1ère caisse par défaut).
-      const idCaisse = typeof options === 'string' ? options : options?.idCaisse;
+      // Choix de la caisse désormais obligatoire côté UI (Sanctions.jsx) — le
+      // membre doit une sanction, il ne l'a pas déjà payée par défaut ; au
+      // moment du règlement, le trésorier choisit explicitement où va l'argent.
+      const idCaisse = typeof options === 'string' ? options : (options?.caisseId || options?.idCaisse);
       const s = await request(`/sanctions/${id}/payer`, { method: 'POST', body: {
         caisse_id: idCaisse || undefined,
         mode_paiement: options?.modePaiement,

@@ -29,7 +29,7 @@ const slugify = (value) => String(value || '')
   .replace(/^_+|_+$/g, '');
 
 export default function Sanctions() {
-  const { membres, sanctions, addSanction, payerSanction, typesSanction, addTypeSanction, updateTypeSanction, deleteTypeSanction, reunions = [], showToast } = useApp();
+  const { membres, sanctions, addSanction, payerSanction, typesSanction, addTypeSanction, updateTypeSanction, deleteTypeSanction, reunions = [], banques = [], showToast } = useApp();
   const [add, setAdd] = useState(false);
   const [addType, setAddType] = useState(false);
   const [editingTypeId, setEditingTypeId] = useState(null);
@@ -43,6 +43,7 @@ export default function Sanctions() {
   });
   const [customTypeForm, setCustomTypeForm] = useState(emptyCustomType());
   const [payModal, setPayModal] = useState(null);
+  const [payCaisseId, setPayCaisseId] = useState('');
   const [payModePaiement, setPayModePaiement] = useState('especes');
   const [payDetailsPaiement, setPayDetailsPaiement] = useState('');
 
@@ -107,9 +108,11 @@ export default function Sanctions() {
   const [guardedSaveRetard, savingRetard] = useAsyncGuard(handleSaveRetard);
 
   const handlePayer = async () => {
+    if (!payCaisseId) { showToast?.('Choisissez la caisse qui reçoit le paiement.', 'error'); return; }
     if (!isModePaiementValid(payModePaiement, payDetailsPaiement)) { showToast?.('Référence de paiement requise pour ce mode de versement.', 'error'); return; }
-    await payerSanction(payModal.id, { modePaiement: payModePaiement, detailsPaiement: payDetailsPaiement });
+    await payerSanction(payModal.id, { caisseId: payCaisseId, modePaiement: payModePaiement, detailsPaiement: payDetailsPaiement });
     setPayModal(null);
+    setPayCaisseId('');
     setPayModePaiement('especes');
     setPayDetailsPaiement('');
   };
@@ -353,7 +356,7 @@ export default function Sanctions() {
               </td>
               <td className="td">
                 {s.statut==='impayee'&&(
-                  <button onClick={()=>setPayModal(s)} className="btn-primary py-1 px-2.5 text-xs flex items-center gap-1">
+                  <button onClick={()=>{ setPayModal(s); setPayCaisseId(''); }} className="btn-primary py-1 px-2.5 text-xs flex items-center gap-1">
                     <CreditCard size={12}/>Marquer payée
                   </button>
                 )}
@@ -440,8 +443,8 @@ export default function Sanctions() {
       <Modal open={!!payModal} onClose={()=>setPayModal(null)} title="Régler la sanction"
         footer={<>
           <button onClick={()=>setPayModal(null)} disabled={payingAmende} className="btn-secondary">Annuler</button>
-          <button onClick={guardedHandlePayer} disabled={payingAmende || !isModePaiementValid(payModePaiement, payDetailsPaiement)}
-            className={`btn-primary ${(payingAmende || !isModePaiementValid(payModePaiement, payDetailsPaiement)) ? 'opacity-40 cursor-not-allowed' : ''}`}>
+          <button onClick={guardedHandlePayer} disabled={payingAmende || !payCaisseId || !isModePaiementValid(payModePaiement, payDetailsPaiement)}
+            className={`btn-primary ${(payingAmende || !payCaisseId || !isModePaiementValid(payModePaiement, payDetailsPaiement)) ? 'opacity-40 cursor-not-allowed' : ''}`}>
             <CreditCard size={14}/>{payingAmende ? 'Paiement…' : 'Confirmer le paiement'}
           </button>
         </>}>
@@ -450,6 +453,13 @@ export default function Sanctions() {
             <div className="p-3 bg-red-50 rounded-xl border border-red-100">
               <p className="text-sm font-semibold text-red-800">{payModal.nomMembre}</p>
               <p className="text-xs text-red-600 mt-0.5">{payModal.motif || typeSancLabel[payModal.typeSanction] || payModal.typeSanction} — <strong>{fmt(payModal.montant)}</strong></p>
+            </div>
+            <div>
+              <label className="text-xs text-gray-500 block mb-1">Caisse qui reçoit le paiement</label>
+              <select className="select" value={payCaisseId} onChange={(e) => setPayCaisseId(e.target.value)}>
+                <option value="">Choisir une caisse…</option>
+                {banques.map((b) => <option key={b.id} value={b.id}>{b.nom}</option>)}
+              </select>
             </div>
             <ModePaiementFields
               modePaiement={payModePaiement}
