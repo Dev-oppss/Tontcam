@@ -193,13 +193,11 @@ class SanctionController extends Controller
         }
 
         $data = $request->validate([
-            'caisse_id' => ['sometimes', 'nullable', 'uuid'],
+            'caisse_id' => ['required', 'uuid'],
             'mode_paiement' => ['sometimes', 'nullable', 'string'],
             'details_paiement' => ['sometimes', 'nullable', 'string'],
         ]);
-        $caisse = !empty($data['caisse_id'])
-            ? \App\Models\Caisse::findOrFail($data['caisse_id'])
-            : \App\Models\Caisse::where('association_id', $this->scope->associationId())->orderBy('created_at')->firstOrFail();
+        $caisse = $this->scope->scopeAssociation(\App\Models\Caisse::query())->findOrFail($data['caisse_id']);
 
         $transaction = $this->caisseService->entree($caisse, (float) $sanction->montant, "Paiement sanction — {$sanction->motif}", [
             'reference_type' => 'sanction_membre', 'reference_id' => $sanction->id, 'created_by' => $request->user()->id, 'valide_par' => $request->user()->id,
