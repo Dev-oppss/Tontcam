@@ -7,6 +7,13 @@ export default {
         ink: { 900:'#0B0D12', 800:'#171A22', 700:'#2E3540', 600:'#4A525F', 500:'#6B7280' },
         paper: { 50:'#F5F6F8', 100:'#ECEEF2', 200:'#DEE1E7' },
         indigo: { 50:'#EEF0FD', 100:'#DBE0FB', 300:'#8D98EA', 400:'#6675DF', 500:'#4C5FD6', 600:'#3B4BB0', 700:'#2E3B8C' },
+        // Alias de la couleur de marque (identique à indigo ci-dessus, mêmes
+        // valeurs que --brand/--brand-dark dans index.css) — utilisée par son
+        // nom `primary` dans une quinzaine de fichiers frontend. Sans cette
+        // définition, les classes bg-primary-*/text-primary-*/etc. n'existent
+        // pas pour Tailwind et sont silencieusement ignorées : c'est la cause
+        // du rendu gris/sans contraste signalé sur les badges et cartes KPI.
+        primary: { 50:'#EEF0FD', 100:'#DBE0FB', 200:'#C3CAF7', 300:'#8D98EA', 400:'#6675DF', 500:'#4C5FD6', 600:'#3B4BB0', 700:'#2E3B8C', 800:'#232D6B' },
         bronze: { 50:'#FBF6EC', 100:'#F3E6C7', 300:'#D9BA79', 400:'#C39F52', 500:'#B08A3E', 600:'#8C6D2F' },
         emerald: { 50:'#E9F7F1', 100:'#C9EDDD', 400:'#2CAE86', 500:'#1F8A6F', 600:'#186B57' },
         ruby: { 50:'#FCEEEC', 100:'#F6D3CD', 400:'#D9694E', 500:'#C24E33' },
