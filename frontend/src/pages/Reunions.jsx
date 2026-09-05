@@ -2687,13 +2687,63 @@ function OctroiPretReunion({ reunion, membres, caisses, comptesBanque, onDone, o
   );
 }
 
+// Édition d'une opération de séance (pt.4 : le client veut corriger directement
+// plutôt que supprimer + ressaisir). Réutilise les mêmes champs que la saisie,
+// pré-remplis ; le type n'est volontairement pas modifiable ici.
+function EditerTransactionModal({ tx, reunion, membres, banques, prets, sanctions, tontines, membresParTontine, onClose }) {
+  const { updateSeanceTransaction, epargneMembresParCaisse, chargerMembresEpargneCaisse } = useApp();
+  const [form, setForm] = useState({
+    type: tx.type, montant: String(tx.montant ?? ''), libelle: tx.libelle || '',
+    idMembre: tx.idMembre || '', idBanque: tx.idBanque || tx.idCaisse || '',
+    idSanction: '', idPret: '', sousType: 'autre',
+    modePaiement: tx.modePaiement || 'especes', detailsPaiement: tx.detailsPaiement || '',
+    _idTontine: '',
+  });
+  const sf = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const [submitting, setSubmitting] = useState(false);
+
+  const banqueChoisie = banques.find(b => b.id === form.idBanque);
+  useEffect(() => {
+    if (tx.type !== 'depot_banque' || !form.idBanque || !banqueChoisie?.suiviEpargne) return;
+    if (epargneMembresParCaisse[form.idBanque] === undefined) chargerMembresEpargneCaisse(form.idBanque);
+  }, [form.idBanque, banqueChoisie?.suiviEpargne]);
+  const membresConnusCaisse = form.idBanque ? epargneMembresParCaisse[form.idBanque] : undefined;
+
+  const handleSubmit = async () => {
+    if (!form.montant || Number(form.montant) <= 0) return;
+    setSubmitting(true);
+    await updateSeanceTransaction(tx.idReunion, tx.id, form);
+    setSubmitting(false);
+    onClose();
+  };
+
+  return (
+    <Modal open onClose={onClose} title="Modifier l'opération"
+      footer={<>
+        <button onClick={onClose} disabled={submitting} className="btn-secondary">Annuler</button>
+        <button onClick={handleSubmit} disabled={submitting} className="btn-primary">{submitting ? 'Enregistrement…' : 'Enregistrer'}</button>
+      </>}>
+      <div className="mb-3 p-2.5 bg-amber-50 border border-amber-100 rounded-xl text-xs text-amber-700">
+        La modification contre-passe l'écriture de caisse d'origine et en crée une nouvelle : les deux restent visibles dans le journal de caisse pour la traçabilité.
+      </div>
+      <SmartFormFields
+        type={tx.type} form={form} sf={sf} reunion={reunion}
+        membres={membres} banques={banques} prets={prets} sanctions={sanctions}
+        tontines={tontines} membresParTontine={membresParTontine}
+        membresConnusCaisse={membresConnusCaisse} banqueChoisie={banqueChoisie}
+      />
+    </Modal>
+  );
+}
+
 function PanneauRubrique({ reunion, types, titre, readOnly = false }) {
   const {
     membres, banques, prets, sanctions, typesSanction, addSanction,
     typesAideSociale, addAide, validerAideSociale, verserAideSociale,
-    seanceTransactions, addSeanceTransaction, deleteSeanceTransaction,
+    seanceTransactions, addSeanceTransaction, updateSeanceTransaction, deleteSeanceTransaction,
     tontines, membresParTontine, showToast, comptesBanque,
   } = useApp();
+  const [editTx, setEditTx] = useState(null); // transaction en cours d'édition (pt.4)
 
   // BUG corrigé : soldeDisponibleCaisse se basait sur caisseJournal, un état qui
   // n'est JAMAIS peuplé depuis cet écran (chargerJournalCaisse n'est appelé que
@@ -2870,17 +2920,33 @@ function PanneauRubrique({ reunion, types, titre, readOnly = false }) {
                   </p>
                 </div>
                 {!locked && (
-                  <button onClick={() => {
-                    if (window.confirm('Annuler cette opération ? Une contre-écriture sera créée pour conserver la traçabilité.')) deleteSeanceTransaction(tx.idReunion, tx.id);
-                  }} title="Annuler l'opération"
-                    className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg opacity-0 group-hover:opacity-100 transition-all shrink-0">
-                    <Trash2 size={13}/>
-                  </button>
+                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all shrink-0">
+                    {tx.type !== 'remboursement_pret' && (
+                      <button onClick={() => setEditTx(tx)} title="Modifier l'opération"
+                        className="p-1.5 text-gray-300 hover:text-primary-600 hover:bg-primary-50 rounded-lg">
+                        <Pencil size={13}/>
+                      </button>
+                    )}
+                    <button onClick={() => {
+                      if (window.confirm('Annuler cette opération ? Une contre-écriture sera créée pour conserver la traçabilité.')) deleteSeanceTransaction(tx.idReunion, tx.id);
+                    }} title="Annuler l'opération"
+                      className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg">
+                      <Trash2 size={13}/>
+                    </button>
+                  </div>
                 )}
               </div>
             );
           })}
         </div>
+      )}
+      {editTx && (
+        <EditerTransactionModal
+          tx={editTx} reunion={reunion}
+          membres={membres} banques={banques} prets={prets} sanctions={sanctions}
+          tontines={tontines} membresParTontine={membresParTontine}
+          onClose={() => setEditTx(null)}
+        />
       )}
     </div>
   );

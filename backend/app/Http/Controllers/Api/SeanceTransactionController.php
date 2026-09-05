@@ -133,6 +133,67 @@ class SeanceTransactionController extends Controller
         }
     }
 
+    public function update(Request $request, string $reunionId, string $id): JsonResponse
+    {
+        $seance = SeanceTransaction::where('reunion_id', $reunionId)
+            ->whereHas('reunion', fn ($q) => $this->scope->scopeAssociation($q))
+            ->findOrFail($id);
+        $this->authorize('update', $seance->reunion);
+        if (in_array($seance->reunion->statut, ['cloturee', 'annulee'], true)) {
+            return response()->json(['message' => 'Réunion clôturée ou annulée : opération non modifiable.'], 422);
+        }
+        if ($seance->annulee) {
+            return response()->json(['message' => 'Cette opération est annulée, elle n\'est plus modifiable.'], 422);
+        }
+        if ($seance->type === 'remboursement_pret') {
+            return response()->json(['message' => 'Le remboursement de prêt se corrige depuis la fiche du prêt.'], 422);
+        }
+
+        $data = $request->validate([
+            'type' => ['required', 'in:cotisation,paiement_sanction,amende,depot_banque,attribution_tour,divers_entree,divers_sortie,pret_accorde,aide_sociale'],
+            'membre_id' => ['nullable', 'uuid'],
+            'montant' => ['required', 'numeric', 'min:0.01'],
+            'libelle' => ['nullable', 'string', 'max:300'],
+            'caisse_id' => ['nullable', 'uuid'],
+            'note' => ['nullable', 'string'],
+        ]);
+
+        try {
+            return DB::transaction(function () use ($seance, $data, $request) {
+                // pt.4 du rapport de test : le client veut une édition directe plutôt
+                // que supprimer + ressaisir. On contre-passe le(s) mouvement(s) de
+                // caisse existants (traçabilité conservée, comme dans destroy()) puis
+                // on ré-applique le nouveau montant/caisse — l'écriture d'origine et
+                // sa contre-passation restent visibles dans le journal de caisse,
+                // mais côté séance l'utilisateur voit une simple modification.
+                $anciennesTransactions = \App\Models\Transaction::where('reference_type', 'seance_transaction')
+                    ->where('reference_id', $seance->id)->where('annulee', false)->get();
+                foreach ($anciennesTransactions as $t) {
+                    $this->caisseService->annuler($t, $request->user(), 'Correction de la saisie (édition)');
+                }
+
+                $seance->update($data);
+
+                if (!empty($data['caisse_id'])) {
+                    $caisse = $this->scope->scopeAssociation(Caisse::query())->findOrFail($data['caisse_id']);
+                    $this->authorize('update', $caisse);
+                    $libelle = ($data['libelle'] ?? null) ?: "Séance du {$seance->reunion->date_reunion} — {$data['type']} (corrigé)";
+                    $sens = in_array($data['type'], self::TYPES_SORTIE, true) ? 'sortie' : 'entree';
+                    $this->caisseService->{$sens}($caisse, (float) $data['montant'], $libelle, [
+                        'reference_type' => 'seance_transaction',
+                        'reference_id' => $seance->id,
+                        'created_by' => $request->user()->id,
+                        'valide_par' => $request->user()->id,
+                    ]);
+                }
+
+                return response()->json($seance->fresh()->load(['membre', 'caisse']));
+            });
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+    }
+
     public function destroy(Request $request, string $reunionId, string $id): JsonResponse
     {
         $seance = SeanceTransaction::where('reunion_id', $reunionId)

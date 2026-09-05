@@ -1006,6 +1006,27 @@ export const AppProvider = ({ children }) => {
       return item;
     } catch (err) { return handleError(err); }
   };
+  const updateSeanceTransaction = async (idReunion, id, data) => {
+    try {
+      const t = await request(`/reunions/${idReunion}/transactions/${id}`, {
+        method: 'PUT',
+        body: {
+          type: data.type, membre_id: data.idMembre || undefined, montant: Number(data.montant),
+          libelle: data.libelle || undefined, caisse_id: data.idBanque || undefined,
+          note: data.note || undefined,
+        },
+      });
+      const item = {
+        id: t.id, idReunion, type: t.type, idMembre: t.membre_id,
+        nomMembre: t.membre ? `${t.membre.nom} ${t.membre.prenom}` : null,
+        montant: Number(t.montant), libelle: t.libelle,
+        idBanque: t.caisse_id, idCaisse: t.caisse_id, nomCaisse: t.caisse?.libelle || null,
+      };
+      setSeanceTransactionsState((prev) => prev.map((x) => (x.id === id ? item : x)));
+      showToast('Transaction modifiée');
+      return item;
+    } catch (err) { return handleError(err); }
+  };
   const deleteSeanceTransaction = async (idReunion, id) => {
     try {
       await request(`/reunions/${idReunion}/transactions/${id}`, { method: 'DELETE' });
@@ -1765,7 +1786,7 @@ export const AppProvider = ({ children }) => {
     addPret, validerPret, approuverPret, refuserPret, decaisserPret, rembourserPret, distribuerInteretsPret,
     addAide, addAideSociale: addAide, validerAideSociale, verserAideSociale, addTypeAideSociale, updateTypeAideSociale, deleteTypeAideSociale, membreEligibleAssurance, addCaisseEntry, uploadFichier,
     addTourPlanning, marquerTourEncaisse, retirerTourPlanning, chargerPlanningTours,
-    addSeanceTransaction, deleteSeanceTransaction, enregistrerBeneficiaireSeance, chargerSeanceTransactions,
+    addSeanceTransaction, updateSeanceTransaction, deleteSeanceTransaction, enregistrerBeneficiaireSeance, chargerSeanceTransactions,
     addUtilisateur, updateUtilisateur, desactiverUtilisateur, activerUtilisateur,
     genererBulletin, ouvrirBulletinPdf, ajouterRetenueBulletin, payerBulletin,
     ouvrirCycle, chargerCycle, saisirCotisationCycle, designerGagnantCycle, cloturerCycle,
