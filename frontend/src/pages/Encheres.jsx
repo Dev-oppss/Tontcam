@@ -1,22 +1,23 @@
 import { useState, useEffect } from 'react';
-import { Gavel, Plus, Trophy, AlertTriangle } from 'lucide-react';
+import { Gavel, Trophy, Info } from 'lucide-react';
 import { fmt, fmtDate } from '../data/mockData';
 import { useApp } from '../context/AppContext';
-import { PageHeader, Table, Badge, Modal, FormField } from '../components/ui/index';
-import { getMissingFields } from '../lib/validation';
-import { useAsyncGuard } from '../hooks/useAsyncGuard';
+import { PageHeader, Table, Badge } from '../components/ui/index';
 
+// RÈGLE D'OR : toute enchère et toute attribution de tour se font depuis la
+// Réunion en cours (onglet Bénéficiaire), jamais depuis cette page. Avant ce
+// correctif, cette page permettait d'enregistrer une enchère et de désigner
+// un gagnant en dehors de tout contexte de séance, en appelant directement
+// le même endpoint que le flux réunion (POST /cycles/{id}/encheres) — donc
+// sans passage par le PV, sans traçabilité de séance. Cette page reste utile
+// en lecture seule pour visualiser l'état des enchères en cours et l'historique.
 export default function Encheres() {
-  const { membres, membresParTontine, encheres, rotations, tontines, chargerRotations, addEnchere, attribuerTour, annulerEncheres, showToast } = useApp();
+  const { rotations, encheres, tontines, chargerRotations } = useApp();
 
   useEffect(() => {
     tontines.filter(t => t.typeAttribution === 'enchere').forEach(t => chargerRotations(t.id));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tontines.map(t => t.id).join(',')]);
-
-  const [addModal, setAddModal]   = useState(false);
-  const [confirm,  setConfirm]    = useState(null); // { type:'attribuer'|'annuler', rotation, gagnant? }
-  const [form, setForm] = useState({ idMembre:'', montantEnchere:'', dateEnchere: new Date().toISOString().split('T')[0] });
 
   // Tour en attente d'attribution
   const tourEnCours = rotations.find(r => !r.dateAttribution);
@@ -27,46 +28,17 @@ export default function Encheres() {
     ? encTour.reduce((max, e) => e.montantEnchere > max.montantEnchere ? e : max, encTour[0])
     : null;
 
-  const handleAdd = async () => {
-    const missing = getMissingFields(form, [
-      { key: 'idMembre', label: 'Membre' },
-      { key: 'montantEnchere', label: "Montant de l'enchère" },
-    ]);
-    if (missing.length) { showToast?.(`Champ(s) requis manquant(s) : ${missing.join(', ')}`, 'error'); return; }
-    const m = membres.find(x => x.id === form.idMembre);
-    await addEnchere({
-      idRotation: tourEnCours?.id,
-      idTontine: tourEnCours?.idTontine,
-      idMembre: form.idMembre,
-      nomMembre: `${m.nom} ${m.prenom}`,
-      montantEnchere: Number(form.montantEnchere),
-      dateEnchere: form.dateEnchere,
-    });
-    setAddModal(false);
-    setForm({ idMembre:'', montantEnchere:'', dateEnchere: new Date().toISOString().split('T')[0] });
-  };
-  const [guardedHandleAdd, addingEnchere] = useAsyncGuard(handleAdd);
-
-  const handleConfirm = async () => {
-    if (!confirm) return;
-    if (confirm.type === 'attribuer') {
-      const montantRecu = potTotal - (confirm.gagnant.montantEnchere || 0);
-      await attribuerTour(confirm.rotation.id, confirm.gagnant.idMembre, montantRecu);
-    } else {
-      await annulerEncheres(confirm.rotation.id);
-    }
-    setConfirm(null);
-  };
-  const [guardedHandleConfirm, confirming] = useAsyncGuard(handleConfirm);
-
-  const membresDejaMis = encTour.map(e => e.idMembre);
-
   return (
     <div className="space-y-6">
-      <PageHeader title="Enchères" subtitle="Gestion des enchères pour la prochaine rotation"
-        action={<button onClick={()=>setAddModal(true)} className="btn-primary" disabled={!tourEnCours}>
-          <Plus size={15}/> Enregistrer enchère
-        </button>}/>
+      <PageHeader title="Enchères" subtitle="Suivi des enchères — les actions se font depuis la Réunion en cours" />
+
+      <div className="card border-l-4 border-l-primary-400 bg-primary-50/40 flex items-start gap-3">
+        <Info size={18} className="text-primary-600 mt-0.5 shrink-0" />
+        <p className="text-sm text-primary-800">
+          Enregistrer une enchère ou désigner le gagnant se fait exclusivement depuis la <strong>Réunion en cours</strong> (onglet Bénéficiaire),
+          afin que chaque enchère reste rattachée à une séance et à son PV. Cette page n'affiche que le suivi.
+        </p>
+      </div>
 
       {!tourEnCours && (
         <div className="card text-center py-12 text-gray-400">
@@ -107,11 +79,6 @@ export default function Encheres() {
                     </p>
                   </div>
                 </div>
-                {maxEnchere && (
-                  <div className="mt-3 p-3 bg-white rounded-xl border border-amber-100 text-xs text-gray-500">
-                    Redistribution : {fmt(maxEnchere.montantEnchere)} ÷ 22 parts = <strong>{fmt(Math.round(maxEnchere.montantEnchere/22))}/part</strong>
-                  </div>
-                )}
               </div>
             </div>
           </div>
@@ -141,22 +108,6 @@ export default function Encheres() {
                 ))}
               </Table>
             )}
-
-            <div className="px-6 py-3 border-t border-gray-100 flex gap-3 justify-end">
-              <button
-                onClick={()=>setConfirm({type:'annuler',rotation:tourEnCours})}
-                className="btn-secondary"
-                disabled={encTour.length===0}>
-                <AlertTriangle size={14}/>Annuler les enchères
-              </button>
-              <button
-                onClick={()=>maxEnchere&&setConfirm({type:'attribuer',rotation:tourEnCours,gagnant:maxEnchere})}
-                className="btn-amber"
-                disabled={!maxEnchere}>
-                <Gavel size={14}/>
-                {maxEnchere ? `Attribuer à ${maxEnchere.nomMembre}` : 'Aucune enchère'}
-              </button>
-            </div>
           </div>
         </>
       )}
@@ -180,58 +131,6 @@ export default function Encheres() {
           </Table>
         </div>
       )}
-
-      {/* Modal nouvelle enchère */}
-      <Modal open={addModal} onClose={()=>setAddModal(false)} title="Enregistrer une enchère"
-        footer={<><button onClick={()=>setAddModal(false)} disabled={addingEnchere} className="btn-secondary">Annuler</button><button onClick={guardedHandleAdd} disabled={addingEnchere} className="btn-primary"><Gavel size={14}/>{addingEnchere ? 'Enregistrement…' : 'Enregistrer'}</button></>}>
-        <div className="space-y-4">
-          {tourEnCours&&(
-            <div className="p-3 bg-amber-50 rounded-xl text-sm text-amber-800">
-              Pot total du tour N°{tourEnCours.numeroTour} : <strong>{fmt(potTotal)}</strong>
-            </div>
-          )}
-          <FormField label="Membre" required>
-            <select className="select" value={form.idMembre} onChange={e=>setForm(f=>({...f,idMembre:e.target.value}))}>
-              <option value="">Sélectionner un membre…</option>
-              {membres.filter(m=>m.statut==='actif'&&!membresDejaMis.includes(m.id)).map(m=>{
-                const parts = membresParTontine.filter(mt=>mt.idMembre===m.id).reduce((s,mt)=>s+mt.nombreParts,0);
-                return <option key={m.id} value={m.id}>{m.nom} {m.prenom} ({parts} part{parts>1?'s':''})</option>;
-              })}
-            </select>
-          </FormField>
-          <FormField label="Montant de l'enchère (FCFA)" required>
-            <input type="number" className="input" placeholder="150000" step="5000"
-              value={form.montantEnchere} onChange={e=>setForm(f=>({...f,montantEnchere:e.target.value}))}/>
-          </FormField>
-          <FormField label="Date de l'enchère">
-            <input type="date" className="input" value={form.dateEnchere}
-              onChange={e=>setForm(f=>({...f,dateEnchere:e.target.value}))}/>
-          </FormField>
-        </div>
-      </Modal>
-
-      {/* Modal confirmation */}
-      <Modal open={!!confirm} onClose={()=>setConfirm(null)} title={confirm?.type==='attribuer'?'Confirmer l\'attribution':'Confirmer l\'annulation'}
-        footer={<>
-          <button onClick={()=>setConfirm(null)} disabled={confirming} className="btn-secondary">Annuler</button>
-          <button onClick={guardedHandleConfirm} disabled={confirming} className={confirm?.type==='attribuer'?'btn-amber':'btn-danger'}>
-            {confirming ? 'Veuillez patienter…' : (confirm?.type==='attribuer'?<><Gavel size={14}/>Confirmer l'attribution</>:<><AlertTriangle size={14}/>Oui, annuler</>)}
-          </button>
-        </>}>
-        {confirm?.type==='attribuer' ? (
-          <div className="space-y-3 text-sm">
-            <p className="text-gray-700">Vous allez attribuer le tour N°<strong>{confirm?.rotation?.numeroTour}</strong> à :</p>
-            <div className="p-4 bg-amber-50 rounded-xl text-center">
-              <p className="font-bold text-amber-800 text-lg">{confirm?.gagnant?.nomMembre}</p>
-              <p className="text-amber-600">Enchère : {fmt(confirm?.gagnant?.montantEnchere)}</p>
-              <p className="text-primary-700 font-semibold mt-1">Montant reçu : {fmt(potTotal - (confirm?.gagnant?.montantEnchere||0))}</p>
-            </div>
-            <p className="text-gray-500 text-xs">Cette action est irréversible.</p>
-          </div>
-        ) : (
-          <p className="text-sm text-gray-600">Toutes les enchères du tour N°<strong>{confirm?.rotation?.numeroTour}</strong> seront supprimées. Êtes-vous sûr ?</p>
-        )}
-      </Modal>
     </div>
   );
 }

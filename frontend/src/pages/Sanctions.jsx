@@ -233,13 +233,12 @@ export default function Sanctions() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Sanctions" subtitle="Types de sanction paramétrables et pénalités des membres"
+      <PageHeader title="Sanctions" subtitle="Les sanctions s'appliquent depuis la Réunion en cours (règle d'or)"
         action={
           <div className="flex gap-2">
             <button onClick={openRetardModal} className="btn-secondary"><ShieldAlert size={15}/> Retards automatiques</button>
             <button onClick={openAbsenceModal} className="btn-secondary"><ShieldAlert size={15}/> Absences cumulées</button>
             <button onClick={()=>{setEditingTypeId(null); setCustomTypeForm(emptyCustomType()); setAddType(true);}} className="btn-secondary"><Settings2 size={15}/> Paramètres</button>
-            <button onClick={()=>setAdd(true)} className="btn-primary"><Plus size={15}/> Nouvelle sanction</button>
           </div>
         }/>
 
@@ -423,67 +422,6 @@ export default function Sanctions() {
             ))}
           </div>
           <button type="button" onClick={addPalierAbsence} className="btn-secondary text-xs py-1.5 mt-2"><Plus size={12}/> Ajouter un seuil</button>
-        </div>
-      </Modal>
-
-      <Modal open={add} onClose={()=>setAdd(false)} title="Nouvelle sanction"
-        footer={<><button onClick={()=>setAdd(false)} disabled={addingSanction} className="btn-secondary">Annuler</button><button onClick={guardedHandleAdd} disabled={addingSanction} className="btn-danger"><ShieldAlert size={14}/>{addingSanction ? 'Enregistrement…' : 'Enregistrer'}</button></>}>
-        <div className="space-y-4">
-          <FormField label="Membre" required>
-            <select className="select" value={form.idMembre} onChange={e=>setForm(f=>({...f,idMembre:e.target.value}))}>
-              <option value="">Sélectionner…</option>
-              {membres.map(m=><option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
-            </select>
-          </FormField>
-          <FormField label="Type de sanction" required>
-            <select className="select" value={form.typeSanction} onChange={e=>handleSelectType(e.target.value)}>
-              {typesDisponibles.map((type) => <option key={type.code} value={type.code}>{type.libelle} — {fmt(type.montantFixe)}</option>)}
-              <option value="autre">Autre (créer un nouveau type)</option>
-            </select>
-          </FormField>
-          {form.typeSanction === 'autre' && (
-            <div className="rounded-2xl border border-amber-200 bg-amber-50/60 p-4 space-y-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-sm font-semibold text-amber-900">Type personnalisé</p>
-                  <p className="text-xs text-amber-700 mt-1">Ce type sera sauvegardé et réutilisable pour les prochains membres.</p>
-                </div>
-              </div>
-              <FormField label="Libellé de la sanction" required>
-                <input className="input" value={customTypeForm.libelle} onChange={e=>setCustomTypeForm(f=>({...f,libelle:e.target.value}))} placeholder="Ex : Retard de réunion, refus de participation…" />
-              </FormField>
-              <FormField label="Montant (FCFA)" required>
-                <input type="number" className="input" value={customTypeForm.montant} onChange={e=>setCustomTypeForm(f=>({...f,montant:e.target.value}))} />
-              </FormField>
-            </div>
-          )}
-          {form.typeSanction !== 'autre' && (
-            <div className="grid grid-cols-2 gap-3">
-              <FormField label="Montant (FCFA)">
-                <input type="number" className="input" value={form.montant} onChange={e=>setForm(f=>({...f,montant:e.target.value}))}/>
-              </FormField>
-              <FormField label="Réunion concernée" required hint={reunionsOuvertes.length === 0 ? 'Aucune séance ouverte actuellement.' : undefined}>
-                <select className="select" value={form.idReunion} onChange={e=>setForm(f=>({...f,idReunion:e.target.value}))}>
-                  <option value="">— Sélectionner —</option>
-                  {reunionsOuvertes.map(r => <option key={r.id} value={r.id}>N°{r.numero} — {fmtDate(r.date)}</option>)}
-                </select>
-              </FormField>
-            </div>
-          )}
-          {form.typeSanction === 'autre' && (
-            <div className="grid grid-cols-2 gap-3">
-              <FormField label="Réunion concernée" required hint={reunionsOuvertes.length === 0 ? 'Aucune séance ouverte actuellement.' : undefined}>
-                <select className="select" value={form.idReunion} onChange={e=>setForm(f=>({...f,idReunion:e.target.value}))}>
-                  <option value="">— Sélectionner —</option>
-                  {reunionsOuvertes.map(r => <option key={r.id} value={r.id}>N°{r.numero} — {fmtDate(r.date)}</option>)}
-                </select>
-              </FormField>
-              <div className="hidden md:block" />
-            </div>
-          )}
-          <FormField label="Date">
-            <input type="date" className="input" value={form.dateSanction} onChange={e=>setForm(f=>({...f,dateSanction:e.target.value}))}/>
-          </FormField>
         </div>
       </Modal>
 

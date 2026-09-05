@@ -114,8 +114,7 @@ export default function Prets() {
   return (
     <div className="space-y-6">
       <PageHeader title="Prêts & Crédits"
-        subtitle="Prêts ouverts uniquement depuis les caisses autorisées"
-        action={<button onClick={() => setAdd(true)} className="btn-primary"><Plus size={15}/> Nouveau prêt</button>}/>
+        subtitle="Les demandes de prêt s'enregistrent depuis la Réunion en cours (règle d'or)"/>
 
       <div className="card border-l-4 border-l-primary-500">
         <div className="flex items-center justify-between gap-3">
@@ -464,17 +463,6 @@ export default function Prets() {
           </div>
           );
         })()}
-      </Modal>
-
-      {/* Modal nouveau prêt */}
-      <Modal open={add} onClose={() => setAdd(false)} title="Nouveau prêt"
-        footer={<><button onClick={() => setAdd(false)} disabled={addingPret} className="btn-secondary">Annuler</button><button onClick={guardedHandleAdd} disabled={addingPret} className="btn-primary"><HandCoins size={14}/>{addingPret ? 'Enregistrement…' : 'Accorder le prêt'}</button></>}>
-        <PretFormFields
-          form={form} setForm={setForm}
-          membres={membres} caissesPret={caissesPret}
-          pretSimule={pretSimule} montantInteret={montantInteret}
-          repartitionSimulee={repartitionSimulee} caisseSelectionnee={caisseSelectionnee}
-        />
       </Modal>
     </div>
   );

@@ -503,9 +503,10 @@ class CycleTontineController extends Controller
         if ($data['montant_offre'] > $pot) {
             return response()->json(['message' => "L'offre ne peut pas dépasser le pot disponible ({$pot} FCFA)."], 422);
         }
-        if ($miseMin && $data['montant_offre'] < $miseMin) {
-            return response()->json(['message' => "L'offre doit être supérieure ou égale à la mise minimale ({$miseMin})."], 422);
-        }
+        // RG : la mise minimum (si définie sur la tontine) est indicative,
+        // elle n'est plus bloquante — une offre inférieure reste acceptée.
+        // (pt.7 du rapport de test : "l'offre n'est pas obligatoirement
+        // supérieure au montant de la part — à supprimer")
 
         // La part soumise doit appartenir à la tontine de ce cycle et au membre
         // qui fait l'offre. Cette vérification évite toute attribution croisée
