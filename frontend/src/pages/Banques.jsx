@@ -35,7 +35,7 @@ export default function Banques() {
   const {
     membres, banques, comptesBanque, operationsBanque, comptesBancaire,
     addBanque, modifierBanque, doOperation, showToast,
-    activerEpargneCaisse, deposerEpargne,
+    activerEpargne, deposerEpargne,
   } = useApp();
 
   const [addModal,    setAddModal]    = useState(false);
@@ -141,9 +141,9 @@ export default function Banques() {
     if (!enrollForm.idMembre) { showToast?.('Membre à inscrire requis.', 'error'); return; }
     if (!enrollForm.montant || Number(enrollForm.montant) <= 0) { showToast?.('Montant du premier dépôt requis.', 'error'); return; }
     if (!enrollModal.suiviEpargne) {
-      await activerEpargneCaisse(enrollModal.id);
+      await activerEpargne(enrollModal.id);
     }
-    await deposerEpargne(enrollModal.id, enrollForm.idMembre, Number(enrollForm.montant));
+    await deposerEpargne(enrollModal.id, { membre_id: enrollForm.idMembre, montant: Number(enrollForm.montant) });
     setEnrollForm({ idMembre:'', montant:'' });
     setEnrollModal(null);
   };

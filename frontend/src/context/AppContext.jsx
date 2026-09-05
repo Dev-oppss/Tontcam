@@ -265,6 +265,11 @@ export const AppProvider = ({ children }) => {
     try {
       const res = await request(`/caisses/${caisseId}/epargne/depots`, { method: 'POST', body: payload });
       showToast('Dépôt enregistré.', 'success');
+      // Rafraîchit le solde affiché de la caisse et le cache des membres
+      // connus (utilisé pour restreindre le sélecteur de déposant — pt.9).
+      const c = await request(`/caisses/${caisseId}`).catch(() => null);
+      if (c) setBanques((prev) => prev.map((b) => (b.id === caisseId ? adapt.caisseFromApi(c) : b)));
+      await chargerMembresEpargneCaisse(caisseId).catch(() => {});
       return res;
     } catch (err) { return handleError(err); }
   };
@@ -1143,7 +1148,7 @@ export const AppProvider = ({ children }) => {
       return res;
     } catch (err) { return handleError(err); }
   };
-  // ── Épargne caisse (RG-EPA) ─────────────────────────────────────
+  // ── Épargne caisse (RG-EPA) — suivi des membres pour le dépôt banque ──
   // Remplace l'ancien addMembreBanque (stub qui n'écrivait rien côté serveur)
   // et l'ancien comptesBanque (toujours []). "Inscrire un membre" n'existe
   // plus comme étape séparée : un membre devient suivi dès son premier
@@ -1151,43 +1156,16 @@ export const AppProvider = ({ children }) => {
   // liste des membres déjà suivis par caisse (id -> [{membre_id, membre_nom}]),
   // utilisée notamment pour restreindre le sélecteur "Membre déposant" du
   // formulaire de dépôt en banque aux membres réellement connus de la caisse.
+  // activerEpargne/chargerSoldesEpargne/deposerEpargne existent déjà plus haut
+  // (module Épargne) — on ne les redéclare pas ici, seul chargerMembresEpargneCaisse
+  // est nouveau (endpoint /epargne/membres, absent du module d'origine).
   const [epargneMembresParCaisse, setEpargneMembresParCaisse] = useState({});
-  const [epargneSoldesParCaisse, setEpargneSoldesParCaisse] = useState({});
-
-  const activerEpargneCaisse = async (caisseId) => {
-    try {
-      const c = await request(`/caisses/${caisseId}/activer-epargne`, { method: 'POST' });
-      setBanques((prev) => prev.map((b) => (b.id === caisseId ? { ...b, suiviEpargne: true } : b)));
-      showToast('Suivi épargne activé sur cette caisse');
-      return c;
-    } catch (err) { return handleError(err); }
-  };
 
   const chargerMembresEpargneCaisse = async (caisseId) => {
     try {
       const membres = await request(`/caisses/${caisseId}/epargne/membres`);
       setEpargneMembresParCaisse((prev) => ({ ...prev, [caisseId]: membres }));
       return membres;
-    } catch (err) { return handleError(err); }
-  };
-
-  const chargerSoldesEpargneCaisse = async (caisseId) => {
-    try {
-      const soldes = await request(`/caisses/${caisseId}/epargne/soldes`);
-      setEpargneSoldesParCaisse((prev) => ({ ...prev, [caisseId]: soldes }));
-      return soldes;
-    } catch (err) { return handleError(err); }
-  };
-
-  const deposerEpargne = async (caisseId, membreId, montant, modePaiement) => {
-    try {
-      await request(`/caisses/${caisseId}/epargne/depots`, { method: 'POST', body: {
-        membre_id: membreId, montant: Number(montant), mode_paiement: modePaiement || undefined,
-      } });
-      showToast('Dépôt épargne enregistré');
-      await Promise.all([chargerSoldesEpargneCaisse(caisseId), chargerMembresEpargneCaisse(caisseId)]);
-      const c = await request(`/caisses/${caisseId}`);
-      setBanques((prev) => prev.map((b) => (b.id === caisseId ? adapt.caisseFromApi(c) : b)));
     } catch (err) { return handleError(err); }
   };
 
@@ -1781,7 +1759,7 @@ export const AppProvider = ({ children }) => {
     setPresenceMembre, signerPV,
     chargerRotations, tirerAuSort, addEnchere, attribuerTour, annulerEncheres, annulerCycle, annulerVersementBulletin,
     addBanque, addCaisse: addBanque, modifierBanque, modifierCaisse: modifierBanque, doOperation, transfererCaisse, approuverTransfertCaisse, addCompteBancaire, chargerTransferts,
-    epargneMembresParCaisse, epargneSoldesParCaisse, activerEpargneCaisse, chargerMembresEpargneCaisse, chargerSoldesEpargneCaisse, deposerEpargne,
+    epargneMembresParCaisse, chargerMembresEpargneCaisse,
     addTypeSanction, updateTypeSanction, deleteTypeSanction, addSanction, payerSanction,
     addPret, validerPret, approuverPret, refuserPret, decaisserPret, rembourserPret, distribuerInteretsPret,
     addAide, addAideSociale: addAide, validerAideSociale, verserAideSociale, addTypeAideSociale, updateTypeAideSociale, deleteTypeAideSociale, membreEligibleAssurance, addCaisseEntry, uploadFichier,
