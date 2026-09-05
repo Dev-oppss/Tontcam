@@ -1284,9 +1284,14 @@ export const AppProvider = ({ children }) => {
     try {
       const reunionOuverte = reunions.find((r) => r.statutReunion === 'en_cours');
       if (!reunionOuverte) { showToast?.('Ouvrez une séance de réunion avant de décaisser un prêt.', 'error'); return; }
-      const p = await request(`/prets/${id}/decaisser`, { method: 'POST', body: { reunion_id: reunionOuverte.id } });
-      setPrets((prev) => prev.map((x) => (x.id === id ? adapt.pretFromApi(p) : x)));
+      const res = await request(`/prets/${id}/decaisser`, { method: 'POST', body: { reunion_id: reunionOuverte.id } });
+      setPrets((prev) => prev.map((x) => (x.id === id ? adapt.pretFromApi(res.pret) : x)));
       showToast('Prêt décaissé');
+      // pt.15 : avant, si la caisse ne suivait pas l'épargne, aucun snapshot
+      // n'était pris et l'intérêt du prêt ne serait jamais réparti au
+      // remboursement — silencieusement. On avertit désormais le trésorier
+      // tout de suite, au moment où il peut encore agir (activer le suivi).
+      if (res.avertissement) showToast(res.avertissement, 'warning');
     } catch (err) { return handleError(err); }
   };
   // `options` peut contenir { echeanceId, modePaiement, detailsPaiement }. Auparavant,

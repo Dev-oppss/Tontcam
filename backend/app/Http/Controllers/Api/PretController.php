@@ -30,6 +30,11 @@ class PretController extends Controller
         if ($request->filled('membre_id')) {
             $query->where('emprunteur_id', $request->membre_id);
         }
+        // pt.13 du rapport de test : impossible de filtrer les prêts par
+        // caisse — indispensable pour un trésorier qui gère plusieurs caisses.
+        if ($request->filled('caisse_id')) {
+            $query->where('caisse_id', $request->caisse_id);
+        }
 
         return response()->json($query->latest()->paginate($request->integer('per_page', 25)));
     }

@@ -149,7 +149,7 @@ class PretService
     /**
      * Décaissement effectif : sortie de caisse + passage EN_COURS.
      */
-    public function decaisser(Pret $pret, Utilisateur $tresorier, \App\Models\Reunion $reunion): Pret
+    public function decaisser(Pret $pret, Utilisateur $tresorier, \App\Models\Reunion $reunion): array
     {
         if ($pret->statut !== 'approuve') {
             throw new RuntimeException('Seul un prêt approuvé peut être décaissé.');
@@ -188,11 +188,20 @@ class PretService
             // (« snapshot ») la part de chaque membre à cet instant précis — l'intérêt
             // perçu au remboursement sera partagé sur cette base, pas sur les soldes
             // du jour du remboursement (qui peuvent avoir bougé entre-temps).
-            app(\App\Services\EpargneService::class)->snapshotPourPret($pret->fresh('caisse'));
+            // pt.15 du rapport de test : quand le suivi épargne n'est pas actif sur la
+            // caisse, aucun snapshot n'est créé et l'intérêt ne sera jamais réparti au
+            // remboursement, silencieusement (aucune erreur). On avertit désormais le
+            // trésorier explicitement à cet instant, plutôt que de le laisser découvrir
+            // l'absence de répartition seulement après coup.
+            $pretFrais = $pret->fresh('caisse');
+            app(\App\Services\EpargneService::class)->snapshotPourPret($pretFrais);
+            $avertissement = ! $pretFrais->caisse->suivi_epargne
+                ? "Le suivi épargne n'est pas activé sur cette caisse : l'intérêt de ce prêt ne sera réparti sur aucun membre au remboursement."
+                : null;
 
             $this->loguerStatut($pret, 'approuve', 'en_cours', 'Décaissé', $tresorier);
 
-            return $pret;
+            return ['pret' => $pret, 'avertissement' => $avertissement];
         });
     }
 

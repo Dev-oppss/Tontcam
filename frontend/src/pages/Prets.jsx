@@ -16,6 +16,7 @@ export default function Prets() {
   const [add,        setAdd]        = useState(false);
   const [remModal,   setRemModal]   = useState(null);
   const [detailPret, setDetailPret] = useState(null);
+  const [filtreCaisseId, setFiltreCaisseId] = useState('');
   const [form,       setForm]       = useState({ ...FORM_PRET_VIDE });
   const [remMontant, setRemMontant] = useState('');
   const [remModePaiement, setRemModePaiement] = useState('especes');
@@ -218,15 +219,25 @@ export default function Prets() {
       )}
 
       <div className="card p-0 overflow-hidden">
+        <div className="px-6 pt-4 flex items-center justify-between gap-3 flex-wrap">
+          <p className="text-sm font-semibold text-ink-900">Tous les prêts</p>
+          {/* pt.13 : filtre par caisse manquant — indispensable avec plusieurs caisses autorisées au prêt */}
+          <FormField label="Filtrer par caisse">
+            <select className="select" value={filtreCaisseId} onChange={e => setFiltreCaisseId(e.target.value)}>
+              <option value="">Toutes les caisses</option>
+              {caissesPret.map(c => <option key={c.id} value={c.id}>{c.nom}</option>)}
+            </select>
+          </FormField>
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b border-gray-200">
-              <tr>{['Membre','Montant prêt','Taux','Intérêts','Total','Progression','Reste','Statut','Actions'].map(h=>(
+              <tr>{['Membre','Caisse','Montant prêt','Taux','Intérêts','Total','Progression','Reste','Statut','Actions'].map(h=>(
                 <th key={h} className="th">{h}</th>
               ))}</tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {pretsLive.map(p => {
+              {pretsLive.filter(p => !filtreCaisseId || p.caisseId === filtreCaisseId).map(p => {
                 const pct = Math.round((p.montantRembourse / p.montantTotal) * 100);
                 const isOpen = detailPret === p.id;
                 const enRetardLive = p.statut === 'en_cours' && p.nbEcheancesEnRetard > 0;
@@ -242,6 +253,7 @@ export default function Prets() {
                           </div>
                         </div>
                       </td>
+                      <td className="td text-gray-600">{caissesMap[p.caisseId]?.nom || '—'}</td>
                       <td className="td font-medium">{fmt(p.montantPret)}</td>
                       <td className="td text-amber-600 font-semibold">{p.tauxInteret}%</td>
                       <td className="td">
