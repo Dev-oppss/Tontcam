@@ -260,6 +260,11 @@ export const AppProvider = ({ children }) => {
   const creerRemiseGain = async (tontineId, payload) => {
     try {
       const res = await request(`/tontines/${tontineId}/remises-gain`, { method: 'POST', body: payload });
+      // BUGFIX : chaque ligne de remise fait une sortie de caisse
+      // (RemiseGainService::verser) — le solde baisse réellement en base mais
+      // l'écran ne le reflétait qu'après un rechargement complet de la page.
+      const idCaisse = tontines.find((t) => t.id === tontineId)?.idCaisse;
+      if (idCaisse) await rafraichirCaisse(idCaisse); else await rafraichirToutesCaisses();
       showToast('Remise de gains enregistrée.', 'success');
       return res;
     } catch (err) { return handleError(err); }
@@ -308,6 +313,10 @@ export const AppProvider = ({ children }) => {
   const cassationEpargne = async (caisseId) => {
     try {
       const res = await request(`/caisses/${caisseId}/epargne/cassation`, { method: 'POST' });
+      // BUGFIX : la cassation générale fait une sortie de caisse pour chaque
+      // membre remboursé (EpargneService::cassationGenerale) — le solde baisse
+      // réellement en base mais l'écran ne le reflétait qu'après rechargement.
+      await rafraichirCaisse(caisseId);
       showToast('Cassation générale effectuée.', 'success');
       return res;
     } catch (err) { return handleError(err); }
@@ -1086,6 +1095,12 @@ export const AppProvider = ({ children }) => {
       // composant (il ne vivait que dans le state local du composant appelant).
       const cycle = adapt.cycleFromApi(c);
       setCyclesTontine((prev) => [...prev.filter((x) => x.id !== cycle.id), cycle]);
+      // BUGFIX : ce raccourci désigne le gagnant en interne (même logique que
+      // designerGagnantCycle) et peut donc créditer un surplus d'enchère en
+      // caisse — sans ce rafraîchissement, le solde affiché ne bougeait
+      // qu'après un rechargement complet de la page.
+      const idCaisse = tontines.find((t) => t.id === data.idTontine)?.idCaisse;
+      if (idCaisse) await rafraichirCaisse(idCaisse); else await rafraichirToutesCaisses();
       showToast('Bénéficiaire enregistré, bulletin généré');
       return c;
     } catch (err) { return handleError(err); }
@@ -1602,7 +1617,12 @@ export const AppProvider = ({ children }) => {
   };
   const designerGagnantCycle = async (idCycle, idPartForcee) => {
     try {
-      await request(`/cycles/${idCycle}/designer-gagnant`, { method: 'POST', body: idPartForcee ? { part_id: idPartForcee } : {} });
+      const c = await request(`/cycles/${idCycle}/designer-gagnant`, { method: 'POST', body: idPartForcee ? { part_id: idPartForcee } : {} });
+      // BUGFIX : quand l'enchère génère un surplus non redistribué, il est
+      // versé en caisse (entrée) à cet instant — le solde affiché ne bougeait
+      // qu'après un rechargement complet de la page.
+      const idCaisse = tontines.find((t) => t.id === c.tontine_id)?.idCaisse;
+      if (idCaisse) await rafraichirCaisse(idCaisse); else await rafraichirToutesCaisses();
       showToast('Gagnant désigné');
       return await chargerCycle(idCycle);
     } catch (err) { return handleError(err); }
