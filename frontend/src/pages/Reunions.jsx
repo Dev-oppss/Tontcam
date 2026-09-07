@@ -268,7 +268,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
     const enSuspens = cycleOuvertPourTontine(tontineSelectee.id);
     if (enSuspens && enSuspens.id !== cycleActuelId) {
       setCycleActuelId(enSuspens.id);
-      setEtape('beneficiaire');
+      setEtape(tontineSelectee.modeCagnotte ? 'recap' : 'beneficiaire');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tontineSelectee, cyclesTontine]);
@@ -346,6 +346,16 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
     }
 
     setValide(true);
+    // En mode cagnotte, il n'y a pas de bénéficiaire à désigner : les
+    // cotisations viennent d'être enregistrées (comptent déjà dans le solde
+    // accumulé de chaque part, calculé à la volée dans RemiseGainService),
+    // et le cycle reste volontairement ouvert — sa clôture n'a pas de sens
+    // ici puisqu'aucun gagnant n'est jamais désigné. La distribution se fait
+    // séparément, à tout moment, via l'écran "Remise de gains" de la tontine.
+    if (tontineSelectee?.modeCagnotte) {
+      setEtape('recap');
+      return;
+    }
     // Aller directement à la désignation du bénéficiaire
     setEtape('beneficiaire');
   };
@@ -932,7 +942,7 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
         <div className="space-y-4">
           {/* Pipeline complet */}
           <div className="flex items-center gap-1 text-xs justify-center">
-            {['Cotisations', 'Bénéficiaire', 'Résumé'].map((s, i) => (
+            {(tontineSelectee.modeCagnotte ? ['Cotisations', 'Accumulation', 'Résumé'] : ['Cotisations', 'Bénéficiaire', 'Résumé']).map((s, i) => (
               <>
                 <div key={s} className="flex items-center gap-1 px-2.5 py-1 bg-green-100 text-green-700 rounded-full font-medium">
                   <CheckCircle size={11}/><span>{s} OK</span>
@@ -947,6 +957,13 @@ function FeuillePresenceTontine({ reunion, onClose, readOnly = false }) {
             <p className="font-bold text-green-800">Séance traitée !</p>
             <p className="text-xs text-green-600 mt-1">{tontineSelectee.nom} — Séance N°{reunion.numero}</p>
           </div>
+
+          {tontineSelectee.modeCagnotte && (
+            <div className="p-3 bg-primary-50 rounded-xl border border-primary-100 text-xs text-primary-700">
+              Tontine en mode cagnotte : les cotisations s'accumulent par part, aucun bénéficiaire n'est désigné ce jour.
+              La distribution se fait à tout moment depuis « Cagnotte — remise de gains » sur la fiche de la tontine.
+            </div>
+          )}
 
           <div className="space-y-2">
             {cotises.length > 0 && (
