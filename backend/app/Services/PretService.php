@@ -63,6 +63,19 @@ class PretService
             if (! $aUnePart) {
                 throw new RuntimeException("Garantie « Retenue sur tontine » impossible : le membre ne détient aucune part de tontine active.");
             }
+        } elseif ($garantieType === 'blocage_epargne') {
+            // Jusqu'ici seule garantie sans aucune vérification serveur : un
+            // membre avec 0 FCFA d'épargne pouvait obtenir un prêt "garanti"
+            // par une épargne qu'il n'a pas. On exige désormais que le suivi
+            // épargne soit activé sur la caisse et que le membre y ait
+            // effectivement un solde positif (EpargneService::soldeMembre).
+            if (! $caisse->suivi_epargne) {
+                throw new RuntimeException("Garantie « Blocage épargne » impossible : le suivi épargne n'est pas activé sur cette caisse.");
+            }
+            $soldeEpargne = app(EpargneService::class)->soldeMembre($caisse, $emprunteur->id);
+            if ($soldeEpargne <= 0) {
+                throw new RuntimeException("Garantie « Blocage épargne » impossible : le membre n'a aucune épargne dans cette caisse.");
+            }
         }
 
         $tauxInteret = $options['taux_interet_mensuel'] ?? $caisse->taux_interet_mensuel;
