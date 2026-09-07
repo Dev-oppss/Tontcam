@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useAsyncGuard } from '../hooks/useAsyncGuard';
 import {
@@ -24,14 +24,43 @@ const EMPTY = { nom:'', prenom:'', sexe:'M', telephone:'', email:'', adresse:'',
 // ── Fiche membre complète ─────────────────────────────────────
 function FicheMembre({ membre, onClose, onEdit }) {
   const {
-    tontines, membresParTontine, banques, comptesBanque, operationsBanque,
+    tontines, membresParTontine, banques,
     prets, sanctions, planningTours, aidesAssurance, seanceTransactions,
-    reunions, user,
+    reunions, user, chargerSoldesEpargne,
   } = useApp();
 
   const [activeTab, setActiveTab] = useState('identite');
 
   const id = membre.id;
+
+  // ── Épargne (RG-EPA) ──
+  // L'onglet affichait toujours 0, quoi que le membre ait versé dans une
+  // caisse : il lisait `comptesBanque`, codé en dur à [] dans le contexte
+  // (jamais alimenté côté serveur). Le solde réel par membre existe belle
+  // et bien (EpargneService::soldeMembre, exposé via /epargne/soldes) —
+  // on va le chercher pour chaque caisse où le suivi épargne est activé.
+  const caissesEpargne = banques.filter(b => b.suiviEpargne);
+  const caissesEpargneKey = caissesEpargne.map(b => b.id).sort().join(',');
+  const [soldesEpargne, setSoldesEpargne] = useState({}); // { [caisseId]: solde du membre dans cette caisse }
+
+  useEffect(() => {
+    let annule = false;
+    (async () => {
+      const entrees = await Promise.all(caissesEpargne.map(async (b) => {
+        const lignes = (await chargerSoldesEpargne(b.id)) || [];
+        const ligne = lignes.find((l) => l.membre_id === id);
+        return [b.id, ligne?.solde || 0];
+      }));
+      if (!annule) setSoldesEpargne(Object.fromEntries(entrees));
+    })();
+    return () => { annule = true; };
+  }, [id, caissesEpargneKey]);
+
+  const soldesTousComptes = caissesEpargne.map(b => ({
+    idBanque: b.id, nomBanque: b.nom, banque: b, solde: soldesEpargne[b.id] || 0,
+  }));
+  const comptes = soldesTousComptes.filter(c => c.solde > 0);
+  const totalEpargne = comptes.reduce((s, c) => s + c.solde, 0);
 
   // ── Tontines ──
   const inscriptions = membresParTontine
@@ -46,15 +75,6 @@ function FicheMembre({ membre, onClose, onEdit }) {
   const tours = planningTours.filter(p => p.idMembre === id);
   const toursEncaisses = tours.filter(p => p.statut === 'encaisse');
 
-  // ── Comptes bancaires ──
-  const comptes = comptesBanque.filter(c => c.idMembre === id).map(c => ({
-    ...c, banque: banques.find(b => b.id === c.idBanque),
-  }));
-  const totalEpargne = comptes.reduce((s, c) => s + c.solde, 0);
-
-  // Opérations bancaires du membre
-  const opsMembre = operationsBanque.filter(o => o.idMembre === id);
-
   // ── Prêts ──
   const pretsMembre = prets.filter(p => p.idMembre === id);
   const pretEnCours = pretsMembre.filter(p => ['en_cours','en_retard'].includes(p.statut));
@@ -68,7 +88,7 @@ function FicheMembre({ membre, onClose, onEdit }) {
   // ── Fond Assurance ──
   const aidesMembre = (aidesAssurance || []).filter(a => a.idMembre === id);
   const totalAidesRecues = aidesMembre.reduce((s, a) => s + a.montantAide, 0);
-  const compteAssurance = comptes.find(c => c.banque?.type === 'banque_assurance');
+  const compteAssurance = soldesTousComptes.find(c => c.banque?.type === 'banque_assurance');
   const cotisAssuranceVersee = compteAssurance?.solde || 0;
 
   const tabs = [
@@ -246,45 +266,19 @@ function FicheMembre({ membre, onClose, onEdit }) {
               {comptes.filter(c => c.banque?.type !== 'banque_assurance').length === 0 ? (
                 <div className="text-center py-8 text-gray-400">
                   <Building2 size={28} className="mx-auto mb-2 text-gray-200"/>
-                  <p className="text-sm">Aucun compte bancaire</p>
+                  <p className="text-sm">Aucune épargne enregistrée</p>
                 </div>
-              ) : comptes.filter(c => c.banque?.type !== 'banque_assurance').map(c => {
-                const opsCompte = opsMembre.filter(o => o.idBanque === c.idBanque);
-                const totalDep  = opsCompte.filter(o => o.typeOperation === 'depot').reduce((s, o) => s + o.montant, 0);
-                const totalRet  = opsCompte.filter(o => o.typeOperation === 'retrait').reduce((s, o) => s + o.montant, 0);
-                return (
-                  <div key={c.id} className="p-4 bg-gray-50 rounded-2xl border border-gray-200">
-                    <div className="flex items-center justify-between mb-3">
-                      <div>
-                        <p className="font-bold text-sm text-gray-800"> {c.nomBanque}</p>
-                        <p className="text-xs text-gray-400">{c.banque?.description}</p>
-                      </div>
-                      <p className="text-xl font-black text-primary-600">{fmt(c.solde)}</p>
+              ) : comptes.filter(c => c.banque?.type !== 'banque_assurance').map(c => (
+                <div key={c.idBanque} className="p-4 bg-gray-50 rounded-2xl border border-gray-200">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-bold text-sm text-gray-800"> {c.nomBanque}</p>
+                      <p className="text-xs text-gray-400">{c.banque?.description}</p>
                     </div>
-                    <div className="grid grid-cols-2 gap-2 text-xs">
-                      <div className="p-2 bg-green-50 rounded-xl flex justify-between">
-                        <span className="text-gray-500">Dépôts</span><span className="font-bold text-green-600">{fmt(totalDep)}</span>
-                      </div>
-                      <div className="p-2 bg-red-50 rounded-xl flex justify-between">
-                        <span className="text-gray-500">Retraits</span><span className="font-bold text-red-500">{fmt(totalRet)}</span>
-                      </div>
-                    </div>
-                    {opsCompte.length > 0 && (
-                      <div className="mt-3 space-y-1 max-h-32 overflow-y-auto">
-                        {[...opsCompte].reverse().slice(0, 5).map(op => (
-                          <div key={op.id} className="flex items-center justify-between text-xs py-1 border-b border-gray-100 last:border-0">
-                            <span className="text-gray-500">{fmtDate(op.dateOperation)}</span>
-                            <span className="text-gray-600 flex-1 mx-2 truncate">{op.observation || op.typeOperation}</span>
-                            <span className={op.typeOperation === 'depot' ? 'font-bold text-green-600' : 'font-bold text-red-500'}>
-                              {op.typeOperation === 'depot' ? '+' : '−'}{fmt(op.montant)}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                    <p className="text-xl font-black text-primary-600">{fmt(c.solde)}</p>
                   </div>
-                );
-              })}
+                </div>
+              ))}
               {comptes.filter(c => c.banque?.type !== 'banque_assurance').length > 0 && (
                 <div className="p-3 bg-primary-50 rounded-xl flex justify-between text-sm">
                   <span className="text-gray-600">Total épargne</span>
