@@ -88,7 +88,7 @@ export function PretFormFields({ form, setForm, membres, caissesPret, pretSimule
         <FormField label="Durée (mois)">
           <input type="number" className="input" value={form.dureeMois} onChange={(e) => onDureeChange(e.target.value)} />
         </FormField>
-        <FormField label="Date du prêt">
+        <FormField label="Date de prise d'effet" hint="À partir de quand le prêt commence à courir (échéancier calé dessus).">
           <input type="date" className="input" value={form.datePret} onChange={(e) => onDateChange(e.target.value)} />
         </FormField>
       </div>

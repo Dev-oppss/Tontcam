@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
-import { Plus, HandCoins, CreditCard, ChevronDown, ChevronUp, Coins, TrendingUp, Users, CheckCircle, AlertTriangle } from 'lucide-react';
+import { Plus, HandCoins, CreditCard, ChevronDown, ChevronUp, Coins, TrendingUp, Users, CheckCircle, AlertTriangle, Printer } from 'lucide-react';
+import { ouvrirPdfAuthentifie } from '../lib/api';
 import { fmt, fmtDate } from '../data/mockData';
 import { useApp } from '../context/AppContext';
 import { PageHeader, Table, Badge, Modal, FormField } from '../components/ui/index';
@@ -17,6 +18,13 @@ export default function Prets() {
   const [remModal,   setRemModal]   = useState(null);
   const [detailPret, setDetailPret] = useState(null);
   const [filtreCaisseId, setFiltreCaisseId] = useState('');
+  const handleImprimerFiche = async (id) => {
+    try {
+      await ouvrirPdfAuthentifie(`/prets/${id}/fiche-amortissement-pdf`);
+    } catch (err) {
+      showToast?.(err.message || "Impossible d'ouvrir la fiche.", 'error');
+    }
+  };
   const [form,       setForm]       = useState({ ...FORM_PRET_VIDE });
   const [remMontant, setRemMontant] = useState('');
   const [remModePaiement, setRemModePaiement] = useState('especes');
@@ -288,6 +296,10 @@ export default function Prets() {
                       </td>
                       <td className="td">
                         <div className="flex items-center gap-1">
+                          <button onClick={() => handleImprimerFiche(p.id)} title="Imprimer la fiche d'amortissement"
+                            className="btn-secondary py-1 px-2.5 text-xs flex items-center gap-1">
+                            <Printer size={12}/>Fiche
+                          </button>
                           {(p.statut === 'en_cours' || p.statut === 'en_retard') && (
                             <button onClick={() => { setRemModal(p); setRemMontant(''); }}
                               className="btn-secondary py-1 px-2.5 text-xs flex items-center gap-1">

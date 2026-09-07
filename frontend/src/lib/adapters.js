@@ -311,6 +311,11 @@ export const pretToApi = (p) => ({
   // envoie désormais un vrai code (caution_membre/blocage_epargne/
   // retenue_tontine/aucune), vérifié et appliqué côté serveur.
   garantie_type: p.garantie || undefined,
+  // "Date du prêt" (form.datePret) servait uniquement à la simulation
+  // d'aperçu côté frontend — jamais transmise au serveur, qui calait
+  // toujours l'échéancier sur l'instant présent. Elle sert maintenant de
+  // vraie "date de prise d'effet" (voir PretService::demander/genererAmortissement).
+  date_prise_effet: p.datePret || undefined,
   notes: p.notes || undefined,
 });
 

@@ -150,6 +150,7 @@ Route::middleware(['auth:sanctum', 'association.context'])->group(function () {
     Route::post('/prets/{id}/rembourser', [PretController::class, 'rembourser']);
     Route::post('/prets/{id}/rembourser-libre', [PretController::class, 'rembourserLibre']);
     Route::get('/prets/{id}/echeances', [PretController::class, 'echeances']);
+    Route::get('/prets/{id}/fiche-amortissement-pdf', [PretController::class, 'ficheAmortissementPdf']);
 
     // ── Sanctions & Social ──────────────────────────────────────
     Route::apiResource('sanctions', SanctionController::class)->except(['destroy'])->whereUuid('sanction');

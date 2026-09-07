@@ -198,6 +198,7 @@ class PretController extends Controller
             'nb_echeances' => ['required', 'integer', 'min:1'],
             'avaliste_id' => ['nullable', 'uuid', 'different:emprunteur_id'],
             'garantie_type' => ['nullable', 'in:caution_membre,blocage_epargne,retenue_tontine,aucune'],
+            'date_prise_effet' => ['nullable', 'date'],
             'notes' => ['nullable', 'string'],
         ]);
 
@@ -304,6 +305,22 @@ class PretController extends Controller
             ),
             'pret' => $pret->fresh('echeances'),
         ]);
+    }
+
+    /**
+     * GET /prets/{id}/fiche-amortissement-pdf — feuille à remettre à l'emprunteur.
+     * Streamée directement (pas de Storage::disk('public')) pour ne pas dépendre
+     * du lien symbolique storage:link — cause des erreurs 403 déjà rencontrées
+     * sur les autres PDF de l'app (PV de séance, bulletin de gain).
+     */
+    public function ficheAmortissementPdf(string $id)
+    {
+        $pret = $this->pretScope($id)->load('echeances', 'emprunteur', 'avaliste', 'caisse.association');
+        $this->authorize('view', $pret);
+
+        $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('pdf.fiche-amortissement', ['pret' => $pret]);
+
+        return $pdf->stream("fiche-amortissement-{$pret->emprunteur->nom}-{$pret->id}.pdf");
     }
 
     public function echeances(string $id): JsonResponse

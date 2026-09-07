@@ -70,7 +70,16 @@ class PretService
 
         $calcul = $this->calculerAmortissementLineaire($montant, (float) $tauxInteret, $nbEcheances);
 
-        return DB::transaction(function () use ($caisse, $emprunteur, $montant, $nbEcheances, $tauxInteret, $methode, $calcul, $options) {
+        // Date de prise d'effet (RG-PRT — demande client) : le trésorier peut
+        // définir explicitement à partir de quand le prêt commence à courir
+        // (ex : date réelle de remise de l'argent, différente de la date de
+        // saisie). Sert de base à l'échéancier. Par défaut : aujourd'hui,
+        // comme avant.
+        $datePriseEffet = ! empty($options['date_prise_effet'])
+            ? \Carbon\Carbon::parse($options['date_prise_effet'])
+            : now();
+
+        return DB::transaction(function () use ($caisse, $emprunteur, $montant, $nbEcheances, $tauxInteret, $methode, $calcul, $options, $datePriseEffet) {
             $pret = Pret::create([
                 'caisse_id' => $caisse->id,
                 'emprunteur_id' => $emprunteur->id,
@@ -87,6 +96,7 @@ class PretService
                 'statut' => 'demande',
                 'avaliste_id' => $options['avaliste_id'] ?? null,
                 'garantie_type' => $garantieType,
+                'date_prise_effet' => $datePriseEffet->toDateString(),
                 'notes' => $options['notes'] ?? null,
                 'created_by' => $options['created_by'] ?? null,
             ]);
@@ -179,8 +189,13 @@ class PretService
             $pret->update([
                 'statut' => 'en_cours',
                 'reunion_id' => $reunion->id,
-                'date_debut' => now()->toDateString(),
-                'date_fin_prevue' => now()->addMonths($pret->nb_echeances)->toDateString(),
+                // La date de départ du prêt suit la date de prise d'effet choisie
+                // par le trésorier à la demande (celle qui a servi de base à
+                // l'échéancier) — pas la date du décaissement, qui peut différer.
+                'date_debut' => $pret->date_prise_effet ?? now()->toDateString(),
+                'date_fin_prevue' => ($pret->date_prise_effet
+                    ? \Carbon\Carbon::parse($pret->date_prise_effet)
+                    : now())->addMonths($pret->nb_echeances)->toDateString(),
                 'transaction_decaissement_id' => $transaction->id,
             ]);
 
@@ -379,6 +394,9 @@ class PretService
         $n = (int) $pret->nb_echeances;
         $capitalParEcheance = round($principal / $n, 2);
         $capitalRestant = $principal;
+        // Base de l'échéancier = date de prise d'effet choisie par le trésorier
+        // à la demande, sinon aujourd'hui (comportement inchangé par défaut).
+        $base = $pret->date_prise_effet ? \Carbon\Carbon::parse($pret->date_prise_effet) : now();
 
         $echeances = [];
         for ($i = 1; $i <= $n; $i++) {
@@ -390,7 +408,7 @@ class PretService
             $echeances[] = EcheancePret::create([
                 'pret_id' => $pret->id,
                 'numero_echeance' => $i,
-                'date_echeance' => now()->addMonths($i)->toDateString(),
+                'date_echeance' => $base->copy()->addMonths($i)->toDateString(),
                 'montant_capital' => $capital,
                 'montant_interet' => $interet,
                 'montant_total' => $capital + $interet,
