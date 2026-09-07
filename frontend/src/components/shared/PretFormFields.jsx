@@ -176,7 +176,7 @@ export function PretFormFields({ form, setForm, membres, caissesPret, pretSimule
         <p className="text-xs text-amber-600 -mt-2">Le membre doit détenir au moins une part de tontine active — vérifié à la validation.</p>
       )}
       {form.garantie === 'blocage_epargne' && (
-        <p className="text-xs text-amber-600 -mt-2">Module épargne pas encore disponible — cette garantie est acceptée mais non encore appliquée automatiquement.</p>
+        <p className="text-xs text-amber-600 -mt-2">Le membre doit avoir une épargne active (solde &gt; 0) dans cette caisse — vérifié à la validation. Le trésorier pourra ensuite couper sur cette épargne depuis la fiche du prêt en cas de défaut.</p>
       )}
       <FormField label="Observation">
         <textarea className="input h-14 resize-none" value={form.observation}
