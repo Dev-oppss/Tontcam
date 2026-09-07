@@ -66,6 +66,37 @@ export const AppProvider = ({ children }) => {
   const [rotations, setRotations] = useState([]);
   const [encheres, setEncheres] = useState([]);
   const [banques, setBanques] = useState([]);
+
+  // Rafraîchit le solde affiché d'une caisse après une opération financière qui
+  // ne renvoie pas elle-même l'objet caisse à jour (décaissement/remboursement
+  // de prêt, transaction de séance, paiement de sanction, versement d'aide
+  // sociale, paiement de bulletin de gain...). Sans ça, le solde change bien en
+  // base (CaisseService::entree/sortie) mais l'écran ne le reflète qu'après un
+  // rechargement complet de la page — le bug ne se voyait donc que "des fois",
+  // selon le chemin emprunté par l'opération.
+  const rafraichirCaisse = async (caisseId) => {
+    if (!caisseId) return;
+    try {
+      const c = await request(`/caisses/${caisseId}`);
+      setBanques((prev) => prev.map((b) => (b.id === caisseId ? adapt.caisseFromApi(c) : b)));
+    } catch {
+      // Silencieux : un échec de rafraîchissement d'affichage ne doit jamais
+      // faire échouer l'opération financière elle-même, déjà enregistrée.
+    }
+  };
+
+  // Repli quand l'opération ne permet pas d'identifier la caisse concernée
+  // (ex: aide sociale versée sur la caisse par défaut du type, gain de
+  // tontine versé sur la caisse de la tontine) : on recharge toutes les
+  // caisses plutôt que de deviner un id.
+  const rafraichirToutesCaisses = async () => {
+    try {
+      const cRes = await request('/caisses');
+      setBanques((cRes.data || cRes).map(adapt.caisseFromApi));
+    } catch {
+      // idem : silencieux, l'opération financière est déjà enregistrée côté serveur.
+    }
+  };
   const [prets, setPrets] = useState([]);
   const [sanctions, setSanctions] = useState([]);
   const [typesSanction, setTypesSanction] = useState([]);
@@ -1007,6 +1038,7 @@ export const AppProvider = ({ children }) => {
         idBanque: t.caisse_id, idCaisse: t.caisse_id, nomCaisse: t.caisse?.libelle || null,
       };
       setSeanceTransactionsState((prev) => [...prev, item]);
+      await rafraichirCaisse(item.idCaisse);
       showToast('Transaction enregistrée');
       return item;
     } catch (err) { return handleError(err); }
@@ -1028,14 +1060,17 @@ export const AppProvider = ({ children }) => {
         idBanque: t.caisse_id, idCaisse: t.caisse_id, nomCaisse: t.caisse?.libelle || null,
       };
       setSeanceTransactionsState((prev) => prev.map((x) => (x.id === id ? item : x)));
+      await rafraichirCaisse(item.idCaisse);
       showToast('Transaction modifiée');
       return item;
     } catch (err) { return handleError(err); }
   };
   const deleteSeanceTransaction = async (idReunion, id) => {
     try {
+      const existante = seanceTransactionsState.find((t) => t.id === id);
       await request(`/reunions/${idReunion}/transactions/${id}`, { method: 'DELETE' });
       setSeanceTransactionsState((prev) => prev.filter((t) => t.id !== id));
+      await rafraichirCaisse(existante?.idCaisse);
       showToast('Transaction supprimée');
     } catch (err) { return handleError(err); }
   };
@@ -1244,6 +1279,7 @@ export const AppProvider = ({ children }) => {
         details_paiement: options?.detailsPaiement,
       } });
       setSanctions((prev) => prev.map((x) => (x.id === id ? adapt.sanctionFromApi(s) : x)));
+      await rafraichirCaisse(idCaisse);
       showToast('Sanction réglée');
     } catch (err) { return handleError(err); }
   };
@@ -1286,6 +1322,7 @@ export const AppProvider = ({ children }) => {
       if (!reunionOuverte) { showToast?.('Ouvrez une séance de réunion avant de décaisser un prêt.', 'error'); return; }
       const res = await request(`/prets/${id}/decaisser`, { method: 'POST', body: { reunion_id: reunionOuverte.id } });
       setPrets((prev) => prev.map((x) => (x.id === id ? adapt.pretFromApi(res.pret) : x)));
+      await rafraichirCaisse(res.pret?.caisse_id);
       showToast('Prêt décaissé');
       // pt.15 : avant, si la caisse ne suivait pas l'épargne, aucun snapshot
       // n'était pris et l'intérêt du prêt ne serait jamais réparti au
@@ -1319,6 +1356,7 @@ export const AppProvider = ({ children }) => {
       }
       const p = await request(`/prets/${id}`);
       setPrets((prev) => prev.map((x) => (x.id === id ? adapt.pretFromApi(p) : x)));
+      await rafraichirCaisse(p.caisse_id);
       showToast('Remboursement enregistré');
     } catch (err) { return handleError(err); }
   };
@@ -1405,6 +1443,7 @@ export const AppProvider = ({ children }) => {
       } });
       const aide = adapt.aideFromApi(a);
       setFondAssurance((prev) => prev.map((x) => (x.id === id ? aide : x)));
+      if (options.idCaisse) await rafraichirCaisse(options.idCaisse); else await rafraichirToutesCaisses();
       showToast('Aide versée');
       return aide;
     } catch (err) { return handleError(err); }
@@ -1722,6 +1761,7 @@ export const AppProvider = ({ children }) => {
     try {
       const bulletin = await request(`/bulletins/${idBulletin}/payer`, { method: 'POST', body: { mode_paiement: modePaiement, reference_versement: referenceVersement || null } });
       if (bulletin.cycle?.reunion_id) await chargerSeanceTransactions(bulletin.cycle.reunion_id);
+      if (bulletin.cycle?.tontine?.caisse_id) await rafraichirCaisse(bulletin.cycle.tontine.caisse_id); else await rafraichirToutesCaisses();
       showToast('Gain versé et mouvement de caisse enregistré');
       return bulletin;
     } catch (err) { return handleError(err); }
