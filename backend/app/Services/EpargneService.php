@@ -177,9 +177,28 @@ class EpargneService
             throw new RuntimeException("Montant demandé ({$montant}) supérieur au solde épargne disponible ({$solde}).");
         }
 
-        return EpargneMouvement::create([
-            'caisse_id' => $caisse->id, 'membre_id' => $membreId, 'type' => 'retrait_garantie',
-            'montant' => $montant, 'pret_id' => $pret?->id, 'motif' => $motif ?? 'Garantie de prêt', 'created_by' => $auteur->id,
-        ]);
+        return DB::transaction(function () use ($caisse, $membreId, $montant, $motif, $pret, $auteur) {
+            $mouvement = EpargneMouvement::create([
+                'caisse_id' => $caisse->id, 'membre_id' => $membreId, 'type' => 'retrait_garantie',
+                'montant' => $montant, 'pret_id' => $pret?->id, 'motif' => $motif ?? 'Garantie de prêt', 'created_by' => $auteur->id,
+            ]);
+
+            // BUGFIX : sans ceci, la coupe réduisait le solde épargne du membre
+            // mais ne remboursait jamais réellement le prêt — capital_restant et
+            // les échéances restaient inchangés, comme si l'argent avait disparu
+            // sans rien couvrir. L'argent ne quitte pas la caisse une seconde
+            // fois (il y était déjà, déposé en épargne) : on impute directement
+            // le montant sur les échéances impayées, sans nouveau mouvement de
+            // caisse — même mécanisme que le remboursement par retenue de
+            // bulletin de gain (voir PretService::rembourserLibre, appelé avec
+            // encaisserEnCaisse=false).
+            if ($pret) {
+                app(PretService::class)->rembourserLibre($pret, $montant, $auteur, false, [
+                    'notes' => "Couvert par garantie épargne (mouvement {$mouvement->id})",
+                ]);
+            }
+
+            return $mouvement;
+        });
     }
 }
