@@ -12,12 +12,31 @@ import { buildAmortization, simulerRepartitionInterets, FORM_PRET_VIDE } from '.
 import { PretFormFields } from '../components/shared/PretFormFields';
 
 export default function Prets() {
-  const { membres, prets, comptesBanque, caisses, addPret, validerPret, approuverPret, refuserPret, decaisserPret, rembourserPret, distribuerInteretsPret, showToast } = useApp();
+  const { membres, prets, comptesBanque, caisses, addPret, validerPret, approuverPret, refuserPret, decaisserPret, rembourserPret, distribuerInteretsPret, showToast, chargerSoldesEpargne, couperGarantieEpargne } = useApp();
 
   const [add,        setAdd]        = useState(false);
   const [remModal,   setRemModal]   = useState(null);
   const [detailPret, setDetailPret] = useState(null);
   const [filtreCaisseId, setFiltreCaisseId] = useState('');
+  // Garantie « blocage épargne » (RG-PRET-GARANTIE) : couperGarantieEpargne
+  // existait déjà côté API/contexte mais n'était appelable depuis aucune
+  // page — le trésorier ne pouvait jamais s'en servir en cas de défaut.
+  const [garantieModal, setGarantieModal] = useState(null); // { pret }
+  const [garantieSolde, setGarantieSolde] = useState(0);
+  const [garantieMontant, setGarantieMontant] = useState('');
+  const [garantieMotif, setGarantieMotif] = useState('');
+  const [chargeGarantieSolde, setChargeGarantieSolde] = useState(false);
+
+  const openGarantieModal = async (p) => {
+    setGarantieModal({ pret: p });
+    setGarantieMontant('');
+    setGarantieMotif('');
+    setGarantieSolde(0);
+    setChargeGarantieSolde(true);
+    const soldes = (await chargerSoldesEpargne(p.idCaisse)) || [];
+    setChargeGarantieSolde(false);
+    setGarantieSolde(soldes.find((l) => l.membre_id === p.idMembre)?.solde || 0);
+  };
   const handleImprimerFiche = async (id) => {
     try {
       await ouvrirPdfAuthentifie(`/prets/${id}/fiche-amortissement-pdf`);
@@ -71,6 +90,21 @@ export default function Prets() {
   const enCours   = pretsLive.filter(p => p.statut === 'en_cours');
   const enRetard  = pretsLive.filter(p => p.statut === 'en_cours' && p.nbEcheancesEnRetard > 0);
   const rembourse = pretsLive.filter(p => p.statut === 'rembourse');
+
+  const handleCouperGarantie = async () => {
+    if (!garantieModal) return;
+    const montant = Number(garantieMontant);
+    if (!montant || montant <= 0) { showToast?.('Montant requis.', 'error'); return; }
+    if (montant > garantieSolde) { showToast?.('Montant supérieur au solde épargne du membre.', 'error'); return; }
+    const res = await couperGarantieEpargne(garantieModal.pret.idCaisse, {
+      membre_id: garantieModal.pret.idMembre,
+      montant,
+      motif: garantieMotif || undefined,
+      pret_id: garantieModal.pret.id,
+    });
+    if (res) setGarantieModal(null);
+  };
+  const [guardedHandleCouperGarantie, coupantGarantie] = useAsyncGuard(handleCouperGarantie);
 
   const handleAdd = async () => {
     const missing = getMissingFields(form, [
@@ -306,6 +340,12 @@ export default function Prets() {
                               <CreditCard size={12}/>Payer
                             </button>
                           )}
+                          {p.garantie === 'blocage_epargne' && (p.statut === 'en_cours' || p.statut === 'en_retard' || p.statut === 'defaut') && (
+                            <button onClick={() => openGarantieModal(p)} title="Couper sur l'épargne du membre pour couvrir le prêt"
+                              className="btn-secondary py-1 px-2.5 text-xs flex items-center gap-1">
+                              <AlertTriangle size={12}/>Couper garantie
+                            </button>
+                          )}
                           {!p.interetsDistribues && p.statut === 'rembourse' && (
                             <button onClick={() => distribuerInteretsPret(p.id)}
                               className="btn-primary py-1 px-2.5 text-xs flex items-center gap-1">
@@ -487,6 +527,39 @@ export default function Prets() {
           </div>
           );
         })()}
+      </Modal>
+
+      {/* ══ COUPER GARANTIE ÉPARGNE ═══════════════════════ */}
+      {/* couperGarantieEpargne existait déjà dans le contexte et l'API, mais
+          n'était appelable depuis aucune page : invisible et inatteignable
+          pour un trésorier, même en cas de défaut sur un prêt garanti par
+          une épargne bloquée. */}
+      <Modal open={!!garantieModal} onClose={() => setGarantieModal(null)} title="Couper la garantie épargne"
+        footer={<>
+          <button onClick={() => setGarantieModal(null)} disabled={coupantGarantie} className="btn-secondary">Annuler</button>
+          <button
+            onClick={guardedHandleCouperGarantie}
+            disabled={coupantGarantie || chargeGarantieSolde || !garantieMontant || Number(garantieMontant) <= 0 || Number(garantieMontant) > garantieSolde}
+            className={`btn-primary bg-red-600 hover:bg-red-700 ${(coupantGarantie || chargeGarantieSolde || !garantieMontant || Number(garantieMontant) <= 0 || Number(garantieMontant) > garantieSolde) ? 'opacity-40 cursor-not-allowed' : ''}`}
+          ><AlertTriangle size={14}/>{coupantGarantie ? 'Envoi…' : 'Couper et imputer au prêt'}</button>
+        </>}>
+        {garantieModal && (
+          <div className="space-y-4">
+            <div className="p-4 bg-gray-50 rounded-xl space-y-1.5">
+              <p className="text-sm font-semibold text-gray-800">{garantieModal.pret.nomMembre}</p>
+              <div className="flex justify-between text-sm"><span className="text-gray-500">Reste à payer sur le prêt :</span><span className="font-bold text-red-600">{fmt(garantieModal.pret.resteAPayer)}</span></div>
+              <div className="flex justify-between text-sm"><span className="text-gray-500">Solde épargne disponible :</span><span className="font-medium text-primary-600">{chargeGarantieSolde ? '…' : fmt(garantieSolde)}</span></div>
+            </div>
+            <p className="text-xs text-amber-700">Le montant est prélevé sur l'épargne du membre et directement imputé sur les échéances impayées du prêt — l'argent ne quitte pas la caisse une seconde fois, il y était déjà déposé.</p>
+            <FormField label="Montant à couper (FCFA)" required>
+              <input type="number" className="input" value={garantieMontant}
+                onChange={e => setGarantieMontant(e.target.value)} min="1" max={Math.min(garantieSolde, garantieModal.pret.resteAPayer)} disabled={chargeGarantieSolde}/>
+            </FormField>
+            <FormField label="Motif (optionnel)">
+              <input type="text" className="input" value={garantieMotif} onChange={e => setGarantieMotif(e.target.value)} placeholder="Ex : défaut de paiement échéance de..." />
+            </FormField>
+          </div>
+        )}
       </Modal>
     </div>
   );
