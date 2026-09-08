@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, PieChart, Pie, Cell } from 'recharts';
 import { useApp } from '../context/AppContext';
 import { fmt, fmtDate } from '../data/mockData';
@@ -20,8 +21,14 @@ export default function Rapports() {
   const {
     membres, membresParTontine, tontines, reunions, prets, sanctions,
     evolutionCaisse, dashboardStats, banques, comptesBanque,
-    seanceTransactions, caisseJournal,
+    seanceTransactions, caisseJournal, chargerJournalGlobal,
   } = useApp();
+
+  // La page n'a jamais chargé le journal global elle-même — le graphique
+  // "Évolution de la caisse" et les totaux qui en dépendent restaient vides
+  // tant qu'une autre page (le journal de caisse) n'avait pas été visitée
+  // avant dans la même session.
+  useEffect(() => { chargerJournalGlobal(); }, []);
 
   const tauxRecouvrement = prets.length > 0
     ? Math.round((prets.filter(p=>p.statut==='rembourse').length / prets.length) * 100)
@@ -61,12 +68,13 @@ export default function Rapports() {
   }).filter(t => t.count > 0);
 
   // ── Historique des séances (rapport condensé) ──────────
+  // Utilise les totaux précalculés côté serveur (r.entreesSeance/sortiesSeance)
+  // plutôt que de filtrer seanceTransactions, qui ne couvre que la dernière
+  // réunion ouverte dans l'appli — pas l'ensemble des réunions listées ici.
   const reunionsAvecTx = reunions.map(r => {
     const txs = seanceTransactions.filter(t => t.reunionId === r.id);
-    const entrees = txs.filter(t => TX_TYPES.find(tt=>tt.value===t.type)?.dir==='entree').reduce((s,t)=>s+t.montant,0);
-    const sorties = txs.filter(t => TX_TYPES.find(tt=>tt.value===t.type)?.dir==='sortie').reduce((s,t)=>s+t.montant,0);
-    const banque  = txs.filter(t => t.type==='depot_banque').reduce((s,t)=>s+t.montant,0);
-    return { ...r, entrees, sorties, banque, nbTx: txs.length };
+    const banque = txs.filter(t => t.type==='depot_banque').reduce((s,t)=>s+t.montant,0);
+    return { ...r, entrees: r.entreesSeance || 0, sorties: r.sortiesSeance || 0, banque, nbTx: txs.length };
   });
 
   // Données pour le graphique caisse par mois (depuis caisseJournal)
@@ -136,12 +144,27 @@ export default function Rapports() {
           ) : (
             <ResponsiveContainer width="100%" height={180}>
               <PieChart>
-                <Pie data={bancairesData} cx="50%" cy="50%" outerRadius={70} dataKey="value" label={({name,percent})=>`${name.substring(0,8)}… ${Math.round(percent*100)}%`} labelLine={false}>
+                <Pie data={bancairesData} cx="50%" cy="50%" outerRadius={70} dataKey="value">
                   {bancairesData.map((entry,i)=><Cell key={i} fill={entry.color}/>)}
                 </Pie>
                 <Tooltip formatter={v=>fmt(v)}/>
               </PieChart>
             </ResponsiveContainer>
+          )}
+          {!bancairesData.every(b=>b.value===0) && (
+            <ul className="mt-3 space-y-1">
+              {bancairesData.map((b,i) => {
+                const total = bancairesData.reduce((s,x)=>s+x.value,0);
+                const pct = total > 0 ? Math.round((b.value/total)*100) : 0;
+                return (
+                  <li key={i} className="flex items-center gap-2 text-xs text-gray-600">
+                    <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: b.color }}/>
+                    <span className="truncate flex-1">{b.name}</span>
+                    <span className="font-semibold text-gray-800">{pct}%</span>
+                  </li>
+                );
+              })}
+            </ul>
           )}
         </div>
 
