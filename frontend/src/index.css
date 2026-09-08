@@ -10,6 +10,13 @@
   --radius-btn: 9999px;
   --brand: #4C5FD6;
   --brand-dark: #2E3B8C;
+  /* Nuances dérivées de --brand, utilisées comme palette de graphiques
+     (ex: camembert "Répartition des caisses" dans Rapports.jsx) — jamais
+     définies auparavant : les slices retombaient sur un fill invalide
+     (rendu noir plein) faute de valeur pour ces variables. */
+  --brand-soft: #8D98EA;
+  --brand-pale: #C3CAF7;
+  --muted: #A9AFBD;
   --bronze: #B08A3E;
   --ink: #0B0D12;
   --line: rgba(11,13,18,.08);
