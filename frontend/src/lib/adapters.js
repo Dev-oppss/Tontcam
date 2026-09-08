@@ -217,6 +217,15 @@ export const reunionFromApi = (r) => !r ? null : ({
   heureDebut: r.heure_debut,
   lieu: r.lieu,
   statutReunion: { ouverte: 'en_cours', cloturee: 'cloturee', tenue: 'tenue', annulee: 'annulee' }[r.statut] || 'planifiee',
+  // Comptes de présence (présents = present+en_retard, absents = absent+absent_excuse),
+  // utilisés par le taux de présence des Rapports & Statistiques.
+  cloture: { presents: r.presents_count ?? 0, absents: r.absents_count ?? 0 },
+  // Totaux de séance précalculés côté serveur (voir withSum dans
+  // ReunionController::index) — utilisés par le rapport condensé par séance,
+  // qui ne peut pas se fier au state seanceTransactions (une seule réunion à
+  // la fois) pour couvrir toutes les réunions listées.
+  entreesSeance: Number(r.entrees_seance || 0),
+  sortiesSeance: Number(r.sorties_seance || 0),
   ouverture: r.heure_ouverture_reelle ? {
     heureOuverture: r.heure_ouverture_reelle,
     presidentSeance: r.president_seance,
