@@ -16,7 +16,7 @@ const CATEGORIES = [
   { code: 'autre',          label: 'Autre',                  delaiJours: 30, param: null },
 ];
 
-const EMPTY_TYPE = { libelle: '', typeEvenement: 'naissance', montantFixe: '' };
+const EMPTY_TYPE = { libelle: '', typeEvenement: 'naissance', montantFixe: '', nbMaxVie: '' };
 
 const EMPTY = { idMembre: '', categorie: '', montant: '', description: '', justificatif: '', dateDeclaration: new Date().toISOString().split('T')[0] };
 
@@ -72,13 +72,13 @@ export default function Social() {
 
   const openEditType = (t) => {
     setEditingTypeId(t.id);
-    setTypeForm({ libelle: t.libelle || '', typeEvenement: t.typeEvenement || 'naissance', montantFixe: t.montantFixe ?? '' });
+    setTypeForm({ libelle: t.libelle || '', typeEvenement: t.typeEvenement || 'naissance', montantFixe: t.montantFixe ?? '', nbMaxVie: t.nbMaxVie ?? '' });
     setAddType(true);
   };
   const closeTypeModal = () => { setAddType(false); setEditingTypeId(null); setTypeForm(EMPTY_TYPE); };
   const [guardedSaveType, savingTypeAide] = useAsyncGuard(async () => {
     if (!typeForm.libelle.trim()) return;
-    const payload = { libelle: typeForm.libelle.trim(), typeEvenement: typeForm.typeEvenement, montantFixe: Number(typeForm.montantFixe || 0) };
+    const payload = { libelle: typeForm.libelle.trim(), typeEvenement: typeForm.typeEvenement, montantFixe: Number(typeForm.montantFixe || 0), nbMaxVie: typeForm.nbMaxVie ? Number(typeForm.nbMaxVie) : null };
     const result = editingTypeId ? await updateTypeAideSociale?.(editingTypeId, payload) : await addTypeAideSociale(payload);
     if (result) closeTypeModal();
   });
@@ -144,7 +144,7 @@ export default function Social() {
             {typesAideSociale.map((t) => (
               <div key={t.id} className="rounded-xl bg-white/40 border border-white/50 p-3 group relative">
                 <p className="text-sm font-semibold text-ink-900 pr-10">{t.libelle}</p>
-                <p className="text-xs text-ink-600/50 mt-1">{CATEGORIES.find((c) => c.code === t.typeEvenement)?.label || t.typeEvenement} · Max {maxParCategorieAn}/an</p>
+                <p className="text-xs text-ink-600/50 mt-1">{CATEGORIES.find((c) => c.code === t.typeEvenement)?.label || t.typeEvenement} · Max {maxParCategorieAn}/an{t.nbMaxVie ? ` · Max ${t.nbMaxVie} à vie` : ''}</p>
                 <p className="font-mono text-sm font-semibold text-indigo-700 mt-1">{fmt(t.montantFixe)}</p>
                 <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button onClick={() => openEditType(t)} title="Modifier" className="p-1 hover:bg-white rounded-lg text-ink-600/50 hover:text-indigo-600">
@@ -288,6 +288,9 @@ export default function Social() {
           </FormField>
           <FormField label="Montant (FCFA)" required>
             <input type="number" className="input" value={typeForm.montantFixe} onChange={(e) => setTypeForm((f) => ({ ...f, montantFixe: e.target.value }))} />
+          </FormField>
+          <FormField label="Plafond à vie (optionnel)" hint="Nombre maximum de fois qu'un même membre peut recevoir cette aide, sur toute la durée de son adhésion. Laisser vide = pas de plafond à vie.">
+            <input type="number" min="1" className="input" value={typeForm.nbMaxVie} onChange={(e) => setTypeForm((f) => ({ ...f, nbMaxVie: e.target.value }))} placeholder="Illimité" />
           </FormField>
         </div>
       </Modal>

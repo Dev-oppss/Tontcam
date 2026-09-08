@@ -51,7 +51,7 @@ class SanctionService
             return null;
         }
 
-        return SanctionMembre::create([
+        $sanction = SanctionMembre::create([
             'association_id' => $membre->association_id,
             'membre_id' => $membre->id,
             'type_sanction_id' => $type->id,
@@ -61,6 +61,52 @@ class SanctionService
             'statut' => 'due',
             'est_automatique' => true,
         ]);
+
+        $this->sanctionnerPalierAbsencesCumulees($membre, $type, $reunion);
+
+        return $sanction;
+    }
+
+    /**
+     * Sanction SUPPLÉMENTAIRE, ponctuelle, quand le nombre total d'absences
+     * non excusées du membre (cumulé depuis toujours, tous types
+     * absence_non_excusee confondus) atteint un seuil paramétré sur
+     * paliers_absence — ex: 5 absences → 3000 FCFA en plus de la sanction
+     * normale par absence. Se déclenche une seule fois par seuil franchi
+     * (pas à chaque absence au-delà du seuil).
+     */
+    private function sanctionnerPalierAbsencesCumulees(Membre $membre, TypeSanction $typeBase, Reunion $reunion): void
+    {
+        $paliers = $typeBase->paliers_absence ?? [];
+        if (empty($paliers)) {
+            return;
+        }
+
+        // On compte les RÉUNIONS distinctes (pas les lignes) : la sanction de palier
+        // elle-même est enregistrée avec le même type_sanction_id et la même
+        // réunion que l'absence qui la déclenche — sans ce distinct, elle se
+        // compterait deux fois et décalerait tous les seuils suivants.
+        $nbAbsences = $membre->absences_cumulees_initiales + SanctionMembre::where('membre_id', $membre->id)
+            ->where('type_sanction_id', $typeBase->id)
+            ->where('est_automatique', true)
+            ->distinct('reunion_id')
+            ->count('reunion_id');
+
+        foreach ($paliers as $palier) {
+            if ((int) $palier['nombre'] === $nbAbsences) {
+                SanctionMembre::create([
+                    'association_id' => $membre->association_id,
+                    'membre_id' => $membre->id,
+                    'type_sanction_id' => $typeBase->id,
+                    'reunion_id' => $reunion->id,
+                    'montant' => (float) $palier['montant'],
+                    'motif' => "Palier de {$nbAbsences} absences non excusées cumulées atteint",
+                    'statut' => 'due',
+                    'est_automatique' => true,
+                ]);
+                return; // un seul seuil ne peut être franchi qu'une fois par cette absence
+            }
+        }
     }
 
     /**
@@ -74,6 +120,21 @@ class SanctionService
             ->first();
 
         if (! $type) {
+            return null;
+        }
+
+        // Évite le doublon : le trigger SQL fn_sanction_retard_cotisation crée déjà
+        // automatiquement une sanction dès que cotisations_tontine.statut passe à
+        // 'en_retard' ou 'impayee' (cf. script.sql). Sans ce garde-fou, cette méthode
+        // PHP — appelée juste après la mise à jour du statut dans
+        // TontineCycleService::saisirCotisations() — insérait une seconde ligne
+        // identique dans sanctions_membres pour le même retard, doublant la pénalité
+        // réellement facturée au membre.
+        $existe = SanctionMembre::where('membre_id', $membre->id)
+            ->where('reference_type', 'cotisation_tontine')
+            ->where('reference_id', $cotisation->id)
+            ->exists();
+        if ($existe) {
             return null;
         }
 
@@ -175,6 +236,80 @@ class SanctionService
         }
 
         return $sanction;
+    }
+
+    /**
+     * Déclenchement auto sur retard d'arrivée en réunion. Contrairement aux autres
+     * déclencheurs, le montant dépend de paliers (ex. 100 FCFA à partir de 15 min,
+     * 250 FCFA à partir de 3h — cf. migration add_paliers_retard_to_types_sanction),
+     * pas d'un simple fixe/pourcentage/journalier.
+     */
+    public function retardPresence(Membre $membre, Reunion $reunion, int $minutesRetard): ?SanctionMembre
+    {
+        $type = TypeSanction::where('association_id', $membre->association_id)
+            ->where('declencheur', 'retard_presence')
+            ->where('est_automatique', true)
+            ->first();
+
+        if (! $type) {
+            return null;
+        }
+
+        // Évite le doublon si la présence est ressaisie plusieurs fois pour la même réunion.
+        $existe = SanctionMembre::where('membre_id', $membre->id)
+            ->where('reunion_id', $reunion->id)
+            ->where('type_sanction_id', $type->id)
+            ->exists();
+        if ($existe) {
+            return null;
+        }
+
+        $montant = $this->montantPalierRetard($type, $minutesRetard);
+        if ($montant === null) {
+            // Aucun palier ne matche (retard sous le premier seuil configuré) : pas de sanction.
+            return null;
+        }
+
+        $heures = intdiv($minutesRetard, 60);
+        $minutes = $minutesRetard % 60;
+        $dureeLisible = $heures > 0 ? "{$heures}h" . ($minutes > 0 ? sprintf('%02d', $minutes) : '') : "{$minutesRetard} min";
+
+        return SanctionMembre::create([
+            'association_id' => $membre->association_id,
+            'membre_id' => $membre->id,
+            'type_sanction_id' => $type->id,
+            'reunion_id' => $reunion->id,
+            'montant' => $montant,
+            'motif' => "Retard de {$dureeLisible} à la réunion n°{$reunion->numero}",
+            'statut' => 'due',
+            'est_automatique' => true,
+        ]);
+    }
+
+    /**
+     * Palier applicable = le plus grand dont 'minutes' <= retard constaté (les paliers
+     * sont des SEUILS, pas des tranches cumulatives : "250 à partir de 3h" remplace le
+     * palier des 15 min pour un retard de 3h, il ne s'y ajoute pas). Repli sur
+     * montant_fixe si aucun palier n'est configuré ou si le retard est sous le premier
+     * seuil ; null si même ce repli est absent (pas de sanction dans ce cas).
+     */
+    private function montantPalierRetard(TypeSanction $type, int $minutesRetard): ?float
+    {
+        $paliers = $type->paliers_retard ?? [];
+        $applicable = null;
+        foreach ($paliers as $palier) {
+            if ($minutesRetard >= (int) $palier['minutes']) {
+                $applicable = (float) $palier['montant'];
+            }
+        }
+        if ($applicable !== null) {
+            return $applicable;
+        }
+
+        // montant_fixe sert de repli uniquement s'il représente un vrai montant — 0 (valeur
+        // par défaut posée par l'UI de configuration des paliers) signifie "pas de sanction
+        // sous le premier palier", pas "sanctionner 0 FCFA".
+        return ($type->montant_fixe !== null && (float) $type->montant_fixe > 0) ? (float) $type->montant_fixe : null;
     }
 
     private function calculerMontant(TypeSanction $type): float

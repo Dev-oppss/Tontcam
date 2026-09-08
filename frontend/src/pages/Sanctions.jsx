@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import clsx from 'clsx';
 import { ShieldAlert, Plus, Settings2, CreditCard, Pencil, Trash2 } from 'lucide-react';
 import { fmt, fmtDate, typeSancLabel } from '../data/mockData';
 import { useApp } from '../context/AppContext';
@@ -28,7 +29,7 @@ const slugify = (value) => String(value || '')
   .replace(/^_+|_+$/g, '');
 
 export default function Sanctions() {
-  const { membres, sanctions, addSanction, payerSanction, typesSanction, addTypeSanction, updateTypeSanction, deleteTypeSanction, reunions = [], showToast } = useApp();
+  const { membres, sanctions, addSanction, payerSanction, typesSanction, addTypeSanction, updateTypeSanction, deleteTypeSanction, reunions = [], banques = [], showToast } = useApp();
   const [add, setAdd] = useState(false);
   const [addType, setAddType] = useState(false);
   const [editingTypeId, setEditingTypeId] = useState(null);
@@ -42,13 +43,76 @@ export default function Sanctions() {
   });
   const [customTypeForm, setCustomTypeForm] = useState(emptyCustomType());
   const [payModal, setPayModal] = useState(null);
+  const [payCaisseId, setPayCaisseId] = useState('');
   const [payModePaiement, setPayModePaiement] = useState('especes');
   const [payDetailsPaiement, setPayDetailsPaiement] = useState('');
 
+  // ── Sanction automatique de retard à l'arrivée (declencheur 'retard_presence') ──
+  // Un seul type par association pour ce déclencheur (voir SanctionService::retardPresence,
+  // qui prend le premier trouvé) : on l'édite s'il existe déjà, sinon on en crée un.
+  const typeRetard = typesSanction.find((t) => t.declencheur === 'retard_presence');
+  const [retardModalOpen, setRetardModalOpen] = useState(false);
+  const [retardForm, setRetardForm] = useState({ actif: false, libelle: 'Retard à l\'arrivée', paliers: [{ minutes: '15', montant: '' }] });
+
+  const openRetardModal = () => {
+    setRetardForm(typeRetard
+      ? { actif: !!typeRetard.estAutomatique, libelle: typeRetard.libelle, paliers: (typeRetard.paliersRetard?.length ? typeRetard.paliersRetard : [{ minutes: '15', montant: '' }]).map(p => ({ minutes: String(p.minutes), montant: String(p.montant) })) }
+      : { actif: true, libelle: 'Retard à l\'arrivée', paliers: [{ minutes: '15', montant: '' }] });
+    setRetardModalOpen(true);
+  };
+  const setPalier = (i, patch) => setRetardForm(f => ({ ...f, paliers: f.paliers.map((p, idx) => idx === i ? { ...p, ...patch } : p) }));
+  const addPalier = () => setRetardForm(f => ({ ...f, paliers: [...f.paliers, { minutes: '', montant: '' }] }));
+  const removePalier = (i) => setRetardForm(f => ({ ...f, paliers: f.paliers.filter((_, idx) => idx !== i) }));
+
+  // ── Sanction automatique sur absences cumulées (declencheur 'absence_non_excusee') ──
+  // S'ajoute à la sanction normale par absence (qui existe déjà via typesDisponibles) —
+  // ne la remplace pas. Voir SanctionService::sanctionnerPalierAbsencesCumulees.
+  const typeAbsence = typesSanction.find((t) => t.declencheur === 'absence_non_excusee');
+  const [absenceModalOpen, setAbsenceModalOpen] = useState(false);
+  const [absenceForm, setAbsenceForm] = useState({ paliers: [{ nombre: '5', montant: '' }] });
+
+  const openAbsenceModal = () => {
+    setAbsenceForm({ paliers: typeAbsence?.paliersAbsence?.length ? typeAbsence.paliersAbsence.map(p => ({ nombre: String(p.nombre), montant: String(p.montant) })) : [{ nombre: '5', montant: '' }] });
+    setAbsenceModalOpen(true);
+  };
+  const setPalierAbsence = (i, patch) => setAbsenceForm(f => ({ ...f, paliers: f.paliers.map((p, idx) => idx === i ? { ...p, ...patch } : p) }));
+  const addPalierAbsence = () => setAbsenceForm(f => ({ ...f, paliers: [...f.paliers, { nombre: '', montant: '' }] }));
+  const removePalierAbsence = (i) => setAbsenceForm(f => ({ ...f, paliers: f.paliers.filter((_, idx) => idx !== i) }));
+
+  const handleSaveAbsence = async () => {
+    if (! typeAbsence) {
+      showToast?.('Paramétrez d\'abord le type « Absence non excusée » dans le catalogue ci-dessous.', 'error');
+      return;
+    }
+    const paliersValides = absenceForm.paliers.filter(p => p.nombre && p.montant);
+    await updateTypeSanction(typeAbsence.id, { paliersAbsence: paliersValides });
+    setAbsenceModalOpen(false);
+  };
+  const [guardedSaveAbsence, savingAbsence] = useAsyncGuard(handleSaveAbsence);
+
+  const handleSaveRetard = async () => {
+    const paliersValides = retardForm.paliers.filter(p => p.minutes && p.montant);
+    if (retardForm.actif && paliersValides.length === 0) {
+      showToast?.('Ajoutez au moins un palier (ex. « à partir de 15 min → 100 FCFA »).', 'error');
+      return;
+    }
+    const payload = {
+      libelle: retardForm.libelle.trim() || 'Retard à l\'arrivée',
+      montantFixe: 0, modeCalcul: 'fixe', declencheur: 'retard_presence',
+      estAutomatique: retardForm.actif, paliersRetard: paliersValides,
+    };
+    if (typeRetard) await updateTypeSanction(typeRetard.id, payload);
+    else await addTypeSanction({ ...payload, code: 'retard_presence' });
+    setRetardModalOpen(false);
+  };
+  const [guardedSaveRetard, savingRetard] = useAsyncGuard(handleSaveRetard);
+
   const handlePayer = async () => {
+    if (!payCaisseId) { showToast?.('Choisissez la caisse qui reçoit le paiement.', 'error'); return; }
     if (!isModePaiementValid(payModePaiement, payDetailsPaiement)) { showToast?.('Référence de paiement requise pour ce mode de versement.', 'error'); return; }
-    await payerSanction(payModal.id, { modePaiement: payModePaiement, detailsPaiement: payDetailsPaiement });
+    await payerSanction(payModal.id, { caisseId: payCaisseId, modePaiement: payModePaiement, detailsPaiement: payDetailsPaiement });
     setPayModal(null);
+    setPayCaisseId('');
     setPayModePaiement('especes');
     setPayDetailsPaiement('');
   };
@@ -172,13 +236,56 @@ export default function Sanctions() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Sanctions" subtitle="Types de sanction paramétrables et pénalités des membres"
+      <PageHeader title="Sanctions" subtitle="Les sanctions s'appliquent depuis la Réunion en cours (règle d'or)"
         action={
           <div className="flex gap-2">
+            <button onClick={openRetardModal} className="btn-secondary"><ShieldAlert size={15}/> Retards automatiques</button>
+            <button onClick={openAbsenceModal} className="btn-secondary"><ShieldAlert size={15}/> Absences cumulées</button>
             <button onClick={()=>{setEditingTypeId(null); setCustomTypeForm(emptyCustomType()); setAddType(true);}} className="btn-secondary"><Settings2 size={15}/> Paramètres</button>
-            <button onClick={()=>setAdd(true)} className="btn-primary"><Plus size={15}/> Nouvelle sanction</button>
           </div>
         }/>
+
+      <div className={clsx('card border-l-4', typeRetard?.estAutomatique ? 'border-l-green-400' : 'border-l-gray-300')}>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-gray-800 flex items-center gap-2">
+              Sanction automatique de retard
+              <Badge variant={typeRetard?.estAutomatique ? 'green' : 'gray'}>{typeRetard?.estAutomatique ? 'Activée' : 'Désactivée'}</Badge>
+            </p>
+            {typeRetard?.estAutomatique && typeRetard.paliersRetard?.length > 0 ? (
+              <p className="text-xs text-gray-400 mt-1">
+                {typeRetard.paliersRetard.map((p, i) => (
+                  <span key={i}>{i > 0 && ' · '}À partir de {p.minutes} min → {fmt(p.montant)}</span>
+                ))}
+              </p>
+            ) : (
+              <p className="text-xs text-gray-400 mt-1">Un membre marqué « En retard » lors du pointage des présences peut être sanctionné automatiquement selon la durée de son retard.</p>
+            )}
+          </div>
+          <button onClick={openRetardModal} className="btn-secondary text-xs py-1.5 shrink-0"><Pencil size={12}/> Configurer</button>
+        </div>
+      </div>
+
+      <div className={clsx('card border-l-4', typeAbsence?.paliersAbsence?.length ? 'border-l-green-400' : 'border-l-gray-300')}>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-gray-800 flex items-center gap-2">
+              Sanction supplémentaire sur absences cumulées
+              <Badge variant={typeAbsence?.paliersAbsence?.length ? 'green' : 'gray'}>{typeAbsence?.paliersAbsence?.length ? 'Activée' : 'Non paramétrée'}</Badge>
+            </p>
+            {typeAbsence?.paliersAbsence?.length > 0 ? (
+              <p className="text-xs text-gray-400 mt-1">
+                {typeAbsence.paliersAbsence.map((p, i) => (
+                  <span key={i}>{i > 0 && ' · '}À la {p.nombre}ᵉ absence cumulée → +{fmt(p.montant)}</span>
+                ))}
+              </p>
+            ) : (
+              <p className="text-xs text-gray-400 mt-1">En plus de la sanction normale par absence, une sanction ponctuelle supplémentaire peut se déclencher quand le nombre total d'absences non excusées d'un membre atteint un seuil paramétré.</p>
+            )}
+          </div>
+          <button onClick={openAbsenceModal} className="btn-secondary text-xs py-1.5 shrink-0"><Pencil size={12}/> Configurer</button>
+        </div>
+      </div>
 
       <div className="grid grid-cols-3 gap-4">
         <div className="card text-center border-t-4 border-t-red-400">
@@ -249,7 +356,7 @@ export default function Sanctions() {
               </td>
               <td className="td">
                 {s.statut==='impayee'&&(
-                  <button onClick={()=>setPayModal(s)} className="btn-primary py-1 px-2.5 text-xs flex items-center gap-1">
+                  <button onClick={()=>{ setPayModal(s); setPayCaisseId(''); }} className="btn-primary py-1 px-2.5 text-xs flex items-center gap-1">
                     <CreditCard size={12}/>Marquer payée
                   </button>
                 )}
@@ -259,64 +366,65 @@ export default function Sanctions() {
         </Table>
       </div>
 
-      <Modal open={add} onClose={()=>setAdd(false)} title="Nouvelle sanction"
-        footer={<><button onClick={()=>setAdd(false)} disabled={addingSanction} className="btn-secondary">Annuler</button><button onClick={guardedHandleAdd} disabled={addingSanction} className="btn-danger"><ShieldAlert size={14}/>{addingSanction ? 'Enregistrement…' : 'Enregistrer'}</button></>}>
+      <Modal open={retardModalOpen} onClose={() => setRetardModalOpen(false)} title="Sanction automatique de retard"
+        footer={<><button onClick={() => setRetardModalOpen(false)} disabled={savingRetard} className="btn-secondary">Annuler</button><button onClick={guardedSaveRetard} disabled={savingRetard} className="btn-primary"><ShieldAlert size={14}/>{savingRetard ? 'Enregistrement…' : 'Enregistrer'}</button></>}>
         <div className="space-y-4">
-          <FormField label="Membre" required>
-            <select className="select" value={form.idMembre} onChange={e=>setForm(f=>({...f,idMembre:e.target.value}))}>
-              <option value="">Sélectionner…</option>
-              {membres.map(m=><option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
-            </select>
+          <label className="flex items-center gap-2 p-3 bg-gray-50 rounded-xl cursor-pointer">
+            <input type="checkbox" checked={retardForm.actif} onChange={e => setRetardForm(f => ({ ...f, actif: e.target.checked }))} className="w-4 h-4"/>
+            <span className="text-sm font-medium text-gray-700">Appliquer automatiquement une sanction aux membres marqués « En retard »</span>
+          </label>
+          <FormField label="Libellé" required>
+            <input className="input" value={retardForm.libelle} onChange={e => setRetardForm(f => ({ ...f, libelle: e.target.value }))} />
           </FormField>
-          <FormField label="Type de sanction" required>
-            <select className="select" value={form.typeSanction} onChange={e=>handleSelectType(e.target.value)}>
-              {typesDisponibles.map((type) => <option key={type.code} value={type.code}>{type.libelle} — {fmt(type.montantFixe)}</option>)}
-              <option value="autre">Autre (créer un nouveau type)</option>
-            </select>
-          </FormField>
-          {form.typeSanction === 'autre' && (
-            <div className="rounded-2xl border border-amber-200 bg-amber-50/60 p-4 space-y-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-sm font-semibold text-amber-900">Type personnalisé</p>
-                  <p className="text-xs text-amber-700 mt-1">Ce type sera sauvegardé et réutilisable pour les prochains membres.</p>
+          <div>
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Paliers de retard</p>
+            <p className="text-xs text-gray-400 mb-3">
+              Le montant appliqué est celui du plus grand palier atteint — ce ne sont pas des tranches
+              cumulées. Ex : « à partir de 15 min → 100 FCFA » et « à partir de 3h → 250 FCFA » veut dire
+              qu'un retard de 3h ou plus coûte 250 FCFA (pas 100 + 250).
+            </p>
+            <div className="space-y-2">
+              {retardForm.paliers.map((p, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <span className="text-xs text-gray-400 shrink-0">À partir de</span>
+                  <input type="number" min="1" className="input" placeholder="15" value={p.minutes} onChange={e => setPalier(i, { minutes: e.target.value })}/>
+                  <span className="text-xs text-gray-400 shrink-0">min →</span>
+                  <input type="number" min="0" className="input" placeholder="100" value={p.montant} onChange={e => setPalier(i, { montant: e.target.value })}/>
+                  <span className="text-xs text-gray-400 shrink-0">FCFA</span>
+                  <button type="button" onClick={() => removePalier(i)} className="p-1.5 text-gray-400 hover:text-red-600 shrink-0"><Trash2 size={14}/></button>
                 </div>
+              ))}
+            </div>
+            <button type="button" onClick={addPalier} className="btn-secondary text-xs py-1.5 mt-2"><Plus size={12}/> Ajouter un palier</button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal open={absenceModalOpen} onClose={() => setAbsenceModalOpen(false)} title="Sanction supplémentaire sur absences cumulées"
+        footer={<><button onClick={() => setAbsenceModalOpen(false)} disabled={savingAbsence} className="btn-secondary">Annuler</button><button onClick={guardedSaveAbsence} disabled={savingAbsence} className="btn-primary"><ShieldAlert size={14}/>{savingAbsence ? 'Enregistrement…' : 'Enregistrer'}</button></>}>
+        <div className="space-y-4">
+          {! typeAbsence && (
+            <p className="text-xs text-amber-600 bg-amber-50 rounded-xl p-3">Le type « Absence non excusée » n'est pas encore paramétré — paramétrez-le d'abord dans le catalogue ci-dessous (bouton « Paramètres »), puis revenez ici configurer les paliers.</p>
+          )}
+          <p className="text-xs text-gray-400">
+            En plus de la sanction normale appliquée à chaque absence, une sanction ponctuelle
+            supplémentaire se déclenche quand le nombre total d'absences non excusées cumulées
+            d'un membre atteint un seuil que vous choisissez — une seule fois par seuil franchi
+            (le membre paie les 2 sanctions ce jour-là, pas seulement celle du palier).
+          </p>
+          <div className="space-y-2">
+            {absenceForm.paliers.map((p, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <span className="text-xs text-gray-400 shrink-0">À la</span>
+                <input type="number" min="1" className="input" placeholder="5" value={p.nombre} onChange={e => setPalierAbsence(i, { nombre: e.target.value })}/>
+                <span className="text-xs text-gray-400 shrink-0">ᵉ absence cumulée →</span>
+                <input type="number" min="0" className="input" placeholder="3000" value={p.montant} onChange={e => setPalierAbsence(i, { montant: e.target.value })}/>
+                <span className="text-xs text-gray-400 shrink-0">FCFA</span>
+                <button type="button" onClick={() => removePalierAbsence(i)} className="p-1.5 text-gray-400 hover:text-red-600 shrink-0"><Trash2 size={14}/></button>
               </div>
-              <FormField label="Libellé de la sanction" required>
-                <input className="input" value={customTypeForm.libelle} onChange={e=>setCustomTypeForm(f=>({...f,libelle:e.target.value}))} placeholder="Ex : Retard de réunion, refus de participation…" />
-              </FormField>
-              <FormField label="Montant (FCFA)" required>
-                <input type="number" className="input" value={customTypeForm.montant} onChange={e=>setCustomTypeForm(f=>({...f,montant:e.target.value}))} />
-              </FormField>
-            </div>
-          )}
-          {form.typeSanction !== 'autre' && (
-            <div className="grid grid-cols-2 gap-3">
-              <FormField label="Montant (FCFA)">
-                <input type="number" className="input" value={form.montant} onChange={e=>setForm(f=>({...f,montant:e.target.value}))}/>
-              </FormField>
-              <FormField label="Réunion concernée" required hint={reunionsOuvertes.length === 0 ? 'Aucune séance ouverte actuellement.' : undefined}>
-                <select className="select" value={form.idReunion} onChange={e=>setForm(f=>({...f,idReunion:e.target.value}))}>
-                  <option value="">— Sélectionner —</option>
-                  {reunionsOuvertes.map(r => <option key={r.id} value={r.id}>N°{r.numero} — {fmtDate(r.date)}</option>)}
-                </select>
-              </FormField>
-            </div>
-          )}
-          {form.typeSanction === 'autre' && (
-            <div className="grid grid-cols-2 gap-3">
-              <FormField label="Réunion concernée" required hint={reunionsOuvertes.length === 0 ? 'Aucune séance ouverte actuellement.' : undefined}>
-                <select className="select" value={form.idReunion} onChange={e=>setForm(f=>({...f,idReunion:e.target.value}))}>
-                  <option value="">— Sélectionner —</option>
-                  {reunionsOuvertes.map(r => <option key={r.id} value={r.id}>N°{r.numero} — {fmtDate(r.date)}</option>)}
-                </select>
-              </FormField>
-              <div className="hidden md:block" />
-            </div>
-          )}
-          <FormField label="Date">
-            <input type="date" className="input" value={form.dateSanction} onChange={e=>setForm(f=>({...f,dateSanction:e.target.value}))}/>
-          </FormField>
+            ))}
+          </div>
+          <button type="button" onClick={addPalierAbsence} className="btn-secondary text-xs py-1.5 mt-2"><Plus size={12}/> Ajouter un seuil</button>
         </div>
       </Modal>
 
@@ -335,8 +443,8 @@ export default function Sanctions() {
       <Modal open={!!payModal} onClose={()=>setPayModal(null)} title="Régler la sanction"
         footer={<>
           <button onClick={()=>setPayModal(null)} disabled={payingAmende} className="btn-secondary">Annuler</button>
-          <button onClick={guardedHandlePayer} disabled={payingAmende || !isModePaiementValid(payModePaiement, payDetailsPaiement)}
-            className={`btn-primary ${(payingAmende || !isModePaiementValid(payModePaiement, payDetailsPaiement)) ? 'opacity-40 cursor-not-allowed' : ''}`}>
+          <button onClick={guardedHandlePayer} disabled={payingAmende || !payCaisseId || !isModePaiementValid(payModePaiement, payDetailsPaiement)}
+            className={`btn-primary ${(payingAmende || !payCaisseId || !isModePaiementValid(payModePaiement, payDetailsPaiement)) ? 'opacity-40 cursor-not-allowed' : ''}`}>
             <CreditCard size={14}/>{payingAmende ? 'Paiement…' : 'Confirmer le paiement'}
           </button>
         </>}>
@@ -345,6 +453,13 @@ export default function Sanctions() {
             <div className="p-3 bg-red-50 rounded-xl border border-red-100">
               <p className="text-sm font-semibold text-red-800">{payModal.nomMembre}</p>
               <p className="text-xs text-red-600 mt-0.5">{payModal.motif || typeSancLabel[payModal.typeSanction] || payModal.typeSanction} — <strong>{fmt(payModal.montant)}</strong></p>
+            </div>
+            <div>
+              <label className="text-xs text-gray-500 block mb-1">Caisse qui reçoit le paiement</label>
+              <select className="select" value={payCaisseId} onChange={(e) => setPayCaisseId(e.target.value)}>
+                <option value="">Choisir une caisse…</option>
+                {banques.map((b) => <option key={b.id} value={b.id}>{b.nom}</option>)}
+              </select>
             </div>
             <ModePaiementFields
               modePaiement={payModePaiement}

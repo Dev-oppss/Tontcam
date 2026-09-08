@@ -347,6 +347,16 @@ class TontineCycleService
     {
         $tontine = $cycle->tontine;
 
+        // Garde-fou côté serveur (RG-TON — bug identifié par le client) : en
+        // mode cagnotte, aucune part n'est jamais désignée gagnante — l'argent
+        // s'accumule et se redistribue via RemiseGainService, en dehors des
+        // cycles. Le frontend ne propose déjà plus cette étape pour une
+        // tontine cagnotte, mais on refuse aussi ici pour ne pas dépendre
+        // uniquement de l'UI (appel direct à l'API, cache client obsolète...).
+        if ($tontine->mode_cagnotte) {
+            throw new RuntimeException('Cette tontine est en mode cagnotte : aucun bénéficiaire n\'est désigné par cycle. Utilisez la remise de gains.');
+        }
+
         // En mode enchère, une désignation manuelle reste possible mais doit
         // obligatoirement correspondre à une offre réelle. Ainsi le bulletin,
         // les surplus et l'historique restent cohérents avec le choix effectué.

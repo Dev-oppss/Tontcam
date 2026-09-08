@@ -66,6 +66,37 @@ export const AppProvider = ({ children }) => {
   const [rotations, setRotations] = useState([]);
   const [encheres, setEncheres] = useState([]);
   const [banques, setBanques] = useState([]);
+
+  // Rafraîchit le solde affiché d'une caisse après une opération financière qui
+  // ne renvoie pas elle-même l'objet caisse à jour (décaissement/remboursement
+  // de prêt, transaction de séance, paiement de sanction, versement d'aide
+  // sociale, paiement de bulletin de gain...). Sans ça, le solde change bien en
+  // base (CaisseService::entree/sortie) mais l'écran ne le reflète qu'après un
+  // rechargement complet de la page — le bug ne se voyait donc que "des fois",
+  // selon le chemin emprunté par l'opération.
+  const rafraichirCaisse = async (caisseId) => {
+    if (!caisseId) return;
+    try {
+      const c = await request(`/caisses/${caisseId}`);
+      setBanques((prev) => prev.map((b) => (b.id === caisseId ? adapt.caisseFromApi(c) : b)));
+    } catch {
+      // Silencieux : un échec de rafraîchissement d'affichage ne doit jamais
+      // faire échouer l'opération financière elle-même, déjà enregistrée.
+    }
+  };
+
+  // Repli quand l'opération ne permet pas d'identifier la caisse concernée
+  // (ex: aide sociale versée sur la caisse par défaut du type, gain de
+  // tontine versé sur la caisse de la tontine) : on recharge toutes les
+  // caisses plutôt que de deviner un id.
+  const rafraichirToutesCaisses = async () => {
+    try {
+      const cRes = await request('/caisses');
+      setBanques((cRes.data || cRes).map(adapt.caisseFromApi));
+    } catch {
+      // idem : silencieux, l'opération financière est déjà enregistrée côté serveur.
+    }
+  };
   const [prets, setPrets] = useState([]);
   const [sanctions, setSanctions] = useState([]);
   const [typesSanction, setTypesSanction] = useState([]);
@@ -208,6 +239,97 @@ export const AppProvider = ({ children }) => {
     } catch (err) { return handleError(err); }
   };
 
+  // ── Mode cagnotte (RG-TON) : remise de gains à un nombre libre de bénéficiaires ──
+  const activerCagnotte = async (tontineId) => {
+    try {
+      const t = await request(`/tontines/${tontineId}/activer-cagnotte`, { method: 'POST' });
+      setTontines((prev) => prev.map((x) => (x.id === tontineId ? { ...x, modeCagnotte: true } : x)));
+      showToast('Mode cagnotte activé.', 'success');
+      return t;
+    } catch (err) { return handleError(err); }
+  };
+
+  const chargerPropositionCagnotte = async (tontineId) => {
+    try { return await request(`/tontines/${tontineId}/cagnotte/proposition`); } catch (err) { return handleError(err); }
+  };
+
+  const chargerRemisesGain = async (tontineId) => {
+    try { return await request(`/tontines/${tontineId}/remises-gain`); } catch (err) { return handleError(err); }
+  };
+
+  const creerRemiseGain = async (tontineId, payload) => {
+    try {
+      const res = await request(`/tontines/${tontineId}/remises-gain`, { method: 'POST', body: payload });
+      // BUGFIX : chaque ligne de remise fait une sortie de caisse
+      // (RemiseGainService::verser) — le solde baisse réellement en base mais
+      // l'écran ne le reflétait qu'après un rechargement complet de la page.
+      const idCaisse = tontines.find((t) => t.id === tontineId)?.idCaisse;
+      if (idCaisse) await rafraichirCaisse(idCaisse); else await rafraichirToutesCaisses();
+      showToast('Remise de gains enregistrée.', 'success');
+      return res;
+    } catch (err) { return handleError(err); }
+  };
+
+  // ── Initialisation membre (RG-INIT) : point de départ résumé, distinct de l'import historique ──
+  const chargerInitialisationMembre = async (membreId) => {
+    try { return await request(`/membres/${membreId}/initialisation`); } catch (err) { return handleError(err); }
+  };
+
+  const enregistrerInitialisationMembre = async (membreId, payload) => {
+    try {
+      const res = await request(`/membres/${membreId}/initialisation`, { method: 'POST', body: payload });
+      showToast('Point de départ enregistré.', 'success');
+      return res;
+    } catch (err) { return handleError(err); }
+  };
+
+  // ── Épargne (RG-EPA) : caisse "tirelire commune", voir EpargneService ──
+  const activerEpargne = async (caisseId) => {
+    try {
+      const res = await request(`/caisses/${caisseId}/activer-epargne`, { method: 'POST' });
+      setBanques((prev) => prev.map((b) => (b.id === caisseId ? { ...b, suiviEpargne: true } : b)));
+      showToast('Suivi épargne activé.', 'success');
+      return res;
+    } catch (err) { return handleError(err); }
+  };
+
+  const chargerSoldesEpargne = async (caisseId) => {
+    try { return await request(`/caisses/${caisseId}/epargne/soldes`); } catch (err) { return handleError(err); }
+  };
+
+  const deposerEpargne = async (caisseId, payload) => {
+    try {
+      const res = await request(`/caisses/${caisseId}/epargne/depots`, { method: 'POST', body: payload });
+      showToast('Dépôt enregistré.', 'success');
+      // Rafraîchit le solde affiché de la caisse et le cache des membres
+      // connus (utilisé pour restreindre le sélecteur de déposant — pt.9).
+      const c = await request(`/caisses/${caisseId}`).catch(() => null);
+      if (c) setBanques((prev) => prev.map((b) => (b.id === caisseId ? adapt.caisseFromApi(c) : b)));
+      await chargerMembresEpargneCaisse(caisseId).catch(() => {});
+      return res;
+    } catch (err) { return handleError(err); }
+  };
+
+  const cassationEpargne = async (caisseId) => {
+    try {
+      const res = await request(`/caisses/${caisseId}/epargne/cassation`, { method: 'POST' });
+      // BUGFIX : la cassation générale fait une sortie de caisse pour chaque
+      // membre remboursé (EpargneService::cassationGenerale) — le solde baisse
+      // réellement en base mais l'écran ne le reflétait qu'après rechargement.
+      await rafraichirCaisse(caisseId);
+      showToast('Cassation générale effectuée.', 'success');
+      return res;
+    } catch (err) { return handleError(err); }
+  };
+
+  const couperGarantieEpargne = async (caisseId, payload) => {
+    try {
+      const res = await request(`/caisses/${caisseId}/epargne/couper-garantie`, { method: 'POST', body: payload });
+      showToast('Montant prélevé sur l\u2019épargne.', 'success');
+      return res;
+    } catch (err) { return handleError(err); }
+  };
+
   // ── Charge toutes les données de l'association une fois connecté ──
   useEffect(() => {
     if (!user || !currentAssociation) return;
@@ -256,7 +378,7 @@ export const AppProvider = ({ children }) => {
         setTypesSanction((typeSancRes || []).map(adapt.typeSanctionFromApi));
         setTypesAideSociale((typeAideRes || []).map((t) => ({
           id: t.id, libelle: t.libelle, typeEvenement: t.type_evenement,
-          montantFixe: Number(t.montant_fixe || 0), nbMaxParAn: t.nb_max_par_an,
+          montantFixe: Number(t.montant_fixe || 0), nbMaxParAn: t.nb_max_par_an, nbMaxVie: t.nb_max_vie,
           justificatifRequis: t.justificatif_requis, caisseSourceId: t.caisse_source_id,
         })));
         setComptesBancaire((comptesRes || []).map((c) => ({
@@ -925,14 +1047,39 @@ export const AppProvider = ({ children }) => {
         idBanque: t.caisse_id, idCaisse: t.caisse_id, nomCaisse: t.caisse?.libelle || null,
       };
       setSeanceTransactionsState((prev) => [...prev, item]);
+      await rafraichirCaisse(item.idCaisse);
       showToast('Transaction enregistrée');
+      return item;
+    } catch (err) { return handleError(err); }
+  };
+  const updateSeanceTransaction = async (idReunion, id, data) => {
+    try {
+      const t = await request(`/reunions/${idReunion}/transactions/${id}`, {
+        method: 'PUT',
+        body: {
+          type: data.type, membre_id: data.idMembre || undefined, montant: Number(data.montant),
+          libelle: data.libelle || undefined, caisse_id: data.idBanque || undefined,
+          note: data.note || undefined,
+        },
+      });
+      const item = {
+        id: t.id, idReunion, type: t.type, idMembre: t.membre_id,
+        nomMembre: t.membre ? `${t.membre.nom} ${t.membre.prenom}` : null,
+        montant: Number(t.montant), libelle: t.libelle,
+        idBanque: t.caisse_id, idCaisse: t.caisse_id, nomCaisse: t.caisse?.libelle || null,
+      };
+      setSeanceTransactionsState((prev) => prev.map((x) => (x.id === id ? item : x)));
+      await rafraichirCaisse(item.idCaisse);
+      showToast('Transaction modifiée');
       return item;
     } catch (err) { return handleError(err); }
   };
   const deleteSeanceTransaction = async (idReunion, id) => {
     try {
+      const existante = seanceTransactionsState.find((t) => t.id === id);
       await request(`/reunions/${idReunion}/transactions/${id}`, { method: 'DELETE' });
       setSeanceTransactionsState((prev) => prev.filter((t) => t.id !== id));
+      await rafraichirCaisse(existante?.idCaisse);
       showToast('Transaction supprimée');
     } catch (err) { return handleError(err); }
   };
@@ -948,6 +1095,12 @@ export const AppProvider = ({ children }) => {
       // composant (il ne vivait que dans le state local du composant appelant).
       const cycle = adapt.cycleFromApi(c);
       setCyclesTontine((prev) => [...prev.filter((x) => x.id !== cycle.id), cycle]);
+      // BUGFIX : ce raccourci désigne le gagnant en interne (même logique que
+      // designerGagnantCycle) et peut donc créditer un surplus d'enchère en
+      // caisse — sans ce rafraîchissement, le solde affiché ne bougeait
+      // qu'après un rechargement complet de la page.
+      const idCaisse = tontines.find((t) => t.id === data.idTontine)?.idCaisse;
+      if (idCaisse) await rafraichirCaisse(idCaisse); else await rafraichirToutesCaisses();
       showToast('Bénéficiaire enregistré, bulletin généré');
       return c;
     } catch (err) { return handleError(err); }
@@ -1045,7 +1198,26 @@ export const AppProvider = ({ children }) => {
       return res;
     } catch (err) { return handleError(err); }
   };
-  const addMembreBanque = () => showToast('Comptes bancaires individuels non modélisés côté serveur (RG-CAI = caisses uniquement).', 'warning');
+  // ── Épargne caisse (RG-EPA) — suivi des membres pour le dépôt banque ──
+  // Remplace l'ancien addMembreBanque (stub qui n'écrivait rien côté serveur)
+  // et l'ancien comptesBanque (toujours []). "Inscrire un membre" n'existe
+  // plus comme étape séparée : un membre devient suivi dès son premier
+  // dépôt épargne dans la caisse. epargneMembresParCaisse met en cache la
+  // liste des membres déjà suivis par caisse (id -> [{membre_id, membre_nom}]),
+  // utilisée notamment pour restreindre le sélecteur "Membre déposant" du
+  // formulaire de dépôt en banque aux membres réellement connus de la caisse.
+  // activerEpargne/chargerSoldesEpargne/deposerEpargne existent déjà plus haut
+  // (module Épargne) — on ne les redéclare pas ici, seul chargerMembresEpargneCaisse
+  // est nouveau (endpoint /epargne/membres, absent du module d'origine).
+  const [epargneMembresParCaisse, setEpargneMembresParCaisse] = useState({});
+
+  const chargerMembresEpargneCaisse = async (caisseId) => {
+    try {
+      const membres = await request(`/caisses/${caisseId}/epargne/membres`);
+      setEpargneMembresParCaisse((prev) => ({ ...prev, [caisseId]: membres }));
+      return membres;
+    } catch (err) { return handleError(err); }
+  };
 
   // ── Sanctions ─────────────────────────────────────────────────
   const addTypeSanction = async (data) => {
@@ -1053,6 +1225,8 @@ export const AppProvider = ({ children }) => {
       const t = await request('/types-sanction', { method: 'POST', body: {
         libelle: data.libelle, mode_calcul: data.modeCalcul || 'fixe', montant_fixe: data.montantFixe,
         declencheur: data.declencheur || undefined, est_automatique: !!data.estAutomatique, description: data.description,
+        paliers_retard: data.paliersRetard?.length ? data.paliersRetard.map(p => ({ minutes: Number(p.minutes), montant: Number(p.montant) })) : undefined,
+        paliers_absence: data.paliersAbsence?.length ? data.paliersAbsence.map(p => ({ nombre: Number(p.nombre), montant: Number(p.montant) })) : undefined,
       } });
       const type = adapt.typeSanctionFromApi(t);
       setTypesSanction((prev) => [...prev, type]);
@@ -1064,6 +1238,14 @@ export const AppProvider = ({ children }) => {
     try {
       const t = await request(`/types-sanction/${id}`, { method: 'PUT', body: {
         libelle: data.libelle, montant_fixe: data.montantFixe, actif: data.actif,
+        declencheur: data.declencheur !== undefined ? (data.declencheur || null) : undefined,
+        est_automatique: data.estAutomatique !== undefined ? !!data.estAutomatique : undefined,
+        paliers_retard: data.paliersRetard !== undefined
+          ? (data.paliersRetard?.length ? data.paliersRetard.map(p => ({ minutes: Number(p.minutes), montant: Number(p.montant) })) : null)
+          : undefined,
+        paliers_absence: data.paliersAbsence !== undefined
+          ? (data.paliersAbsence?.length ? data.paliersAbsence.map(p => ({ nombre: Number(p.nombre), montant: Number(p.montant) })) : null)
+          : undefined,
       } });
       setTypesSanction((prev) => prev.map((x) => (x.id === id ? adapt.typeSanctionFromApi(t) : x)));
       showToast('Type de sanction modifié');
@@ -1102,15 +1284,17 @@ export const AppProvider = ({ children }) => {
   };
   const payerSanction = async (id, options = {}) => {
     try {
-      // Sanctions.jsx appelle payerSanction(id, { modePaiement, detailsPaiement }) — pas un
-      // id de caisse. La caisse est optionnelle (le serveur prend la 1ère caisse par défaut).
-      const idCaisse = typeof options === 'string' ? options : options?.idCaisse;
+      // Choix de la caisse désormais obligatoire côté UI (Sanctions.jsx) — le
+      // membre doit une sanction, il ne l'a pas déjà payée par défaut ; au
+      // moment du règlement, le trésorier choisit explicitement où va l'argent.
+      const idCaisse = typeof options === 'string' ? options : (options?.caisseId || options?.idCaisse);
       const s = await request(`/sanctions/${id}/payer`, { method: 'POST', body: {
         caisse_id: idCaisse || undefined,
         mode_paiement: options?.modePaiement,
         details_paiement: options?.detailsPaiement,
       } });
       setSanctions((prev) => prev.map((x) => (x.id === id ? adapt.sanctionFromApi(s) : x)));
+      await rafraichirCaisse(idCaisse);
       showToast('Sanction réglée');
     } catch (err) { return handleError(err); }
   };
@@ -1151,9 +1335,15 @@ export const AppProvider = ({ children }) => {
     try {
       const reunionOuverte = reunions.find((r) => r.statutReunion === 'en_cours');
       if (!reunionOuverte) { showToast?.('Ouvrez une séance de réunion avant de décaisser un prêt.', 'error'); return; }
-      const p = await request(`/prets/${id}/decaisser`, { method: 'POST', body: { reunion_id: reunionOuverte.id } });
-      setPrets((prev) => prev.map((x) => (x.id === id ? adapt.pretFromApi(p) : x)));
+      const res = await request(`/prets/${id}/decaisser`, { method: 'POST', body: { reunion_id: reunionOuverte.id } });
+      setPrets((prev) => prev.map((x) => (x.id === id ? adapt.pretFromApi(res.pret) : x)));
+      await rafraichirCaisse(res.pret?.caisse_id);
       showToast('Prêt décaissé');
+      // pt.15 : avant, si la caisse ne suivait pas l'épargne, aucun snapshot
+      // n'était pris et l'intérêt du prêt ne serait jamais réparti au
+      // remboursement — silencieusement. On avertit désormais le trésorier
+      // tout de suite, au moment où il peut encore agir (activer le suivi).
+      if (res.avertissement) showToast(res.avertissement, 'warning');
     } catch (err) { return handleError(err); }
   };
   // `options` peut contenir { echeanceId, modePaiement, detailsPaiement }. Auparavant,
@@ -1163,15 +1353,25 @@ export const AppProvider = ({ children }) => {
   const rembourserPret = async (id, montant, options) => {
     try {
       const echeanceId = typeof options === 'string' ? options : options?.echeanceId;
-      const pret = await request(`/prets/${id}`);
-      const echeance = echeanceId
-        ? pret.echeances.find((e) => e.id === echeanceId)
-        : pret.echeances.find((e) => e.statut !== 'payee');
-      if (!echeance) return showToast('Aucune échéance à rembourser.', 'error');
-
-      await request(`/prets/${id}/rembourser`, { method: 'POST', body: { echeance_id: echeance.id, montant_verse: Number(montant) } });
+      // Si une échéance précise est visée, on impute directement dessus (cas d'usage
+      // ponctuel). Sinon — cas courant du modal "Enregistrer un remboursement" — on
+      // passe par /rembourser-libre qui répartit le montant sur les échéances
+      // impayées les plus anciennes d'abord (capital + intérêt inclus). Avant ce
+      // correctif, un paiement couvrant 2 mensualités ou plus n'en soldait qu'une
+      // seule : les suivantes restaient affichées comme dues alors que l'argent
+      // avait déjà été intégralement encaissé.
+      if (echeanceId) {
+        await request(`/prets/${id}/rembourser`, { method: 'POST', body: { echeance_id: echeanceId, montant_verse: Number(montant) } });
+      } else {
+        await request(`/prets/${id}/rembourser-libre`, { method: 'POST', body: {
+          montant: Number(montant),
+          mode_paiement: options?.modePaiement || undefined,
+          reference_paiement: options?.referencePaiement || options?.detailsPaiement || undefined,
+        } });
+      }
       const p = await request(`/prets/${id}`);
       setPrets((prev) => prev.map((x) => (x.id === id ? adapt.pretFromApi(p) : x)));
+      await rafraichirCaisse(p.caisse_id);
       showToast('Remboursement enregistré');
     } catch (err) { return handleError(err); }
   };
@@ -1258,6 +1458,7 @@ export const AppProvider = ({ children }) => {
       } });
       const aide = adapt.aideFromApi(a);
       setFondAssurance((prev) => prev.map((x) => (x.id === id ? aide : x)));
+      if (options.idCaisse) await rafraichirCaisse(options.idCaisse); else await rafraichirToutesCaisses();
       showToast('Aide versée');
       return aide;
     } catch (err) { return handleError(err); }
@@ -1272,11 +1473,13 @@ export const AppProvider = ({ children }) => {
       const t = await request('/types-aide-sociale', { method: 'POST', body: {
         libelle: data.libelle, type_evenement: data.typeEvenement, montant_fixe: data.montantFixe,
         caisse_source_id: data.caisseSourceId || undefined, nb_max_par_an: data.nbMaxParAn || 3,
+        nb_max_vie: data.nbMaxVie || undefined,
         justificatif_requis: data.justificatifRequis ?? true,
       } });
       const type = {
         id: t.id, libelle: t.libelle, typeEvenement: t.type_evenement,
-        montantFixe: Number(t.montant_fixe || 0), caisseSourceId: t.caisse_source_id, actif: t.actif,
+        montantFixe: Number(t.montant_fixe || 0), nbMaxParAn: t.nb_max_par_an, nbMaxVie: t.nb_max_vie,
+        caisseSourceId: t.caisse_source_id, actif: t.actif,
       };
       setTypesAideSociale((prev) => [...prev, type]);
       showToast('Type d\'aide sociale créé');
@@ -1288,10 +1491,12 @@ export const AppProvider = ({ children }) => {
       const t = await request(`/types-aide-sociale/${id}`, { method: 'PUT', body: {
         libelle: data.libelle, type_evenement: data.typeEvenement, montant_fixe: data.montantFixe,
         caisse_source_id: data.caisseSourceId, actif: data.actif,
+        nb_max_par_an: data.nbMaxParAn, nb_max_vie: data.nbMaxVie ?? null,
       } });
       const type = {
         id: t.id, libelle: t.libelle, typeEvenement: t.type_evenement,
-        montantFixe: Number(t.montant_fixe || 0), caisseSourceId: t.caisse_source_id, actif: t.actif,
+        montantFixe: Number(t.montant_fixe || 0), nbMaxParAn: t.nb_max_par_an, nbMaxVie: t.nb_max_vie,
+        caisseSourceId: t.caisse_source_id, actif: t.actif,
       };
       setTypesAideSociale((prev) => prev.map((x) => (x.id === id ? type : x)));
       showToast('Type d\'aide sociale modifié');
@@ -1412,7 +1617,12 @@ export const AppProvider = ({ children }) => {
   };
   const designerGagnantCycle = async (idCycle, idPartForcee) => {
     try {
-      await request(`/cycles/${idCycle}/designer-gagnant`, { method: 'POST', body: idPartForcee ? { part_id: idPartForcee } : {} });
+      const c = await request(`/cycles/${idCycle}/designer-gagnant`, { method: 'POST', body: idPartForcee ? { part_id: idPartForcee } : {} });
+      // BUGFIX : quand l'enchère génère un surplus non redistribué, il est
+      // versé en caisse (entrée) à cet instant — le solde affiché ne bougeait
+      // qu'après un rechargement complet de la page.
+      const idCaisse = tontines.find((t) => t.id === c.tontine_id)?.idCaisse;
+      if (idCaisse) await rafraichirCaisse(idCaisse); else await rafraichirToutesCaisses();
       showToast('Gagnant désigné');
       return await chargerCycle(idCycle);
     } catch (err) { return handleError(err); }
@@ -1571,6 +1781,7 @@ export const AppProvider = ({ children }) => {
     try {
       const bulletin = await request(`/bulletins/${idBulletin}/payer`, { method: 'POST', body: { mode_paiement: modePaiement, reference_versement: referenceVersement || null } });
       if (bulletin.cycle?.reunion_id) await chargerSeanceTransactions(bulletin.cycle.reunion_id);
+      if (bulletin.cycle?.tontine?.caisse_id) await rafraichirCaisse(bulletin.cycle.tontine.caisse_id); else await rafraichirToutesCaisses();
       showToast('Gain versé et mouvement de caisse enregistré');
       return bulletin;
     } catch (err) { return handleError(err); }
@@ -1596,6 +1807,9 @@ export const AppProvider = ({ children }) => {
     utilisateurs, planningTours, cyclesTontine, chargerCycles, rechargerPartsTontine, dashboardStats, repartitionBanques, evolutionCaisse: mock.evolutionCaisse,
     portailMoi, chargerPortailMoi,
     showToast, importerHistorique, importerHistoriqueFichier,
+    activerCagnotte, chargerPropositionCagnotte, chargerRemisesGain, creerRemiseGain,
+    chargerInitialisationMembre, enregistrerInitialisationMembre,
+    activerEpargne, chargerSoldesEpargne, deposerEpargne, cassationEpargne, couperGarantieEpargne,
     login, logout, changePassword, updateMonProfil, register, updateAssociation, uploadStatutsAssociation, updateParametres,
     addMembre, updateMembre, deleteMembre,
     addPoste, addMandat, cloturerMandat,
@@ -1605,12 +1819,13 @@ export const AppProvider = ({ children }) => {
     addPointODJ, updatePointODJ, removePointODJ, movePointODJ, chargerRubriquesODJ, creerRubriqueODJ,
     setPresenceMembre, signerPV,
     chargerRotations, tirerAuSort, addEnchere, attribuerTour, annulerEncheres, annulerCycle, annulerVersementBulletin,
-    addBanque, addCaisse: addBanque, modifierBanque, modifierCaisse: modifierBanque, doOperation, addMembreBanque, transfererCaisse, approuverTransfertCaisse, addCompteBancaire, chargerTransferts,
+    addBanque, addCaisse: addBanque, modifierBanque, modifierCaisse: modifierBanque, doOperation, transfererCaisse, approuverTransfertCaisse, addCompteBancaire, chargerTransferts,
+    epargneMembresParCaisse, chargerMembresEpargneCaisse,
     addTypeSanction, updateTypeSanction, deleteTypeSanction, addSanction, payerSanction,
     addPret, validerPret, approuverPret, refuserPret, decaisserPret, rembourserPret, distribuerInteretsPret,
     addAide, addAideSociale: addAide, validerAideSociale, verserAideSociale, addTypeAideSociale, updateTypeAideSociale, deleteTypeAideSociale, membreEligibleAssurance, addCaisseEntry, uploadFichier,
     addTourPlanning, marquerTourEncaisse, retirerTourPlanning, chargerPlanningTours,
-    addSeanceTransaction, deleteSeanceTransaction, enregistrerBeneficiaireSeance, chargerSeanceTransactions,
+    addSeanceTransaction, updateSeanceTransaction, deleteSeanceTransaction, enregistrerBeneficiaireSeance, chargerSeanceTransactions,
     addUtilisateur, updateUtilisateur, desactiverUtilisateur, activerUtilisateur,
     genererBulletin, ouvrirBulletinPdf, ajouterRetenueBulletin, payerBulletin,
     ouvrirCycle, chargerCycle, saisirCotisationCycle, designerGagnantCycle, cloturerCycle,

@@ -16,6 +16,7 @@ use App\Http\Controllers\Api\Concerns\AssertSeanceOuverte;
 class SanctionController extends Controller
 {
     use AssertSeanceOuverte;
+    use \App\Http\Controllers\Api\Concerns\FormateErreurImport;
 
     public function __construct(
         private AccessScopeService $scope,
@@ -100,7 +101,7 @@ class SanctionController extends Controller
      * (optionnel), paiement_caisse_id (optionnel - marque la sanction payee
      * immediatement si renseigne), paiement_date (optionnel).
      */
-    public function importHistoriqueFichier(Request $request, \App\Services\Import\TabularFileReader $reader): JsonResponse
+    public function importHistoriqueFichier(Request $request, \App\Services\Import\TabularFileReader $reader, \App\Services\Import\ImportResolver $resolveur): JsonResponse
     {
         if ($request->user()->role !== 'super_admin') {
             return response()->json(['message' => "Réservé au super_admin."], 403);
@@ -117,6 +118,12 @@ class SanctionController extends Controller
         $erreurs = [];
         foreach ($lignes as $i => $ligne) {
             try {
+                if (! empty($ligne['membre_id'])) { $ligne['membre_id'] = $resolveur->membre($ligne['membre_id']); }
+                if (! empty($ligne['type_sanction_id'])) { $ligne['type_sanction_id'] = $resolveur->typeSanction($ligne['type_sanction_id']); }
+                if (! empty($ligne['reunion_id'])) { $ligne['reunion_id'] = $resolveur->reunion($ligne['reunion_id']); }
+                if (! empty($ligne['paiement_caisse_id'])) { $ligne['paiement_caisse_id'] = $resolveur->caisse($ligne['paiement_caisse_id']); }
+                if (! empty($ligne['date_application'])) { $ligne['date_application'] = $resolveur->date($ligne['date_application']); }
+                if (! empty($ligne['paiement_date'])) { $ligne['paiement_date'] = $resolveur->date($ligne['paiement_date']); }
                 $validee = \Illuminate\Support\Facades\Validator::make($ligne, [
                     'membre_id' => ['required', 'uuid'],
                     'type_sanction_id' => ['required', 'uuid'],
@@ -137,10 +144,7 @@ class SanctionController extends Controller
                 $this->service->importerHistorique($m, $t, $validee['motif'], $validee['date_application'], $request->user(), $r, $paiement);
                 $crees++;
             } catch (\Throwable $e) {
-                $message = $e instanceof \Illuminate\Validation\ValidationException
-                    ? implode(' ', $e->validator->errors()->all())
-                    : $e->getMessage();
-                $erreurs[] = ['ligne' => $i + 2, 'donnees' => $ligne, 'erreur' => $message];
+                $erreurs[] = ['ligne' => $i + 2, 'donnees' => $ligne, 'erreur' => $this->messageLisible($e)];
             }
         }
 
@@ -189,13 +193,11 @@ class SanctionController extends Controller
         }
 
         $data = $request->validate([
-            'caisse_id' => ['sometimes', 'nullable', 'uuid'],
+            'caisse_id' => ['required', 'uuid'],
             'mode_paiement' => ['sometimes', 'nullable', 'string'],
             'details_paiement' => ['sometimes', 'nullable', 'string'],
         ]);
-        $caisse = !empty($data['caisse_id'])
-            ? \App\Models\Caisse::findOrFail($data['caisse_id'])
-            : \App\Models\Caisse::where('association_id', $this->scope->associationId())->orderBy('created_at')->firstOrFail();
+        $caisse = $this->scope->scopeAssociation(\App\Models\Caisse::query())->findOrFail($data['caisse_id']);
 
         $transaction = $this->caisseService->entree($caisse, (float) $sanction->montant, "Paiement sanction — {$sanction->motif}", [
             'reference_type' => 'sanction_membre', 'reference_id' => $sanction->id, 'created_by' => $request->user()->id, 'valide_par' => $request->user()->id,

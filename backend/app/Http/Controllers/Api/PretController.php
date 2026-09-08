@@ -16,18 +16,24 @@ use App\Http\Controllers\Api\Concerns\AssertSeanceOuverte;
 class PretController extends Controller
 {
     use AssertSeanceOuverte;
+    use \App\Http\Controllers\Api\Concerns\FormateErreurImport;
 
     public function __construct(private AccessScopeService $scope, private PretService $service) {}
 
     public function index(Request $request): JsonResponse
     {
         $this->authorize('viewAny', Pret::class);
-        $query = Pret::whereHas('caisse', fn ($q) => $this->scope->scopeAssociation($q))->with('emprunteur', 'caisse');
+        $query = Pret::whereHas('caisse', fn ($q) => $this->scope->scopeAssociation($q))->with('emprunteur', 'caisse', 'avaliste');
         if ($request->filled('statut')) {
             $query->where('statut', $request->statut);
         }
         if ($request->filled('membre_id')) {
             $query->where('emprunteur_id', $request->membre_id);
+        }
+        // pt.13 du rapport de test : impossible de filtrer les prêts par
+        // caisse — indispensable pour un trésorier qui gère plusieurs caisses.
+        if ($request->filled('caisse_id')) {
+            $query->where('caisse_id', $request->caisse_id);
         }
 
         return response()->json($query->latest()->paginate($request->integer('per_page', 25)));
@@ -87,7 +93,7 @@ class PretController extends Controller
      * montant_interet, statut_echeance, montant_verse (optionnel),
      * date_versement_reel (optionnel).
      */
-    public function importHistoriqueFichier(Request $request, \App\Services\Import\TabularFileReader $reader): JsonResponse
+    public function importHistoriqueFichier(Request $request, \App\Services\Import\TabularFileReader $reader, \App\Services\Import\ImportResolver $resolveur): JsonResponse
     {
         if ($request->user()->role !== 'super_admin') {
             return response()->json(['message' => "Réservé au super_admin."], 403);
@@ -116,6 +122,17 @@ class PretController extends Controller
         foreach ($groupes as $ref => $groupe) {
             try {
                 $pretLigne = $groupe['pret'];
+                // Noms/dates lisibles acceptés en plus des UUID/ISO stricts.
+                foreach (['caisse_id', 'emprunteur_id', 'avaliste_id'] as $champ) {
+                    if (! empty($pretLigne[$champ])) {
+                        $pretLigne[$champ] = $champ === 'caisse_id' ? $resolveur->caisse($pretLigne[$champ]) : $resolveur->membre($pretLigne[$champ]);
+                    }
+                }
+                foreach (['date_demande', 'date_debut'] as $champ) {
+                    if (! empty($pretLigne[$champ])) {
+                        $pretLigne[$champ] = $resolveur->date($pretLigne[$champ]);
+                    }
+                }
                 $data = \Illuminate\Support\Facades\Validator::make($pretLigne, [
                     'caisse_id' => ['required', 'uuid'],
                     'emprunteur_id' => ['required', 'uuid'],
@@ -129,7 +146,12 @@ class PretController extends Controller
                     'notes' => ['nullable', 'string'],
                 ])->validate();
 
-                $echeances = collect($groupe['echeances'])->map(function ($e) {
+                $echeances = collect($groupe['echeances'])->map(function ($e) use ($resolveur) {
+                    foreach (['date_echeance', 'date_versement_reel'] as $champ) {
+                        if (! empty($e[$champ])) {
+                            $e[$champ] = $resolveur->date($e[$champ]);
+                        }
+                    }
                     return \Illuminate\Support\Facades\Validator::make($e, [
                         'numero_echeance' => ['required', 'integer', 'min:1'],
                         'date_echeance' => ['required', 'date'],
@@ -156,10 +178,7 @@ class PretController extends Controller
                 $this->service->importerHistorique($data, $request->user());
                 $crees++;
             } catch (\Throwable $e) {
-                $message = $e instanceof \Illuminate\Validation\ValidationException
-                    ? implode(' ', $e->validator->errors()->all())
-                    : $e->getMessage();
-                $erreurs[] = ['pret_ref' => $ref, 'lignes' => $groupe['lignes_source'], 'erreur' => $message];
+                $erreurs[] = ['pret_ref' => $ref, 'lignes' => $groupe['lignes_source'], 'erreur' => $this->messageLisible($e)];
             }
         }
 
@@ -178,6 +197,8 @@ class PretController extends Controller
             'montant_principal' => ['required', 'numeric', 'min:1'],
             'nb_echeances' => ['required', 'integer', 'min:1'],
             'avaliste_id' => ['nullable', 'uuid', 'different:emprunteur_id'],
+            'garantie_type' => ['nullable', 'in:caution_membre,blocage_epargne,retenue_tontine,aucune'],
+            'date_prise_effet' => ['nullable', 'date'],
             'notes' => ['nullable', 'string'],
         ]);
 
@@ -257,6 +278,49 @@ class PretController extends Controller
         $echeance = $pret->echeances()->findOrFail($data['echeance_id']);
 
         return $this->wrap(fn () => $this->service->rembourser($pret, $echeance, $data['montant_verse'], $request->user()));
+    }
+
+    /**
+     * Remboursement « libre » : le trésorier saisit un montant global (ex : solder
+     * le prêt en une fois alors qu'il reste plusieurs mensualités). Contrairement à
+     * rembourser() qui n'impute qu'une seule échéance précise, ce montant est réparti
+     * sur les échéances impayées les plus anciennes d'abord (capital + intérêt de
+     * chacune) — voir PretService::rembourserLibre(). Corrige le bug où un paiement
+     * couvrant plusieurs mensualités n'en soldait qu'une seule, laissant les
+     * suivantes affichées comme dues alors que l'argent avait déjà été encaissé.
+     */
+    public function rembourserLibre(Request $request, string $id): JsonResponse
+    {
+        $pret = $this->pretScope($id);
+        $data = $request->validate([
+            'montant' => ['required', 'numeric', 'min:0.01'],
+            'mode_paiement' => ['nullable', 'in:especes,cheque,virement,mobile_money,carte_bancaire'],
+            'reference_paiement' => ['nullable', 'string', 'max:100'],
+        ]);
+
+        return $this->wrap(fn () => [
+            'echeances' => $this->service->rembourserLibre(
+                $pret, (float) $data['montant'], $request->user(), true,
+                ['mode_paiement' => $data['mode_paiement'] ?? null, 'reference_paiement' => $data['reference_paiement'] ?? null]
+            ),
+            'pret' => $pret->fresh('echeances'),
+        ]);
+    }
+
+    /**
+     * GET /prets/{id}/fiche-amortissement-pdf — feuille à remettre à l'emprunteur.
+     * Streamée directement (pas de Storage::disk('public')) pour ne pas dépendre
+     * du lien symbolique storage:link — cause des erreurs 403 déjà rencontrées
+     * sur les autres PDF de l'app (PV de séance, bulletin de gain).
+     */
+    public function ficheAmortissementPdf(string $id)
+    {
+        $pret = $this->pretScope($id)->load('echeances', 'emprunteur', 'avaliste', 'caisse.association');
+        $this->authorize('view', $pret);
+
+        $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('pdf.fiche-amortissement', ['pret' => $pret]);
+
+        return $pdf->stream("fiche-amortissement-{$pret->emprunteur->nom}-{$pret->id}.pdf");
     }
 
     public function echeances(string $id): JsonResponse

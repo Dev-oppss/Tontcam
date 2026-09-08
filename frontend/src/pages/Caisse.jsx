@@ -3,13 +3,14 @@ import {
   Landmark, TrendingUp, TrendingDown, Wallet, ShieldAlert, Gavel,
   HandCoins, RefreshCw, Download, ChevronDown, ChevronUp,
   ArrowDownCircle, ArrowUpCircle, BarChart2, Filter, Eye, EyeOff,
-  CreditCard, Coins, AlertCircle, CheckCircle, Clock, Building2,
+  CreditCard, Coins, AlertCircle, CheckCircle, Clock, Building2, PiggyBank,
 } from 'lucide-react';
 import { fmt, fmtDate } from '../data/mockData';
 import { useApp } from '../context/AppContext';
 import { PageHeader, Badge, Modal, FormField } from '../components/ui/index';
 import { getMissingFields } from '../lib/validation';
 import { useAsyncGuard } from '../hooks/useAsyncGuard';
+import EpargneModal from '../components/caisses/EpargneModal';
 import clsx from 'clsx';
 
 // ── Catégories de flux financiers (hors cotisations tontine) ──
@@ -54,6 +55,7 @@ export default function Caisse() {
   const [filterCat,    setFilterCat]    = useState('tous');
   const [showJournal,  setShowJournal]  = useState(false);
   const [showTransfer, setShowTransfer] = useState(false);
+  const [showEpargne,  setShowEpargne]  = useState(null);
   const [transferForm, setTransferForm] = useState({
     caisseSourceId: '',
     caisseDestinationId: '',
@@ -275,6 +277,9 @@ export default function Caisse() {
                     <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
                       <div className={clsx('h-1.5 rounded-full transition-all', isLibre ? 'bg-primary-500' : 'bg-primary-400')} style={{ width: `${pct}%` }}/>
                     </div>
+                    <button onClick={() => setShowEpargne(b)} className="mt-2 text-xs text-primary-600 hover:text-primary-800 flex items-center gap-1">
+                      <PiggyBank size={12}/> {b.suiviEpargne ? 'Épargne — voir les soldes' : 'Activer le suivi épargne'}
+                    </button>
                   </div>
                 );
               })}
@@ -284,6 +289,7 @@ export default function Caisse() {
               </div>
             </div>
           </div>
+          {showEpargne && <EpargneModal caisse={showEpargne} onClose={() => setShowEpargne(null)} />}
 
           {/* Flux récapitulatifs */}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

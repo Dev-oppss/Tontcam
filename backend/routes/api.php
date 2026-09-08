@@ -9,6 +9,9 @@ use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\CaisseController;
 use App\Http\Controllers\Api\CompteBancaireController;
 use App\Http\Controllers\Api\CycleTontineController;
+use App\Http\Controllers\Api\CagnotteController;
+use App\Http\Controllers\Api\InitialisationMembreController;
+use App\Http\Controllers\Api\EpargneController;
 use App\Http\Controllers\Api\DecisionAgController;
 use App\Http\Controllers\Api\ExportController;
 use App\Http\Controllers\Api\MembreController;
@@ -69,6 +72,7 @@ Route::middleware(['auth:sanctum', 'association.context'])->group(function () {
     Route::delete('/reunions/{id}/points/{pointId}', [ReunionController::class, 'supprimerPoint']);
     Route::get('/reunions/{id}/transactions', [SeanceTransactionController::class, 'index']);
     Route::post('/reunions/{id}/transactions', [SeanceTransactionController::class, 'store']);
+    Route::put('/reunions/{id}/transactions/{transactionId}', [SeanceTransactionController::class, 'update']);
     Route::delete('/reunions/{id}/transactions/{transactionId}', [SeanceTransactionController::class, 'destroy']);
     Route::post('/reunions/{id}/signer', [ReunionController::class, 'signer']);
     Route::get('/reunions/{id}/pv-pdf', [ReunionController::class, 'pvPdf']);
@@ -91,6 +95,18 @@ Route::middleware(['auth:sanctum', 'association.context'])->group(function () {
     Route::post('/tontines/{id}/cycles/import-historique', [CycleTontineController::class, 'importHistorique']);
     Route::post('/tontines/{id}/cycles/import-historique/fichier', [CycleTontineController::class, 'importHistoriqueFichier']);
     Route::post('/tontines/{id}/enregistrer-beneficiaire', [CycleTontineController::class, 'enregistrerBeneficiaire']);
+    Route::post('/tontines/{id}/activer-cagnotte', [TontineController::class, 'activerCagnotte']);
+    Route::get('/tontines/{id}/cagnotte/proposition', [CagnotteController::class, 'proposition']);
+    Route::get('/tontines/{id}/remises-gain', [CagnotteController::class, 'index']);
+    Route::post('/tontines/{id}/remises-gain', [CagnotteController::class, 'store']);
+    Route::get('/membres/{id}/initialisation', [InitialisationMembreController::class, 'show']);
+    Route::post('/membres/{id}/initialisation', [InitialisationMembreController::class, 'store']);
+    Route::post('/caisses/{id}/activer-epargne', [EpargneController::class, 'activer']);
+    Route::get('/caisses/{id}/epargne/soldes', [EpargneController::class, 'soldes']);
+    Route::get('/caisses/{id}/epargne/membres', [EpargneController::class, 'membres']);
+    Route::post('/caisses/{id}/epargne/depots', [EpargneController::class, 'deposer']);
+    Route::post('/caisses/{id}/epargne/cassation', [EpargneController::class, 'cassation']);
+    Route::post('/caisses/{id}/epargne/couper-garantie', [EpargneController::class, 'couperGarantie']);
     Route::get('/cycles/{id}', [CycleTontineController::class, 'show']);
     Route::post('/cycles/{id}/cotisations', [CycleTontineController::class, 'saisirCotisations']);
     Route::post('/cycles/{id}/encheres', [CycleTontineController::class, 'placerEnchere']);
@@ -132,7 +148,9 @@ Route::middleware(['auth:sanctum', 'association.context'])->group(function () {
     Route::post('/prets/{id}/refuser', [PretController::class, 'refuser']);
     Route::post('/prets/{id}/decaisser', [PretController::class, 'decaisser']);
     Route::post('/prets/{id}/rembourser', [PretController::class, 'rembourser']);
+    Route::post('/prets/{id}/rembourser-libre', [PretController::class, 'rembourserLibre']);
     Route::get('/prets/{id}/echeances', [PretController::class, 'echeances']);
+    Route::get('/prets/{id}/fiche-amortissement-pdf', [PretController::class, 'ficheAmortissementPdf']);
 
     // ── Sanctions & Social ──────────────────────────────────────
     Route::apiResource('sanctions', SanctionController::class)->except(['destroy'])->whereUuid('sanction');

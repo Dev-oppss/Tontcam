@@ -34,6 +34,7 @@ class Membre extends Model
         'date_debut_assurance',
         'date_fin_assurance',
         'notes',
+        'absences_cumulees_initiales',
     ];
 
     protected $casts = [
@@ -41,7 +42,8 @@ class Membre extends Model
             'date_adhesion' => 'date',
             'est_assure' => 'boolean',
             'date_debut_assurance' => 'date',
-            'date_fin_assurance' => 'date'
+            'date_fin_assurance' => 'date',
+            'absences_cumulees_initiales' => 'integer'
     ];
 
     public function association()

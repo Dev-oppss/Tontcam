@@ -38,12 +38,61 @@ class PretService
             throw new RuntimeException("Durée maximale autorisée : {$dureeMax} mois.");
         }
 
+        // Garantie réellement vérifiée (RG-PRET-GARANTIE) — jusqu'ici ce champ
+        // n'était qu'un texte décoratif jamais transmis à l'API. Chaque type
+        // choisi a désormais une vraie conséquence :
+        $garantieType = $options['garantie_type'] ?? 'aucune';
+        if ($garantieType === 'caution_membre') {
+            if (empty($options['avaliste_id'])) {
+                throw new RuntimeException("Garantie « Caution d'un membre » : un avaliste doit être sélectionné.");
+            }
+            $avaliste = Membre::where('association_id', $emprunteur->association_id)
+                ->where('id', $options['avaliste_id'])->where('statut', 'actif')->first();
+            if (! $avaliste) {
+                throw new RuntimeException("L'avaliste sélectionné doit être un membre actif de l'association.");
+            }
+        } elseif ($garantieType === 'retenue_tontine') {
+            // Une retenue sur gain de tontine (déjà appliquée automatiquement à
+            // tout prêt en cours, voir BulletinGainService::calculerRetenues)
+            // n'a de sens comme garantie que si le membre a effectivement une
+            // part de tontine sur laquelle un gain futur pourra être retenu.
+            $aUnePart = \App\Models\TontinePart::whereHas('tontine', fn ($q) => $q->where('association_id', $emprunteur->association_id))
+                ->where('membre_id', $emprunteur->id)
+                ->whereIn('statut', ['disponible', 'reservee'])
+                ->exists();
+            if (! $aUnePart) {
+                throw new RuntimeException("Garantie « Retenue sur tontine » impossible : le membre ne détient aucune part de tontine active.");
+            }
+        } elseif ($garantieType === 'blocage_epargne') {
+            // Jusqu'ici seule garantie sans aucune vérification serveur : un
+            // membre avec 0 FCFA d'épargne pouvait obtenir un prêt "garanti"
+            // par une épargne qu'il n'a pas. On exige désormais que le suivi
+            // épargne soit activé sur la caisse et que le membre y ait
+            // effectivement un solde positif (EpargneService::soldeMembre).
+            if (! $caisse->suivi_epargne) {
+                throw new RuntimeException("Garantie « Blocage épargne » impossible : le suivi épargne n'est pas activé sur cette caisse.");
+            }
+            $soldeEpargne = app(EpargneService::class)->soldeMembre($caisse, $emprunteur->id);
+            if ($soldeEpargne <= 0) {
+                throw new RuntimeException("Garantie « Blocage épargne » impossible : le membre n'a aucune épargne dans cette caisse.");
+            }
+        }
+
         $tauxInteret = $options['taux_interet_mensuel'] ?? $caisse->taux_interet_mensuel;
         $methode = $options['methode_amortissement'] ?? $caisse->methode_amortissement ?? 'lineaire';
 
         $calcul = $this->calculerAmortissementLineaire($montant, (float) $tauxInteret, $nbEcheances);
 
-        return DB::transaction(function () use ($caisse, $emprunteur, $montant, $nbEcheances, $tauxInteret, $methode, $calcul, $options) {
+        // Date de prise d'effet (RG-PRT — demande client) : le trésorier peut
+        // définir explicitement à partir de quand le prêt commence à courir
+        // (ex : date réelle de remise de l'argent, différente de la date de
+        // saisie). Sert de base à l'échéancier. Par défaut : aujourd'hui,
+        // comme avant.
+        $datePriseEffet = ! empty($options['date_prise_effet'])
+            ? \Carbon\Carbon::parse($options['date_prise_effet'])
+            : now();
+
+        return DB::transaction(function () use ($caisse, $emprunteur, $montant, $nbEcheances, $tauxInteret, $methode, $calcul, $options, $datePriseEffet) {
             $pret = Pret::create([
                 'caisse_id' => $caisse->id,
                 'emprunteur_id' => $emprunteur->id,
@@ -59,6 +108,8 @@ class PretService
                 'capital_restant' => $montant,
                 'statut' => 'demande',
                 'avaliste_id' => $options['avaliste_id'] ?? null,
+                'garantie_type' => $garantieType,
+                'date_prise_effet' => $datePriseEffet->toDateString(),
                 'notes' => $options['notes'] ?? null,
                 'created_by' => $options['created_by'] ?? null,
             ]);
@@ -121,7 +172,7 @@ class PretService
     /**
      * Décaissement effectif : sortie de caisse + passage EN_COURS.
      */
-    public function decaisser(Pret $pret, Utilisateur $tresorier, \App\Models\Reunion $reunion): Pret
+    public function decaisser(Pret $pret, Utilisateur $tresorier, \App\Models\Reunion $reunion): array
     {
         if ($pret->statut !== 'approuve') {
             throw new RuntimeException('Seul un prêt approuvé peut être décaissé.');
@@ -151,28 +202,55 @@ class PretService
             $pret->update([
                 'statut' => 'en_cours',
                 'reunion_id' => $reunion->id,
-                'date_debut' => now()->toDateString(),
-                'date_fin_prevue' => now()->addMonths($pret->nb_echeances)->toDateString(),
+                // La date de départ du prêt suit la date de prise d'effet choisie
+                // par le trésorier à la demande (celle qui a servi de base à
+                // l'échéancier) — pas la date du décaissement, qui peut différer.
+                'date_debut' => $pret->date_prise_effet ?? now()->toDateString(),
+                'date_fin_prevue' => ($pret->date_prise_effet
+                    ? \Carbon\Carbon::parse($pret->date_prise_effet)
+                    : now())->addMonths($pret->nb_echeances)->toDateString(),
                 'transaction_decaissement_id' => $transaction->id,
             ]);
 
+            // Épargne (RG-EPA) : si la caisse source suit les soldes épargne, on fige
+            // (« snapshot ») la part de chaque membre à cet instant précis — l'intérêt
+            // perçu au remboursement sera partagé sur cette base, pas sur les soldes
+            // du jour du remboursement (qui peuvent avoir bougé entre-temps).
+            // pt.15 du rapport de test : quand le suivi épargne n'est pas actif sur la
+            // caisse, aucun snapshot n'est créé et l'intérêt ne sera jamais réparti au
+            // remboursement, silencieusement (aucune erreur). On avertit désormais le
+            // trésorier explicitement à cet instant, plutôt que de le laisser découvrir
+            // l'absence de répartition seulement après coup.
+            $pretFrais = $pret->fresh('caisse');
+            app(\App\Services\EpargneService::class)->snapshotPourPret($pretFrais);
+            $avertissement = ! $pretFrais->caisse->suivi_epargne
+                ? "Le suivi épargne n'est pas activé sur cette caisse : l'intérêt de ce prêt ne sera réparti sur aucun membre au remboursement."
+                : null;
+
             $this->loguerStatut($pret, 'approuve', 'en_cours', 'Décaissé', $tresorier);
 
-            return $pret;
+            return ['pret' => $pret, 'avertissement' => $avertissement];
         });
     }
 
     /**
      * Remboursement (RG-PRT — recalcul après remboursement partiel).
      */
-    public function rembourser(Pret $pret, EcheancePret $echeance, float $montantVerse, Utilisateur $tresorier, bool $encaisserEnCaisse = true): EcheancePret
+    public function rembourser(Pret $pret, EcheancePret $echeance, float $montantVerse, Utilisateur $tresorier, bool $encaisserEnCaisse = true, array $options = []): EcheancePret
     {
-        return DB::transaction(function () use ($pret, $echeance, $montantVerse, $tresorier, $encaisserEnCaisse) {
+        return DB::transaction(function () use ($pret, $echeance, $montantVerse, $tresorier, $encaisserEnCaisse, $options) {
             $transaction = $encaisserEnCaisse ? app(CaisseService::class)->entree(
                 $pret->caisse,
                 $montantVerse,
                 "Remboursement prêt — échéance n°{$echeance->numero_echeance}",
-                ['reference_type' => 'echeance_pret', 'reference_id' => $echeance->id, 'created_by' => $tresorier->id, 'valide_par' => $tresorier->id]
+                [
+                    'reference_type' => 'echeance_pret', 'reference_id' => $echeance->id,
+                    'created_by' => $tresorier->id, 'valide_par' => $tresorier->id,
+                    // Le mode de paiement saisi par l'utilisateur était jusqu'ici silencieusement
+                    // ignoré ici (toujours enregistré "especes" par défaut dans CaisseService).
+                    'mode_paiement' => $options['mode_paiement'] ?? 'especes',
+                    'reference_externe' => $options['reference_paiement'] ?? null,
+                ]
             ) : null;
 
             $totalVerseAvant = (float) $echeance->montant_verse;
@@ -185,6 +263,13 @@ class PretService
                 'date_versement_reel' => now()->toDateString(),
                 'transaction_id' => $transaction?->id,
             ]);
+
+            // Épargne (RG-EPA) : dès que l'échéance est intégralement soldée, l'intérêt
+            // qu'elle porte est partagé entre les membres au prorata de leur solde
+            // snapshotté au décaissement (si la caisse source suit l'épargne).
+            if ($deficit <= 0 && (float) $echeance->montant_interet > 0) {
+                app(\App\Services\EpargneService::class)->distribuerInteret($pret->fresh('caisse'), (float) $echeance->montant_interet);
+            }
 
             $capitalRembourseReel = min($montantVerse, (float) $echeance->montant_capital);
             $pret->update([
@@ -212,13 +297,13 @@ class PretService
      * automatique si le prêt est intégralement soldé). Si le montant excède le reste dû,
      * on refuse plutôt que de laisser un trop-perçu invisible.
      */
-    public function rembourserLibre(Pret $pret, float $montant, Utilisateur $tresorier, bool $encaisserEnCaisse = true): array
+    public function rembourserLibre(Pret $pret, float $montant, Utilisateur $tresorier, bool $encaisserEnCaisse = true, array $options = []): array
     {
         if ($montant <= 0) {
             throw new RuntimeException('Le montant du remboursement doit être positif.');
         }
 
-        return DB::transaction(function () use ($pret, $montant, $tresorier, $encaisserEnCaisse) {
+        return DB::transaction(function () use ($pret, $montant, $tresorier, $encaisserEnCaisse, $options) {
             $restant = $montant;
             $echeancesTouchees = [];
 
@@ -236,7 +321,7 @@ class PretService
                     continue;
                 }
                 $aAppliquer = min($restant, $du);
-                $echeancesTouchees[] = $this->rembourser($pret->fresh(), $echeance, $aAppliquer, $tresorier, $encaisserEnCaisse);
+                $echeancesTouchees[] = $this->rembourser($pret->fresh(), $echeance, $aAppliquer, $tresorier, $encaisserEnCaisse, $options);
                 $restant -= $aAppliquer;
             }
 
@@ -322,6 +407,9 @@ class PretService
         $n = (int) $pret->nb_echeances;
         $capitalParEcheance = round($principal / $n, 2);
         $capitalRestant = $principal;
+        // Base de l'échéancier = date de prise d'effet choisie par le trésorier
+        // à la demande, sinon aujourd'hui (comportement inchangé par défaut).
+        $base = $pret->date_prise_effet ? \Carbon\Carbon::parse($pret->date_prise_effet) : now();
 
         $echeances = [];
         for ($i = 1; $i <= $n; $i++) {
@@ -333,7 +421,7 @@ class PretService
             $echeances[] = EcheancePret::create([
                 'pret_id' => $pret->id,
                 'numero_echeance' => $i,
-                'date_echeance' => now()->addMonths($i)->toDateString(),
+                'date_echeance' => $base->copy()->addMonths($i)->toDateString(),
                 'montant_capital' => $capital,
                 'montant_interet' => $interet,
                 'montant_total' => $capital + $interet,

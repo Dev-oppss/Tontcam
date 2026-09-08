@@ -1,11 +1,11 @@
-import { useState } from 'react';
-import { Plus, ArrowDownCircle, ArrowUpCircle, Eye, UserPlus, Users, Landmark, Pencil, Lock } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Plus, PiggyBank, Pencil, Lock } from 'lucide-react';
 import { fmt, fmtDate } from '../data/mockData';
 import { useApp } from '../context/AppContext';
-import { PageHeader, Table, Badge, Modal, FormField, SectionCard } from '../components/ui/index';
-import { ModePaiementFields, isModePaiementValid } from '../components/ui/ModePaiement';
+import { PageHeader, Badge, Modal, FormField } from '../components/ui/index';
 import { getMissingFields } from '../lib/validation';
 import { useAsyncGuard } from '../hooks/useAsyncGuard';
+import EpargneModal from '../components/caisses/EpargneModal';
 import clsx from 'clsx';
 
 const typeColors = {
@@ -33,30 +33,30 @@ const createEmptyBanque = () => ({
 
 export default function Banques() {
   const {
-    membres, banques, comptesBanque, operationsBanque, comptesBancaire,
-    addBanque, modifierBanque, doOperation, addMembreBanque, showToast,
+    banques, comptesBancaire,
+    addBanque, modifierBanque, showToast,
   } = useApp();
 
-  const [addModal,    setAddModal]    = useState(false);
-  const [editModal,   setEditModal]   = useState(null); // caisse en cours d'édition
-  const [opModal,     setOpModal]     = useState(null);
-  const [enrollModal, setEnrollModal] = useState(null);
-  const [showComptes, setShowComptes] = useState(null);
+  const [addModal,     setAddModal]     = useState(false);
+  const [editModal,    setEditModal]    = useState(null); // caisse en cours d'édition
+  // Écran épargne par membre : Banques.jsx avait sa propre section "Comptes
+  // membres" + modal "Inscrire", dupliquant EpargneModal (déjà utilisé par
+  // Caisse.jsx) mais adossée à `comptesBanque`/`operationsBanque`, deux
+  // tableaux jamais alimentés côté serveur (toujours `[]`) : la liste était
+  // donc systématiquement vide et le clic sur "Inscrire" ne servait à rien
+  // d'utile pour l'utilisateur, qui ne voyait jamais le résultat. On
+  // réutilise le vrai composant, déjà branché sur les endpoints épargne
+  // réels (soldes par membre, dépôt, cassation générale).
+  const [epargneModal, setEpargneModal] = useState(null); // caisse dont on affiche l'épargne
 
   const [newBanque,  setNewBanque]  = useState(createEmptyBanque());
   const [editBanque, setEditBanque] = useState(createEmptyBanque());
-  const [opForm,     setOpForm]     = useState({ montant:'', observation:'', dateOperation: new Date().toISOString().split('T')[0], modePaiement: 'especes', detailsPaiement: '' });
-  const [enrollForm, setEnrollForm] = useState({ idMembre:'' });
 
   // L'ancien second écran « opérations autorisées » a été retiré : ces
   // opérations ne faisaient l'objet d'aucune règle métier ni persistance.
   const step = 1;
 
   const totalGlobal = banques.reduce((s, b) => s + (b.totalSolde || 0), 0);
-
-  /* ─── Helpers ──────────────────────────────────────────────── */
-  const comptesDeBanque     = (id) => comptesBanque.filter(c => c.idBanque === id);
-  const membresDisponibles  = (id) => membres.filter(m => !comptesBanque.some(c => c.idBanque === id && c.idMembre === m.id));
 
   const resetAddWizard = () => {
     setNewBanque(createEmptyBanque());
@@ -66,30 +66,6 @@ export default function Banques() {
     resetAddWizard();
     setAddModal(true);
   };
-
-  /* ─── Opération ────────────────────────────────────────────── */
-  const openOp = (compte, type) => {
-    setOpForm({ montant:'', observation:'', dateOperation: new Date().toISOString().split('T')[0], modePaiement: 'especes', detailsPaiement: '' });
-    setOpModal({ compte, type });
-  };
-
-  const handleOp = async () => {
-    if (!opForm.montant || Number(opForm.montant) <= 0) { showToast?.('Montant requis.', 'error'); return; }
-    if (!isModePaiementValid(opForm.modePaiement, opForm.detailsPaiement)) { showToast?.('Référence de paiement requise pour ce mode de versement.', 'error'); return; }
-    if (opModal.type === 'retrait' && Number(opForm.montant) > Number(opModal.compte.solde || 0)) { showToast?.('Solde insuffisant pour ce retrait (RG-CAI-006).', 'error'); return; }
-    await doOperation({
-      idMembre: opModal.compte.idMembre,
-      idBanque: opModal.compte.idBanque,
-      typeOperation: opModal.type,
-      montant: Number(opForm.montant),
-      observation: opForm.observation,
-      dateOperation: opForm.dateOperation,
-      modePaiement: opForm.modePaiement,
-      detailsPaiement: opForm.detailsPaiement,
-    });
-    setOpModal(null);
-  };
-  const [guardedHandleOp, doingOp] = useAsyncGuard(handleOp);
 
   /* ─── Création banque ──────────────────────────────────────── */
   const handleAddBanque = async () => {
@@ -131,19 +107,6 @@ export default function Banques() {
   };
   const [guardedHandleEditBanque, editingBanque] = useAsyncGuard(handleEditBanque);
 
-  /* ─── Inscription membre ───────────────────────────────────── */
-  const handleEnroll = async () => {
-    if (!enrollModal) return;
-    if (!enrollForm.idMembre) { showToast?.('Membre à inscrire requis.', 'error'); return; }
-    const mEnroll = membres.find(m => m.id === enrollForm.idMembre);
-    await addMembreBanque({ idMembre: enrollForm.idMembre, idBanque: enrollModal.id, nomBanque: enrollModal.nom,
-      nomMembre: mEnroll ? `${mEnroll.nom} ${mEnroll.prenom}` : '—',
-    });
-    setEnrollForm({ idMembre:'' });
-    setEnrollModal(null);
-  };
-  const [guardedHandleEnroll, enrolling] = useAsyncGuard(handleEnroll);
-
   const pretAutorise = Boolean(newBanque.pretAutorise);
 
   return (
@@ -161,9 +124,8 @@ export default function Banques() {
       {/* ── Cartes caisses ───────────────────────────────────── */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 stagger">
         {banques.map(b => {
-          const comptes = comptesDeBanque(b.id);
           return (
-            <div key={b.id} className="card-hover fade-up group cursor-pointer" onClick={() => setShowComptes(b)}>
+            <div key={b.id} className="card-hover fade-up group cursor-pointer" onClick={() => setEpargneModal(b)}>
               {/* Header */}
               <div className="flex items-start justify-between mb-3">
                 <div className="w-10 h-10 rounded-xl flex items-center justify-center text-xl shrink-0 bg-surface-50">
@@ -179,23 +141,15 @@ export default function Banques() {
               <p className="text-xs text-ink-600/50 mb-3 line-clamp-2 min-h-[2rem]">{b.description || 'Aucune description'}</p>
 
               {/* Solde */}
-              <p className="text-2xl font-bold text-primary-600 mb-0.5">{fmt(b.totalSolde || 0)}</p>
-              <p className="text-xs text-ink-600/40 mb-3">{comptes.length} membre{comptes.length > 1 ? 's' : ''}</p>
-
+              <p className="text-2xl font-bold text-primary-600 mb-3">{fmt(b.totalSolde || 0)}</p>
 
               {/* Actions */}
               <div className="flex gap-2 pt-3 border-t border-surface-100">
                 <button
-                  onClick={e => { e.stopPropagation(); setShowComptes(b); }}
-                  className="btn-secondary flex-1 text-xs py-1.5 justify-center"
-                >
-                  <Users size={12} /> Membres
-                </button>
-                <button
-                  onClick={e => { e.stopPropagation(); setEnrollModal(b); }}
+                  onClick={e => { e.stopPropagation(); setEpargneModal(b); }}
                   className="btn-primary flex-1 text-xs py-1.5 justify-center"
                 >
-                  <UserPlus size={12} /> Inscrire
+                  <PiggyBank size={12} /> Épargne
                 </button>
                 <button
                   onClick={e => { e.stopPropagation(); openEditModal(b); }}
@@ -221,92 +175,6 @@ export default function Banques() {
           <span className="text-xs font-semibold">Nouvelle caisse</span>
         </button>
       </div>
-
-      {/* ── Comptes membres global ───────────────────────────── */}
-      <SectionCard
-        title="Comptes membres"
-        subtitle={`${comptesBanque.length} compte(s) au total`}
-        className="p-0 overflow-hidden"
-      >
-        <Table headers={['Membre','Caisse','Solde','Statut','Actions']}>
-          {comptesBanque.map(c => (
-            <tr key={c.id} className="tr">
-              <td className="td">
-                <div className="flex items-center gap-2">
-                  <div className="w-7 h-7 rounded-lg gradient-primary flex items-center justify-center text-white text-xs font-bold shrink-0">
-                    {(c.nomMembre || '?')[0]}
-                  </div>
-                  <span className="font-medium text-ink-800">{c.nomMembre}</span>
-                </div>
-              </td>
-              <td className="td">
-                <Badge variant={typeColors[banques.find(b => b.id === c.idBanque)?.type] || 'gray'}>
-                  {c.nomBanque}
-                </Badge>
-              </td>
-              <td className="td font-bold text-primary-600">{fmt(c.solde)}</td>
-              <td className="td">
-                <Badge variant={c.statut === 'actif' ? 'green' : 'gray'}>
-                  {c.statut === 'actif' ? 'Actif' : 'Inactif'}
-                </Badge>
-              </td>
-              <td className="td">
-                <div className="flex gap-1">
-                  <button onClick={() => openOp(c, 'depot')} title="Dépôt"
-                    className="p-1.5 text-ink-600/40 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors">
-                    <ArrowDownCircle size={14} />
-                  </button>
-                  <button onClick={() => openOp(c, 'retrait')} title="Retrait"
-                    className="p-1.5 text-ink-600/40 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors">
-                    <ArrowUpCircle size={14} />
-                  </button>
-                </div>
-              </td>
-            </tr>
-          ))}
-          {comptesBanque.length === 0 && (
-            <tr><td colSpan={5} className="td text-center text-ink-600/40 py-10">Aucun compte enregistré</td></tr>
-          )}
-        </Table>
-      </SectionCard>
-
-      {/* ── Dernières opérations ─────────────────────────────── */}
-      <SectionCard
-        title="Dernières opérations"
-        subtitle={`${operationsBanque.length} opération(s) enregistrée(s)`}
-        className="p-0 overflow-hidden"
-      >
-        <Table headers={['Date','Membre','Caisse','Type','Montant','Observation']}>
-          {[...operationsBanque].reverse().slice(0, 20).map(op => (
-            <tr key={op.id} className="tr">
-              <td className="td text-xs text-ink-600/50">{fmtDate(op.dateOperation)}</td>
-              <td className="td">
-                <div className="flex items-center gap-2">
-                  <div className="w-7 h-7 rounded-lg gradient-primary flex items-center justify-center text-white text-xs font-bold shrink-0">
-                    {(op.nomMembre || '?')[0]}
-                  </div>
-                  <span className="font-medium text-ink-800">{op.nomMembre || '—'}</span>
-                </div>
-              </td>
-              <td className="td">
-                <Badge variant={typeColors[banques.find(b => b.id === op.idBanque)?.type] || 'gray'}>
-                  {op.nomBanque}
-                </Badge>
-              </td>
-              <td className="td">
-                <Badge variant={op.typeOperation === 'depot' ? 'green' : 'amber'}>
-                  {op.typeOperation === 'depot' ? '↓ Dépôt' : '↑ Retrait'}
-                </Badge>
-              </td>
-              <td className="td font-bold text-primary-600">{fmt(op.montant)}</td>
-              <td className="td text-xs text-ink-600/40 truncate max-w-[180px]">{op.observation || '—'}</td>
-            </tr>
-          ))}
-          {operationsBanque.length === 0 && (
-            <tr><td colSpan={6} className="td text-center text-ink-600/40 py-10">Aucune opération enregistrée</td></tr>
-          )}
-        </Table>
-      </SectionCard>
 
       {/* ══ MODAL NOUVELLE CAISSE ═════════════════════════════ */}
       <Modal
@@ -618,168 +486,10 @@ export default function Banques() {
         </div>
       </Modal>
 
-      {/* ══ MODAL MEMBRES D'UNE BANQUE ════════════════════ */}
-      {showComptes && (() => {
-        const b = banques.find(x => x.id === showComptes.id) || showComptes;
-        const comptes = comptesDeBanque(b.id);
-        const opsB = operationsBanque.filter(o => o.idBanque === b.id);
-        return (
-          <Modal
-            open={true}
-            onClose={() => setShowComptes(null)}
-            title={b.nom}
-            footer={
-              <div className="flex gap-2 w-full">
-                <button onClick={() => { setEnrollModal(b); setShowComptes(null); }} className="btn-primary">
-                  <UserPlus size={14} /> Inscrire un membre
-                </button>
-                <button onClick={() => setShowComptes(null)} className="btn-secondary ml-auto">Fermer</button>
-              </div>
-            }
-          >
-            <div className="space-y-4">
-
-              {/* Stats */}
-              <div className="grid grid-cols-3 gap-2">
-                <div className="p-3 bg-primary-50 rounded-xl text-center">
-                  <p className="text-lg font-bold text-primary-600">{fmt(b.totalSolde || 0)}</p>
-                  <p className="text-xs text-ink-600/50">Solde</p>
-                </div>
-                <div className="p-3 bg-surface-50 rounded-xl text-center">
-                  <p className="text-lg font-bold text-ink-800">{comptes.length}</p>
-                  <p className="text-xs text-ink-600/50">Membres</p>
-                </div>
-                <div className="p-3 bg-surface-50 rounded-xl text-center">
-                  <p className="text-lg font-bold text-ink-800">{opsB.length}</p>
-                  <p className="text-xs text-ink-600/50">Opérations</p>
-                </div>
-              </div>
-
-              {/* Liste comptes */}
-              {comptes.length === 0 ? (
-                <div className="text-center py-8 text-ink-600/40">
-                  <Landmark size={28} className="mx-auto mb-2 opacity-30" />
-                  <p className="text-sm">Aucun membre inscrit dans cette caisse</p>
-                </div>
-              ) : (
-                <div className="space-y-1.5">
-                  {comptes.map(c => {
-                    const opsM = opsB.filter(o => o.idMembre === c.idMembre);
-                    return (
-                      <div key={c.id} className="flex items-center gap-3 p-3 bg-surface-50 rounded-xl group hover:bg-white hover:shadow-card transition-all">
-                        <div className="w-8 h-8 rounded-xl gradient-primary flex items-center justify-center text-white text-xs font-bold shrink-0">
-                          {(c.nomMembre || '?')[0]}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-semibold text-ink-800">{c.nomMembre}</p>
-                          <p className="text-xs text-ink-600/40">{opsM.length} opération(s)</p>
-                        </div>
-                        <div className="text-right shrink-0">
-                          <p className="text-sm font-bold text-primary-600">{fmt(c.solde)}</p>
-                        </div>
-                        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                          <button onClick={() => openOp(c, 'depot')} title="Dépôt"
-                            className="p-1.5 text-ink-600/40 hover:text-primary-600 hover:bg-primary-50 rounded-lg">
-                            <ArrowDownCircle size={13} />
-                          </button>
-                          <button onClick={() => openOp(c, 'retrait')} title="Retrait"
-                            className="p-1.5 text-ink-600/40 hover:text-amber-600 hover:bg-amber-50 rounded-lg">
-                            <ArrowUpCircle size={14} />
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </Modal>
-        );
-      })()}
-
-      {/* ══ MODAL INSCRIRE MEMBRE ══════════════════════════ */}
-      <Modal
-        open={!!enrollModal}
-        onClose={() => { setEnrollModal(null); setEnrollForm({ idMembre:'' }); }}
-        title={`Inscrire un membre — ${enrollModal?.nom}`}
-        footer={<>
-          <button onClick={() => { setEnrollModal(null); setEnrollForm({ idMembre:'' }); }} disabled={enrolling} className="btn-secondary">Annuler</button>
-          <button onClick={guardedHandleEnroll} disabled={enrolling} className="btn-primary"><UserPlus size={14} /> {enrolling ? 'Inscription…' : 'Inscrire'}</button>
-        </>}
-      >
-        <div className="space-y-4">
-          {enrollModal && membresDisponibles(enrollModal.id).length === 0 ? (
-            <div className="p-4 bg-primary-50 border border-primary-100 rounded-xl text-center">
-              <Users size={24} className="mx-auto mb-2 text-primary-500" />
-              <p className="text-sm font-medium text-primary-700">Tous les membres sont déjà inscrits !</p>
-            </div>
-          ) : (
-            <>
-              <div className="p-3 bg-blue-50 rounded-xl text-xs text-blue-700 border border-blue-100">
-                 Un membre peut être inscrit dans plusieurs caisses différentes. Chaque compte est géré indépendamment.
-              </div>
-              <FormField label="Membre à inscrire" required>
-                <select className="select" value={enrollForm.idMembre}
-                  onChange={e => setEnrollForm(f => ({ ...f, idMembre: e.target.value }))}>
-                  <option value="">— Sélectionner un membre —</option>
-                  {enrollModal && membresDisponibles(enrollModal.id).map(m => (
-                    <option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>
-                  ))}
-                </select>
-              </FormField>
-            </>
-          )}
-        </div>
-      </Modal>
-
-      {/* ══ MODAL OPÉRATION ═══════════════════════════════ */}
-      <Modal
-        open={!!opModal}
-        onClose={() => setOpModal(null)}
-        title={opModal?.type === 'depot' ? `Dépôt — ${opModal?.compte.nomMembre}` : `Retrait — ${opModal?.compte.nomMembre}`}
-        footer={<>
-          <button onClick={() => setOpModal(null)} disabled={doingOp} className="btn-secondary">Annuler</button>
-          <button
-            onClick={guardedHandleOp}
-            disabled={doingOp || !opForm.montant || Number(opForm.montant) <= 0 || !isModePaiementValid(opForm.modePaiement, opForm.detailsPaiement) || (opModal?.type === 'retrait' && Number(opForm.montant) > Number(opModal?.compte.solde || 0))}
-            className={clsx('btn-primary', (doingOp || !opForm.montant || Number(opForm.montant) <= 0 || !isModePaiementValid(opForm.modePaiement, opForm.detailsPaiement) || (opModal?.type === 'retrait' && Number(opForm.montant) > Number(opModal?.compte.solde || 0))) && 'opacity-40 cursor-not-allowed')}
-          >
-            {doingOp ? 'Enregistrement…' : (opModal?.type === 'depot'
-              ? <><ArrowDownCircle size={14} /> Enregistrer le dépôt</>
-              : <><ArrowUpCircle size={14} /> Enregistrer le retrait</>)}
-          </button>
-        </>}
-      >
-        <div className="space-y-4">
-          <div className="p-3 bg-surface-50 rounded-xl border border-surface-200">
-            <p className="font-semibold text-ink-800 text-sm">{opModal?.compte.nomMembre}</p>
-            <p className="text-xs text-ink-600/50 mt-0.5">
-              {opModal?.compte.nomBanque} · Solde : <strong>{fmt(opModal?.compte.solde || 0)}</strong>
-            </p>
-          </div>
-          <FormField label="Montant (FCFA)" required>
-            <input type="number" className="input" placeholder="Ex : 50 000" min="1"
-              value={opForm.montant} onChange={e => setOpForm(f => ({ ...f, montant: e.target.value }))} />
-            {opModal?.type === 'retrait' && Number(opForm.montant) > Number(opModal?.compte.solde || 0) && (
-              <p className="text-xs text-red-500 mt-1">Solde insuffisant — disponible : {fmt(opModal?.compte.solde || 0)} FCFA</p>
-            )}
-          </FormField>
-          <FormField label="Date de l'opération">
-            <input type="date" className="input" value={opForm.dateOperation}
-              onChange={e => setOpForm(f => ({ ...f, dateOperation: e.target.value }))} />
-          </FormField>
-          <ModePaiementFields
-            modePaiement={opForm.modePaiement}
-            detailsPaiement={opForm.detailsPaiement}
-            onModeChange={(v) => setOpForm(f => ({ ...f, modePaiement: v, detailsPaiement: '' }))}
-            onDetailsChange={(v) => setOpForm(f => ({ ...f, detailsPaiement: v }))}
-          />
-          <FormField label="Observation">
-            <input className="input" placeholder="Ex : Dépôt séance juin 2025"
-              value={opForm.observation} onChange={e => setOpForm(f => ({ ...f, observation: e.target.value }))} />
-          </FormField>
-        </div>
-      </Modal>
+      {/* ══ MODAL ÉPARGNE (réel, branché sur les endpoints serveur) ══ */}
+      {epargneModal && (
+        <EpargneModal caisse={banques.find(x => x.id === epargneModal.id) || epargneModal} onClose={() => setEpargneModal(null)} />
+      )}
     </div>
   );
 }

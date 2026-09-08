@@ -29,10 +29,31 @@ class TypeSanctionController extends Controller
             'montant_fixe' => ['required_if:mode_calcul,fixe', 'nullable', 'numeric', 'min:0'],
             'montant_pct' => ['required_if:mode_calcul,pourcentage', 'nullable', 'numeric', 'min:0'],
             'montant_journalier' => ['required_if:mode_calcul,journalier', 'nullable', 'numeric', 'min:0'],
-            'declencheur' => ['nullable', 'in:absence_non_excusee,retard_cotisation,retard_pret'],
+            'declencheur' => ['nullable', 'in:absence_non_excusee,retard_cotisation,retard_pret,retard_presence'],
             'est_automatique' => ['sometimes', 'boolean'],
+            // Paliers de retard (déclencheur 'retard_presence' uniquement) : le montant
+            // appliqué dépend de la durée du retard plutôt que d'être fixe — ex. 100 FCFA
+            // à partir de 15 min, 250 FCFA à partir de 3h (voir SanctionService::retardPresence).
+            // montant_fixe reste alors le montant de repli si aucun palier ne matche.
+            'paliers_retard' => ['nullable', 'array'],
+            'paliers_retard.*.minutes' => ['required_with:paliers_retard', 'integer', 'min:1'],
+            'paliers_retard.*.montant' => ['required_with:paliers_retard', 'numeric', 'min:0'],
+            // Paliers d'absences CUMULÉES (déclencheur 'absence_non_excusee') : sanction
+            // supplémentaire ponctuelle quand le nombre total d'absences non excusées du
+            // membre atteint un seuil paramétré — ex. 3000 FCFA à la 5e absence cumulée
+            // (voir SanctionService::sanctionnerPalierAbsencesCumulees). S'ajoute à la
+            // sanction normale par absence, ne la remplace pas.
+            'paliers_absence' => ['nullable', 'array'],
+            'paliers_absence.*.nombre' => ['required_with:paliers_absence', 'integer', 'min:1'],
+            'paliers_absence.*.montant' => ['required_with:paliers_absence', 'numeric', 'min:0'],
             'description' => ['nullable', 'string'],
         ]);
+        if (! empty($data['paliers_retard'])) {
+            usort($data['paliers_retard'], fn ($a, $b) => $a['minutes'] <=> $b['minutes']);
+        }
+        if (! empty($data['paliers_absence'])) {
+            usort($data['paliers_absence'], fn ($a, $b) => $a['nombre'] <=> $b['nombre']);
+        }
         $data['association_id'] = $this->scope->associationId();
         $data['actif'] = true;
 
@@ -45,13 +66,29 @@ class TypeSanctionController extends Controller
     {
         $type = $this->scope->scopeAssociation(TypeSanction::query())->findOrFail($id);
 
-        $type->update($request->validate([
+        $data = $request->validate([
             'libelle' => ['sometimes', 'string', 'max:150'],
             'montant_fixe' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'montant_pct' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'montant_journalier' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'declencheur' => ['sometimes', 'nullable', 'in:absence_non_excusee,retard_cotisation,retard_pret,retard_presence'],
+            'est_automatique' => ['sometimes', 'boolean'],
+            'paliers_retard' => ['sometimes', 'nullable', 'array'],
+            'paliers_retard.*.minutes' => ['required_with:paliers_retard', 'integer', 'min:1'],
+            'paliers_retard.*.montant' => ['required_with:paliers_retard', 'numeric', 'min:0'],
+            'paliers_absence' => ['sometimes', 'nullable', 'array'],
+            'paliers_absence.*.nombre' => ['required_with:paliers_absence', 'integer', 'min:1'],
+            'paliers_absence.*.montant' => ['required_with:paliers_absence', 'numeric', 'min:0'],
             'actif' => ['sometimes', 'boolean'],
-        ]));
+        ]);
+        if (! empty($data['paliers_retard'])) {
+            usort($data['paliers_retard'], fn ($a, $b) => $a['minutes'] <=> $b['minutes']);
+        }
+        if (! empty($data['paliers_absence'])) {
+            usort($data['paliers_absence'], fn ($a, $b) => $a['nombre'] <=> $b['nombre']);
+        }
+
+        $type->update($data);
 
         return response()->json($type);
     }

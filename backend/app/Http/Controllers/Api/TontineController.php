@@ -86,6 +86,29 @@ class TontineController extends Controller
         return response()->json($tontine);
     }
 
+    /**
+     * Active le mode "cagnotte" (RG-TON, demande client) : les cotisations
+     * n'attribuent plus de gagnant par cycle, l'argent s'accumule par part et
+     * se distribue plus tard via /tontines/{id}/remises-gain. Activable à
+     * tout moment (même tontine en cours), mais irréversible : une fois la
+     * cagnotte activée, on ne revient plus à l'attribution cycle par cycle
+     * (l'historique des remises deviendrait incohérent avec des cycles
+     * "gagnants" rejoués après coup).
+     */
+    public function activerCagnotte(Request $request, string $id): JsonResponse
+    {
+        $tontine = $this->scope->scopeAssociation(Tontine::query())->findOrFail($id);
+        $this->authorize('update', $tontine);
+
+        if ($tontine->mode_cagnotte) {
+            return response()->json(['message' => 'Le mode cagnotte est déjà actif sur cette tontine.'], 422);
+        }
+
+        $tontine->update(['mode_cagnotte' => true]);
+
+        return response()->json($tontine);
+    }
+
     public function update(Request $request, string $id): JsonResponse
     {
         $tontine = $this->scope->scopeAssociation(Tontine::query())->findOrFail($id);

@@ -10,6 +10,7 @@ import { calcEcheance } from '../../lib/amortissement';
 export function PretFormFields({ form, setForm, membres, caissesPret, pretSimule, montantInteret, repartitionSimulee, caisseSelectionnee }) {
   const onDureeChange = (val) => setForm((f) => ({ ...f, dureeMois: val, dateEcheance: calcEcheance(f.datePret, val) }));
   const onDateChange = (val) => setForm((f) => ({ ...f, datePret: val, dateEcheance: calcEcheance(val, f.dureeMois) }));
+  const avalistesPossibles = membres.filter((m) => m.statut === 'actif' && m.id !== form.idMembre);
 
   return (
     <div className="space-y-4">
@@ -27,14 +28,16 @@ export function PretFormFields({ form, setForm, membres, caissesPret, pretSimule
           setForm((f) => ({
             ...f,
             caisseId: e.target.value,
-            tauxInteret: caisse?.tauxInteretPret ?? f.tauxInteret,
-            dureeMois: caisse?.dureeMaxPretMois || f.dureeMois,
-            dateEcheance: caisse?.dureeMaxPretMois ? calcEcheance(f.datePret, caisse.dureeMaxPretMois) : f.dateEcheance,
+            // Bug corrigé : ce select lisait c.tauxInteretPret, un champ qui
+            // n'existe pas — l'adaptateur produit c.tauxInteret. Le taux
+            // configuré sur la caisse (image « Modifier la caisse ») restait
+            // donc toujours ignoré ici (0% affiché quel que soit le vrai taux).
+            tauxInteret: caisse?.tauxInteret ?? f.tauxInteret,
           }));
         }}>
           <option value="">Sélectionner une caisse…</option>
           {caissesPret.map((c) => (
-            <option key={c.id} value={c.id}>{c.nom} · {c.tauxInteretPret || 0}% · {c.dureeMaxPretMois || 0} mois</option>
+            <option key={c.id} value={c.id}>{c.nom} · {c.tauxInteret || 0}%</option>
           ))}
         </select>
       </FormField>
@@ -85,7 +88,7 @@ export function PretFormFields({ form, setForm, membres, caissesPret, pretSimule
         <FormField label="Durée (mois)">
           <input type="number" className="input" value={form.dureeMois} onChange={(e) => onDureeChange(e.target.value)} />
         </FormField>
-        <FormField label="Date du prêt">
+        <FormField label="Date de prise d'effet" hint="À partir de quand le prêt commence à courir (échéancier calé dessus).">
           <input type="date" className="input" value={form.datePret} onChange={(e) => onDateChange(e.target.value)} />
         </FormField>
       </div>
@@ -155,12 +158,26 @@ export function PretFormFields({ form, setForm, membres, caissesPret, pretSimule
       )}
       <FormField label="Garantie">
         <select className="select" value={form.garantie} onChange={(e) => setForm((f) => ({ ...f, garantie: e.target.value }))}>
-          <option>Caution d'un membre</option>
-          <option>Blocage épargne</option>
-          <option>Retenue sur tontine</option>
-          <option>Aucune</option>
+          <option value="caution_membre">Caution d'un membre</option>
+          <option value="blocage_epargne">Blocage épargne</option>
+          <option value="retenue_tontine">Retenue sur tontine</option>
+          <option value="aucune">Aucune</option>
         </select>
       </FormField>
+      {form.garantie === 'caution_membre' && (
+        <FormField label="Avaliste (caution)" required hint="Membre qui se porte garant — requis pour cette garantie, vérifié par le serveur.">
+          <select className="select" value={form.idAvaliste || ''} onChange={(e) => setForm((f) => ({ ...f, idAvaliste: e.target.value }))}>
+            <option value="">Sélectionner un avaliste…</option>
+            {avalistesPossibles.map((m) => <option key={m.id} value={m.id}>{m.nom} {m.prenom}</option>)}
+          </select>
+        </FormField>
+      )}
+      {form.garantie === 'retenue_tontine' && (
+        <p className="text-xs text-amber-600 -mt-2">Le membre doit détenir au moins une part de tontine active — vérifié à la validation.</p>
+      )}
+      {form.garantie === 'blocage_epargne' && (
+        <p className="text-xs text-amber-600 -mt-2">Le membre doit avoir une épargne active (solde &gt; 0) dans cette caisse — vérifié à la validation. Le trésorier pourra ensuite couper sur cette épargne depuis la fiche du prêt en cas de défaut.</p>
+      )}
       <FormField label="Observation">
         <textarea className="input h-14 resize-none" value={form.observation}
           onChange={(e) => setForm((f) => ({ ...f, observation: e.target.value }))} />

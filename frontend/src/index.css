@@ -90,7 +90,9 @@
   .label { @apply block text-[11px] font-bold text-ink-600 mb-1.5 uppercase tracking-[0.12em]; }
 
   .badge { @apply inline-flex items-center px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.06em]; border-radius: 7px; font-family: 'IBM Plex Mono', monospace; }
-  .badge-green, .badge-blue, .badge-purple { @apply badge border; color: #2E3B8C; background: #EEF0FD; border-color: #DBE0FB; }
+  .badge-green { @apply badge border; color: #1F7A4D; background: #EAF7EF; border-color: #CDEBD9; }
+  .badge-blue { @apply badge border; color: #2E3B8C; background: #EEF0FD; border-color: #DBE0FB; }
+  .badge-purple { @apply badge border; color: #6B3FA0; background: #F4EEFB; border-color: #E4D3F3; }
   .badge-red { @apply badge border; color: #8C3D28; background: #FCEEEC; border-color: #F6D3CD; }
   .badge-amber { @apply badge border; color: #8C6D2F; background: #FBF6EC; border-color: #F3E6C7; }
   .badge-gray { @apply badge border; color: #4A525F; background: #ECEEF2; border-color: #DEE1E7; }

@@ -35,3 +35,27 @@ export async function request(path, { method = "GET", body, auth = true, headers
   }
   return data;
 }
+
+// L'app utilise un Bearer token (pas de cookie de session), donc un simple
+// window.open(url) vers un endpoint PDF authentifié échouerait en 401 — le
+// navigateur n'a pas le token à joindre à une navigation directe. On récupère
+// le PDF en blob via fetch (avec le header Authorization), puis on ouvre un
+// nouvel onglet sur une URL objet locale — l'utilisateur peut l'imprimer ou
+// l'enregistrer normalement depuis là.
+export async function ouvrirPdfAuthentifie(path) {
+  const token = getApiToken();
+  const res = await fetch(`${API_BASE}${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    let message = `HTTP ${res.status}`;
+    try { const data = await res.json(); message = data?.message || message; } catch { /* pas du JSON, tant pis */ }
+    throw Object.assign(new Error(message), { status: res.status });
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  window.open(url, "_blank");
+  // L'URL objet reste valide le temps que l'onglet l'utilise ; on la libère
+  // après un délai raisonnable plutôt que de la garder indéfiniment en mémoire.
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}

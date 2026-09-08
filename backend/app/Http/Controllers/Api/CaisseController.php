@@ -13,6 +13,8 @@ use App\Http\Controllers\Controller;
 
 class CaisseController extends Controller
 {
+    use \App\Http\Controllers\Api\Concerns\FormateErreurImport;
+
     public function __construct(private AccessScopeService $scope, private CaisseService $service) {}
 
     public function index(Request $request): JsonResponse
@@ -150,7 +152,7 @@ class CaisseController extends Controller
      * erreurs de saisie ponctuelles qu'un payload JSON généré par un script,
      * bloquer tout le fichier pour une seule ligne fautive serait pénible.
      */
-    public function importHistoriqueFichier(Request $request, TabularFileReader $reader): JsonResponse
+    public function importHistoriqueFichier(Request $request, TabularFileReader $reader, \App\Services\Import\ImportResolver $resolveur): JsonResponse
     {
         if ($request->user()->role !== 'super_admin') {
             return response()->json(['message' => 'Réservé au super_admin.'], 403);
@@ -167,6 +169,17 @@ class CaisseController extends Controller
         $erreurs = [];
         foreach ($lignes as $i => $ligne) {
             try {
+                // Colonnes caisse_id/caisse_source_id/caisse_destination_id et
+                // date_transaction acceptent un libellé de caisse et une date
+                // jj/mm/aaaa en plus de l'UUID/ISO strict (import "brut" JSON).
+                foreach (['caisse_id', 'caisse_source_id', 'caisse_destination_id'] as $champ) {
+                    if (! empty($ligne[$champ])) {
+                        $ligne[$champ] = $resolveur->caisse($ligne[$champ]);
+                    }
+                }
+                if (! empty($ligne['date_transaction'])) {
+                    $ligne['date_transaction'] = $resolveur->date($ligne['date_transaction']);
+                }
                 \Illuminate\Support\Facades\DB::transaction(function () use ($ligne, $request) {
                     $type = strtolower(trim((string) ($ligne['type'] ?? 'entree')));
                     if ($type === 'transfert') {
@@ -194,7 +207,7 @@ class CaisseController extends Controller
                 });
                 $crees++;
             } catch (\Throwable $e) {
-                $erreurs[] = ['ligne' => $i + 2, 'donnees' => $ligne, 'erreur' => $e->getMessage()];
+                $erreurs[] = ['ligne' => $i + 2, 'donnees' => $ligne, 'erreur' => $this->messageLisible($e)];
             }
         }
 

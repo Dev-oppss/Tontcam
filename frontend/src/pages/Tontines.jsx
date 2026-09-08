@@ -3,7 +3,7 @@ import {
   Plus, Calendar, Users, UserPlus, Trash2, Pencil,
   BadgeCheck, TrendingUp, Info, Trophy, Shuffle, ChevronRight,
   CheckCircle, Clock, Banknote, Star, X,
-  ListOrdered, Gavel, Dices, FileText,
+  ListOrdered, Gavel, Dices, FileText, Coins,
 } from 'lucide-react';
 import { fmt, fmtDate, typeAttrLabel, periodeLabel } from '../data/mockData';
 import { getMissingFields } from '../lib/validation';
@@ -13,6 +13,7 @@ import { ModePaiementFields, isModePaiementValid } from '../components/ui/ModePa
 import { NavLink, useSearchParams } from 'react-router-dom';
 import clsx from 'clsx';
 import { useAsyncGuard } from '../hooks/useAsyncGuard';
+import CagnotteModal from '../components/tontines/CagnotteModal';
 
 const TYPE_CONFIG = {
   rotation: {
@@ -64,7 +65,7 @@ export default function Tontines() {
     tontines, caisses, addTontine, updateTontine,
     membres, membresParTontine, addMembreTontine, removeMembreTontine,
     planningTours, addTourPlanning, marquerTourEncaisse, retirerTourPlanning, chargerPlanningTours,
-    encheres, rotations, attribuerTour,
+    encheres, rotations,
     genererBulletin, ouvrirBulletinPdf, cyclesTontine, chargerCycles,
     reunions,
     enregistrerBeneficiaireSeance, showToast,
@@ -100,6 +101,7 @@ export default function Tontines() {
   const [showAdd,         setShowAdd]         = useState(false);
   const [showEdit,        setShowEdit]        = useState(null);
   const [showMembres,     setShowMembres]     = useState(null);
+  const [showCagnotte,    setShowCagnotte]    = useState(null);
   const [showBenef,       setShowBenef]       = useState(null);
   const [bulkParts,       setBulkParts]       = useState({});
   const [bulkAvalistes,   setBulkAvalistes]   = useState({});
@@ -143,7 +145,8 @@ export default function Tontines() {
       { key: 'idCaisse', label: 'Caisse liée' },
       { key: 'cotisation', label: 'Cotisation / part' },
     ]);
-    if (form.typeAttribution === 'enchere' && (!form.miseMinEnchere || Number(form.miseMinEnchere) <= 0)) missing.push('Mise minimum');
+    // La mise minimum n'est plus obligatoire pour une tontine à enchère : elle
+    // reste un champ indicatif optionnel, plus une contrainte bloquante (pt.7).
     if (!missing.length && (!form.cotisation || Number(form.cotisation) <= 0)) missing.push('Cotisation / part');
     if (missing.length) { showToast?.(`Champ(s) requis manquant(s) : ${missing.join(', ')}`, 'error'); return; }
     const dateFin = form.dateFin || calcDateFin(form.dateDebut, form.dureeSeances, form.periode);
@@ -455,9 +458,13 @@ export default function Tontines() {
                   <FileText size={12}/> Bulletin
                 </button>
               </div>
+              <button onClick={() => setShowCagnotte(t)} className={`mt-2 w-full text-xs py-1.5 rounded-xl justify-center flex items-center gap-1.5 ${t.modeCagnotte ? 'btn-secondary' : 'text-ink-400 hover:text-ink-600'}`}>
+                <Coins size={12}/> {t.modeCagnotte ? 'Cagnotte — remise de gains' : 'Activer le mode cagnotte'}
+              </button>
             </div>
           );
         })}
+        {showCagnotte && <CagnotteModal tontine={showCagnotte} onClose={() => setShowCagnotte(null)} />}
       </div>
 
       {filteredTontines.length === 0 && (
@@ -722,7 +729,7 @@ export default function Tontines() {
                 </div>
               )}
 
-              {/* ENCHÈRE */}
+              {/* ENCHÈRE — lecture seule ici : l'attribution se fait en RÉUNION (règle d'or) */}
               {t.typeAttribution==='enchere' && (
                 <div className="border-t pt-3 space-y-3">
                   <p className="text-xs font-bold text-gray-600 flex items-center gap-1.5"><Gavel size={13}/> Enchères — Tour N°{prochain}</p>
@@ -735,15 +742,12 @@ export default function Tontines() {
                           <p className={clsx('text-sm font-bold',i===0?'text-amber-700':'text-gray-600')}>{fmt(bid.montantEnchere)}</p>
                         </div>
                       ))}
-                      <button onClick={()=>attribuerTour(enCoursEnch.rotation.id,enCoursEnch.bids.sort((a,b)=>b.montantEnchere-a.montantEnchere)[0].idMembre)}
-                        className="btn-primary w-full text-sm justify-center">
-                        <Trophy size={14}/> Attribuer au plus offrant
-                      </button>
+                      <p className="text-xs text-gray-400 text-center">L'attribution au plus offrant se fait depuis la Réunion en cours.</p>
                     </div>
                   ) : (
                     <div className="p-3 bg-gray-50 rounded-xl text-center text-xs text-gray-400">
                       Aucune enchère ouverte.<br/>
-                      <NavLink to="/encheres" className="text-primary-600 hover:underline mt-1 inline-block">Gérer les enchères -</NavLink>
+                      Les enchères s'enregistrent depuis la Réunion en cours.
                     </div>
                   )}
                 </div>
@@ -929,7 +933,7 @@ export default function Tontines() {
             <FormField label="Type" hint={modeAttributionVerrouillee ? "Verrouillé : au moins un tour a déjà démarré." : undefined}><S k="typeAttribution" disabled={modeAttributionVerrouillee}><option value="rotation"> Rotation</option><option value="tirage"> Tirage</option><option value="enchere"> Enchère</option></S></FormField>
           </div>
           {form.typeAttribution === 'enchere' && (
-            <FormField label="Mise minimum (FCFA)" required hint="Obligatoire pour une tontine à enchère.">
+            <FormField label="Mise minimum (FCFA)" hint="Facultatif — indicatif seulement, n'est plus imposé aux offres.">
               <F k="miseMinEnchere" type="number" min="0"/>
             </FormField>
           )}

@@ -18,6 +18,7 @@ class Pret extends Model
         'montant_principal',
         'taux_interet_mensuel',
         'taux_penalite_mensuel',
+        'garantie_type',
         'methode_amortissement',
         'nb_echeances',
         'montant_echeance',
@@ -29,6 +30,7 @@ class Pret extends Model
         'date_demande',
         'date_approbation',
         'date_debut',
+        'date_prise_effet',
         'date_fin_prevue',
         'date_solde',
         'approuve_par',
@@ -53,6 +55,7 @@ class Pret extends Model
             'date_demande' => 'date',
             'date_approbation' => 'date',
             'date_debut' => 'date',
+            'date_prise_effet' => 'date',
             'date_fin_prevue' => 'date',
             'date_solde' => 'date'
     ];

@@ -31,6 +31,7 @@ class Caisse extends Model
         'date_ouverture',
         'date_cloture',
         'config',
+        'suivi_epargne',
     ];
 
     protected $casts = [
@@ -44,7 +45,8 @@ class Caisse extends Model
             'actif' => 'boolean',
             'date_ouverture' => 'date',
             'date_cloture' => 'date',
-            'config' => 'array'
+            'config' => 'array',
+            'suivi_epargne' => 'boolean'
     ];
 
     public function association()
@@ -75,12 +77,15 @@ class Caisse extends Model
      * été enregistrée. L'écriture de solde initial (reference_type =
      * 'solde_initial') créée automatiquement à l'ouverture ne compte pas :
      * sinon aucune caisse ouverte avec un solde de départ ne serait jamais
-     * modifiable.
+     * modifiable. Les transactions annulées ne comptent pas non plus (pt.12
+     * du rapport de test) : une opération supprimée/annulée n'a plus d'effet
+     * réel sur la caisse, elle ne doit donc plus bloquer sa modification.
      */
     public function getHasTransactionsAttribute(): bool
     {
         return $this->transactions()
             ->where('reference_type', '!=', 'solde_initial')
+            ->where('annulee', false)
             ->exists();
     }
 

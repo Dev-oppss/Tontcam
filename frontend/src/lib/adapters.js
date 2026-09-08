@@ -134,6 +134,7 @@ export const tontineFromApi = (t) => !t ? null : ({
   idCaisse: t.caisse_id,
   dateDebut: t.date_debut,
   dateFin: t.date_fin_prevue,
+  modeCagnotte: !!t.mode_cagnotte,
 });
 
 export const cycleFromApi = (c) => !c ? null : ({
@@ -253,6 +254,13 @@ export const reunionToApi = (r) => ({
 });
 
 // ── Prêt ────────────────────────────────────────────────────────
+export const GARANTIE_LABELS = {
+  caution_membre: "Caution d'un membre",
+  blocage_epargne: 'Blocage épargne',
+  retenue_tontine: 'Retenue sur tontine',
+  aucune: 'Aucune',
+};
+
 export const pretFromApi = (p) => !p ? null : ({
   id: p.id,
   idMembre: p.emprunteur_id,
@@ -267,6 +275,10 @@ export const pretFromApi = (p) => !p ? null : ({
   resteAPayer: Number(p.capital_restant),
   datePret: p.date_debut || p.date_demande,
   statut: mapStatutPret(p.statut),
+  idAvaliste: p.avaliste_id,
+  nomAvaliste: p.avaliste ? `${p.avaliste.nom} ${p.avaliste.prenom}` : undefined,
+  garantie: p.garantie_type || 'aucune',
+  garantieLabel: GARANTIE_LABELS[p.garantie_type] || GARANTIE_LABELS.aucune,
   echeances: (p.echeances || []).map((e) => ({
     id: e.id,
     numero: e.numero_echeance,
@@ -284,11 +296,26 @@ function mapStatutPret(s) {
 }
 
 export const pretToApi = (p) => ({
-  caisse_id: p.idCaisse,
+  // Bug trouvé : tous les appelants réels (Prets.jsx, Reunions.jsx) envoient
+  // `caisseId`, mais cet adaptateur lisait `idCaisse` — toujours undefined en
+  // pratique, donc `caisse_id` partait vide côté API malgré une caisse bien
+  // sélectionnée à l'écran ("The caisse id field is required."). Fallback sur
+  // idCaisse conservé par précaution, mais caisseId est la vraie source.
+  caisse_id: p.caisseId || p.idCaisse,
   emprunteur_id: p.idMembre,
   montant_principal: Number(p.montantPret),
   nb_echeances: Number(p.nbEcheances || p.dureeMois || 12),
   avaliste_id: p.idAvaliste || undefined,
+  // "Garantie" avait longtemps été un simple texte décoratif jamais transmis
+  // à l'API (le champ n'existait même pas dans ce payload). Le formulaire
+  // envoie désormais un vrai code (caution_membre/blocage_epargne/
+  // retenue_tontine/aucune), vérifié et appliqué côté serveur.
+  garantie_type: p.garantie || undefined,
+  // "Date du prêt" (form.datePret) servait uniquement à la simulation
+  // d'aperçu côté frontend — jamais transmise au serveur, qui calait
+  // toujours l'échéancier sur l'instant présent. Elle sert maintenant de
+  // vraie "date de prise d'effet" (voir PretService::demander/genererAmortissement).
+  date_prise_effet: p.datePret || undefined,
   notes: p.notes || undefined,
 });
 
@@ -312,6 +339,14 @@ export const typeSanctionFromApi = (t) => !t ? null : ({
   montantFixe: Number(t.montant_fixe || 0),
   modeCalcul: t.mode_calcul,
   estAutomatique: t.est_automatique,
+  declencheur: t.declencheur || null,
+  // Paliers de retard (déclencheur 'retard_presence') : [{minutes, montant}, ...] triés
+  // par 'minutes' croissant côté serveur. Voir SanctionService::retardPresence.
+  paliersRetard: t.paliers_retard || [],
+  // Paliers d'absences cumulées (déclencheur 'absence_non_excusee') : [{nombre,
+  // montant}, ...] triés par 'nombre' croissant. Voir
+  // SanctionService::sanctionnerPalierAbsencesCumulees.
+  paliersAbsence: t.paliers_absence || [],
 });
 
 // ── Aide sociale (FondAssurance) ───────────────────────────────
@@ -354,6 +389,7 @@ export const caisseFromApi = (c) => !c ? null : ({
   // Une caisse n'est modifiable (hors activation/désactivation) que tant
   // qu'aucune transaction réelle n'y a été enregistrée.
   modifiable: !c.has_transactions,
+  suiviEpargne: !!c.suivi_epargne,
 });
 
 export const caisseToApi = (c) => ({

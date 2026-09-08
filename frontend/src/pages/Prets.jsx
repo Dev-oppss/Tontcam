@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
-import { Plus, HandCoins, CreditCard, ChevronDown, ChevronUp, Coins, TrendingUp, Users, CheckCircle, AlertTriangle } from 'lucide-react';
+import { Plus, HandCoins, CreditCard, ChevronDown, ChevronUp, Coins, TrendingUp, Users, CheckCircle, AlertTriangle, Printer } from 'lucide-react';
+import { ouvrirPdfAuthentifie } from '../lib/api';
 import { fmt, fmtDate } from '../data/mockData';
 import { useApp } from '../context/AppContext';
 import { PageHeader, Table, Badge, Modal, FormField } from '../components/ui/index';
@@ -11,11 +12,38 @@ import { buildAmortization, simulerRepartitionInterets, FORM_PRET_VIDE } from '.
 import { PretFormFields } from '../components/shared/PretFormFields';
 
 export default function Prets() {
-  const { membres, prets, comptesBanque, caisses, addPret, validerPret, approuverPret, refuserPret, decaisserPret, rembourserPret, distribuerInteretsPret, showToast } = useApp();
+  const { membres, prets, comptesBanque, caisses, addPret, validerPret, approuverPret, refuserPret, decaisserPret, rembourserPret, distribuerInteretsPret, showToast, chargerSoldesEpargne, couperGarantieEpargne } = useApp();
 
   const [add,        setAdd]        = useState(false);
   const [remModal,   setRemModal]   = useState(null);
   const [detailPret, setDetailPret] = useState(null);
+  const [filtreCaisseId, setFiltreCaisseId] = useState('');
+  // Garantie « blocage épargne » (RG-PRET-GARANTIE) : couperGarantieEpargne
+  // existait déjà côté API/contexte mais n'était appelable depuis aucune
+  // page — le trésorier ne pouvait jamais s'en servir en cas de défaut.
+  const [garantieModal, setGarantieModal] = useState(null); // { pret }
+  const [garantieSolde, setGarantieSolde] = useState(0);
+  const [garantieMontant, setGarantieMontant] = useState('');
+  const [garantieMotif, setGarantieMotif] = useState('');
+  const [chargeGarantieSolde, setChargeGarantieSolde] = useState(false);
+
+  const openGarantieModal = async (p) => {
+    setGarantieModal({ pret: p });
+    setGarantieMontant('');
+    setGarantieMotif('');
+    setGarantieSolde(0);
+    setChargeGarantieSolde(true);
+    const soldes = (await chargerSoldesEpargne(p.idCaisse)) || [];
+    setChargeGarantieSolde(false);
+    setGarantieSolde(soldes.find((l) => l.membre_id === p.idMembre)?.solde || 0);
+  };
+  const handleImprimerFiche = async (id) => {
+    try {
+      await ouvrirPdfAuthentifie(`/prets/${id}/fiche-amortissement-pdf`);
+    } catch (err) {
+      showToast?.(err.message || "Impossible d'ouvrir la fiche.", 'error');
+    }
+  };
   const [form,       setForm]       = useState({ ...FORM_PRET_VIDE });
   const [remMontant, setRemMontant] = useState('');
   const [remModePaiement, setRemModePaiement] = useState('especes');
@@ -63,6 +91,21 @@ export default function Prets() {
   const enRetard  = pretsLive.filter(p => p.statut === 'en_cours' && p.nbEcheancesEnRetard > 0);
   const rembourse = pretsLive.filter(p => p.statut === 'rembourse');
 
+  const handleCouperGarantie = async () => {
+    if (!garantieModal) return;
+    const montant = Number(garantieMontant);
+    if (!montant || montant <= 0) { showToast?.('Montant requis.', 'error'); return; }
+    if (montant > garantieSolde) { showToast?.('Montant supérieur au solde épargne du membre.', 'error'); return; }
+    const res = await couperGarantieEpargne(garantieModal.pret.idCaisse, {
+      membre_id: garantieModal.pret.idMembre,
+      montant,
+      motif: garantieMotif || undefined,
+      pret_id: garantieModal.pret.id,
+    });
+    if (res) setGarantieModal(null);
+  };
+  const [guardedHandleCouperGarantie, coupantGarantie] = useAsyncGuard(handleCouperGarantie);
+
   const handleAdd = async () => {
     const missing = getMissingFields(form, [
       { key: 'idMembre', label: 'Membre bénéficiaire' },
@@ -70,6 +113,9 @@ export default function Prets() {
       { key: 'montantPret', label: 'Montant' },
     ]);
     if (missing.length) { showToast?.(`Champ(s) requis manquant(s) : ${missing.join(', ')}`, 'error'); return; }
+    if (form.garantie === 'caution_membre' && !form.idAvaliste) {
+      showToast?.("Garantie « Caution d'un membre » : sélectionnez un avaliste.", 'error'); return;
+    }
     if (!pretSimule) { showToast?.('Simulation du prêt indisponible — vérifiez les paramètres saisis.', 'error'); return; }
     const m = membres.find(x => x.id === form.idMembre);
     await addPret({
@@ -89,7 +135,7 @@ export default function Prets() {
       echeancesPret: caisseSelectionnee?.echeancesPret || 'mensuel',
     });
     setAdd(false);
-    setForm({ idMembre: '', caisseId: '', montantPret: '', tauxInteret: 10, dureeMois: 3, datePret: new Date().toISOString().split('T')[0], dateEcheance: '', garantie: "Caution d'un membre", observation: '' });
+    setForm({ idMembre: '', caisseId: '', montantPret: '', tauxInteret: 10, dureeMois: 3, datePret: new Date().toISOString().split('T')[0], dateEcheance: '', garantie: 'caution_membre', idAvaliste: '', observation: '' });
   };
   const [guardedHandleAdd, addingPret] = useAsyncGuard(handleAdd);
 
@@ -111,14 +157,13 @@ export default function Prets() {
   return (
     <div className="space-y-6">
       <PageHeader title="Prêts & Crédits"
-        subtitle="Prêts ouverts uniquement depuis les caisses autorisées"
-        action={<button onClick={() => setAdd(true)} className="btn-primary"><Plus size={15}/> Nouveau prêt</button>}/>
+        subtitle="Les demandes de prêt s'enregistrent depuis la Réunion en cours (règle d'or)"/>
 
       <div className="card border-l-4 border-l-primary-500">
         <div className="flex items-center justify-between gap-3">
           <div>
             <p className="text-sm font-semibold text-ink-900">Caisses autorisées au prêt</p>
-            <p className="text-xs text-ink-600/60 mt-1">Chaque caisse peut définir son taux, sa durée maximale et son mode d’amortissement.</p>
+            <p className="text-xs text-ink-600/60 mt-1">Chaque caisse définit son propre taux d'intérêt mensuel.</p>
           </div>
           <p className="text-sm font-bold text-primary-700">{caissesPret.length} caisse(s)</p>
         </div>
@@ -126,8 +171,14 @@ export default function Prets() {
           {caissesPret.map((c) => (
             <div key={c.id} className="rounded-2xl border border-surface-200 bg-surface-50 p-4">
               <p className="font-semibold text-ink-900">{c.nom}</p>
-              <p className="text-xs text-ink-600/55 mt-1">Taux: {c.tauxInteretPret || 0}% · Durée max: {c.dureeMaxPretMois || 0} mois</p>
-              <p className="text-xs text-ink-600/55 mt-1">Amortissement: {formatAmortissement(c.amortissementPret)}</p>
+              {/* Bug corrigé : ce bloc lisait c.tauxInteretPret (n'existe pas —
+                  l'adaptateur produit c.tauxInteret), et affichait Durée
+                  max/Amortissement par caisse — deux réglages qui n'existent
+                  nulle part côté backend (aucune colonne, aucun champ dans le
+                  formulaire "Modifier la caisse") : toujours une fausse valeur
+                  par défaut ("0 mois", "Remboursement unique"), jamais la
+                  vraie config. */}
+              <p className="text-xs text-ink-600/55 mt-1">Taux : {c.tauxInteret || 0}%</p>
             </div>
           ))}
         </div>
@@ -210,15 +261,25 @@ export default function Prets() {
       )}
 
       <div className="card p-0 overflow-hidden">
+        <div className="px-6 pt-4 flex items-center justify-between gap-3 flex-wrap">
+          <p className="text-sm font-semibold text-ink-900">Tous les prêts</p>
+          {/* pt.13 : filtre par caisse manquant — indispensable avec plusieurs caisses autorisées au prêt */}
+          <FormField label="Filtrer par caisse">
+            <select className="select" value={filtreCaisseId} onChange={e => setFiltreCaisseId(e.target.value)}>
+              <option value="">Toutes les caisses</option>
+              {caissesPret.map(c => <option key={c.id} value={c.id}>{c.nom}</option>)}
+            </select>
+          </FormField>
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b border-gray-200">
-              <tr>{['Membre','Montant prêt','Taux','Intérêts','Total','Progression','Reste','Statut','Actions'].map(h=>(
+              <tr>{['Membre','Caisse','Montant prêt','Taux','Intérêts','Total','Progression','Reste','Statut','Actions'].map(h=>(
                 <th key={h} className="th">{h}</th>
               ))}</tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {pretsLive.map(p => {
+              {pretsLive.filter(p => !filtreCaisseId || p.caisseId === filtreCaisseId).map(p => {
                 const pct = Math.round((p.montantRembourse / p.montantTotal) * 100);
                 const isOpen = detailPret === p.id;
                 const enRetardLive = p.statut === 'en_cours' && p.nbEcheancesEnRetard > 0;
@@ -234,6 +295,7 @@ export default function Prets() {
                           </div>
                         </div>
                       </td>
+                      <td className="td text-gray-600">{caissesMap[p.caisseId]?.nom || '—'}</td>
                       <td className="td font-medium">{fmt(p.montantPret)}</td>
                       <td className="td text-amber-600 font-semibold">{p.tauxInteret}%</td>
                       <td className="td">
@@ -268,10 +330,20 @@ export default function Prets() {
                       </td>
                       <td className="td">
                         <div className="flex items-center gap-1">
+                          <button onClick={() => handleImprimerFiche(p.id)} title="Imprimer la fiche d'amortissement"
+                            className="btn-secondary py-1 px-2.5 text-xs flex items-center gap-1">
+                            <Printer size={12}/>Fiche
+                          </button>
                           {(p.statut === 'en_cours' || p.statut === 'en_retard') && (
                             <button onClick={() => { setRemModal(p); setRemMontant(''); }}
                               className="btn-secondary py-1 px-2.5 text-xs flex items-center gap-1">
                               <CreditCard size={12}/>Payer
+                            </button>
+                          )}
+                          {p.garantie === 'blocage_epargne' && (p.statut === 'en_cours' || p.statut === 'en_retard' || p.statut === 'defaut') && (
+                            <button onClick={() => openGarantieModal(p)} title="Couper sur l'épargne du membre pour couvrir le prêt"
+                              className="btn-secondary py-1 px-2.5 text-xs flex items-center gap-1">
+                              <AlertTriangle size={12}/>Couper garantie
                             </button>
                           )}
                           {!p.interetsDistribues && p.statut === 'rembourse' && (
@@ -457,15 +529,37 @@ export default function Prets() {
         })()}
       </Modal>
 
-      {/* Modal nouveau prêt */}
-      <Modal open={add} onClose={() => setAdd(false)} title="Nouveau prêt"
-        footer={<><button onClick={() => setAdd(false)} disabled={addingPret} className="btn-secondary">Annuler</button><button onClick={guardedHandleAdd} disabled={addingPret} className="btn-primary"><HandCoins size={14}/>{addingPret ? 'Enregistrement…' : 'Accorder le prêt'}</button></>}>
-        <PretFormFields
-          form={form} setForm={setForm}
-          membres={membres} caissesPret={caissesPret}
-          pretSimule={pretSimule} montantInteret={montantInteret}
-          repartitionSimulee={repartitionSimulee} caisseSelectionnee={caisseSelectionnee}
-        />
+      {/* ══ COUPER GARANTIE ÉPARGNE ═══════════════════════ */}
+      {/* couperGarantieEpargne existait déjà dans le contexte et l'API, mais
+          n'était appelable depuis aucune page : invisible et inatteignable
+          pour un trésorier, même en cas de défaut sur un prêt garanti par
+          une épargne bloquée. */}
+      <Modal open={!!garantieModal} onClose={() => setGarantieModal(null)} title="Couper la garantie épargne"
+        footer={<>
+          <button onClick={() => setGarantieModal(null)} disabled={coupantGarantie} className="btn-secondary">Annuler</button>
+          <button
+            onClick={guardedHandleCouperGarantie}
+            disabled={coupantGarantie || chargeGarantieSolde || !garantieMontant || Number(garantieMontant) <= 0 || Number(garantieMontant) > garantieSolde}
+            className={`btn-primary bg-red-600 hover:bg-red-700 ${(coupantGarantie || chargeGarantieSolde || !garantieMontant || Number(garantieMontant) <= 0 || Number(garantieMontant) > garantieSolde) ? 'opacity-40 cursor-not-allowed' : ''}`}
+          ><AlertTriangle size={14}/>{coupantGarantie ? 'Envoi…' : 'Couper et imputer au prêt'}</button>
+        </>}>
+        {garantieModal && (
+          <div className="space-y-4">
+            <div className="p-4 bg-gray-50 rounded-xl space-y-1.5">
+              <p className="text-sm font-semibold text-gray-800">{garantieModal.pret.nomMembre}</p>
+              <div className="flex justify-between text-sm"><span className="text-gray-500">Reste à payer sur le prêt :</span><span className="font-bold text-red-600">{fmt(garantieModal.pret.resteAPayer)}</span></div>
+              <div className="flex justify-between text-sm"><span className="text-gray-500">Solde épargne disponible :</span><span className="font-medium text-primary-600">{chargeGarantieSolde ? '…' : fmt(garantieSolde)}</span></div>
+            </div>
+            <p className="text-xs text-amber-700">Le montant est prélevé sur l'épargne du membre et directement imputé sur les échéances impayées du prêt — l'argent ne quitte pas la caisse une seconde fois, il y était déjà déposé.</p>
+            <FormField label="Montant à couper (FCFA)" required>
+              <input type="number" className="input" value={garantieMontant}
+                onChange={e => setGarantieMontant(e.target.value)} min="1" max={Math.min(garantieSolde, garantieModal.pret.resteAPayer)} disabled={chargeGarantieSolde}/>
+            </FormField>
+            <FormField label="Motif (optionnel)">
+              <input type="text" className="input" value={garantieMotif} onChange={e => setGarantieMotif(e.target.value)} placeholder="Ex : défaut de paiement échéance de..." />
+            </FormField>
+          </div>
+        )}
       </Modal>
     </div>
   );
