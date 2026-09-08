@@ -123,6 +123,21 @@ class SanctionService
             return null;
         }
 
+        // Évite le doublon : le trigger SQL fn_sanction_retard_cotisation crée déjà
+        // automatiquement une sanction dès que cotisations_tontine.statut passe à
+        // 'en_retard' ou 'impayee' (cf. script.sql). Sans ce garde-fou, cette méthode
+        // PHP — appelée juste après la mise à jour du statut dans
+        // TontineCycleService::saisirCotisations() — insérait une seconde ligne
+        // identique dans sanctions_membres pour le même retard, doublant la pénalité
+        // réellement facturée au membre.
+        $existe = SanctionMembre::where('membre_id', $membre->id)
+            ->where('reference_type', 'cotisation_tontine')
+            ->where('reference_id', $cotisation->id)
+            ->exists();
+        if ($existe) {
+            return null;
+        }
+
         $montant = $type->mode_calcul === 'journalier'
             ? (float) $type->montant_journalier * max(1, now()->diffInDays($cotisation->cycle->date_ouverture ?? now()))
             : $this->calculerMontant($type);
