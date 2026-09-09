@@ -92,7 +92,7 @@ class PretService
             ? \Carbon\Carbon::parse($options['date_prise_effet'])
             : now();
 
-        return DB::transaction(function () use ($caisse, $emprunteur, $montant, $nbEcheances, $tauxInteret, $methode, $calcul, $options, $datePriseEffet) {
+        return DB::transaction(function () use ($caisse, $emprunteur, $montant, $nbEcheances, $tauxInteret, $methode, $calcul, $options, $datePriseEffet, $garantieType) {
             $pret = Pret::create([
                 'caisse_id' => $caisse->id,
                 'emprunteur_id' => $emprunteur->id,
