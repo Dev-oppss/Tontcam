@@ -35,6 +35,8 @@ class Association extends Model
         'profil_complete',
     ];
 
+    protected $appends = ['has_transactions'];
+
     protected $casts = [
             'date_creation' => 'date',
             'seuil_approbation_pret' => 'decimal:2',
@@ -129,6 +131,23 @@ class Association extends Model
     public function auditLogs()
     {
         return $this->hasMany(AuditLog::class);
+    }
+
+
+    /**
+     * Vrai dès qu'une transaction réelle (hors solde d'ouverture et hors
+     * annulations) existe sur une caisse de l'association — même définition
+     * que Caisse::has_transactions. Utilisé pour verrouiller la devise
+     * (RG-ORG-003) une fois l'association "vivante".
+     */
+    public function getHasTransactionsAttribute(): bool
+    {
+        return \App\Models\Transaction::whereHas(
+            'caisse', fn ($query) => $query->where('association_id', $this->id)
+        )
+            ->where('reference_type', '!=', 'solde_initial')
+            ->where('annulee', false)
+            ->exists();
     }
 
 
