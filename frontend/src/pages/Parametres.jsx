@@ -1,34 +1,28 @@
 import { useEffect, useState } from 'react';
-import { SlidersHorizontal, Save, Wallet, Users2, CalendarClock, ShieldAlert, HeartHandshake } from 'lucide-react';
+import { SlidersHorizontal, Save, Wallet, CalendarClock } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { PageHeader, SectionCard, FormField, Badge } from '../components/ui/index';
 
+// Les onglets "Sanctions" (seuil de suspension, cycles impayés) et "Social"
+// (barème des aides) ont été retirés : aucun de ces champs n'était jamais lu
+// côté backend. Le barème d'aides sociales est désormais géré, avec de
+// vrais montants configurables par type d'événement, sur la page Social
+// (types_aide_sociale) — voir src/pages/Social.jsx.
 const TABS = [
   { id: 'general',   label: 'Général',   icon: SlidersHorizontal },
   { id: 'financier', label: 'Financier', icon: Wallet },
   { id: 'reunions',  label: 'Réunions',  icon: CalendarClock },
-  { id: 'sanctions', label: 'Sanctions', icon: ShieldAlert },
-  { id: 'social',    label: 'Social',    icon: HeartHandshake },
 ];
 
 const DEFAULTS = {
   devise: 'XAF',
   seuilApprobationPret: 200000,
-  tauxPenaliteRetard: 2,
   dureeMaxPretMois: 12,
   nbSignatairesPV: 3,
   delaiRappelJ7: true,
   delaiRappelJ3: true,
   delaiRappelJ1: true,
-  toleranceRetardMinutes: 15,
-  seuilSuspensionSanctions: 25000,
-  cyclesImpayesAvantSuspension: 3,
   plafondCumulPostes: 2,
-  aideNaissance: 25000,
-  aideMariage: 50000,
-  aideDecesMembre: 150000,
-  aideDecesFamille: 75000,
-  maxAidesParCategorieAn: 3,
 };
 
 export default function Parametres() {
@@ -92,8 +86,8 @@ export default function Parametres() {
             <FormField label="Plafond de cumul de postes" hint="Max de postes simultanés par membre (RG-ORG-010)">
               <input type="number" className="input" value={form.plafondCumulPostes} onChange={set('plafondCumulPostes')} />
             </FormField>
-            <FormField label="Nb signataires requis pour un PV" hint="Entre 2 et 5 (RG-ORG-013 / RG-REU-022)">
-              <input type="number" min={2} max={5} className="input" value={form.nbSignatairesPV} onChange={set('nbSignatairesPV')} />
+            <FormField label="Nb signataires requis pour un PV" hint="Entre 2 et 7 (RG-ORG-013 / RG-REU-022)">
+              <input type="number" min={2} max={7} className="input" value={form.nbSignatairesPV} onChange={set('nbSignatairesPV')} />
             </FormField>
           </div>
         </SectionCard>
@@ -101,17 +95,17 @@ export default function Parametres() {
 
       {tab === 'financier' && (
         <SectionCard title="Seuils et taux financiers">
-          <div className="grid sm:grid-cols-3 gap-4">
+          <div className="grid sm:grid-cols-2 gap-4">
             <FormField label="Seuil d'approbation Président (FCFA)" hint="Au-delà, validation du Président requise (RG-ORG-012)">
               <input type="number" className="input" value={form.seuilApprobationPret} onChange={set('seuilApprobationPret')} />
-            </FormField>
-            <FormField label="Taux de pénalité de retard (%/mois)" hint="RG-PRT-020">
-              <input type="number" step="0.1" className="input" value={form.tauxPenaliteRetard} onChange={set('tauxPenaliteRetard')} />
             </FormField>
             <FormField label="Durée maximale d'un prêt (mois)" hint="RG-PRT-006">
               <input type="number" className="input" value={form.dureeMaxPretMois} onChange={set('dureeMaxPretMois')} />
             </FormField>
           </div>
+          <p className="text-xs text-ink-600/50 mt-3">
+            Le taux de pénalité de retard sur prêt (RG-PRT-020) est propre à chaque caisse, pas global à l'association — il n'est donc pas réglable ici.
+          </p>
         </SectionCard>
       )}
 
@@ -127,35 +121,10 @@ export default function Parametres() {
                 ))}
               </div>
             </FormField>
-            <FormField label="Tolérance de retard (minutes)" hint="Au-delà, le membre est marqué en retard (RG-REU-017)">
-              <input type="number" className="input" value={form.toleranceRetardMinutes} onChange={set('toleranceRetardMinutes')} />
-            </FormField>
           </div>
-        </SectionCard>
-      )}
-
-      {tab === 'sanctions' && (
-        <SectionCard title="Seuils de suspension">
-          <div className="grid sm:grid-cols-2 gap-4">
-            <FormField label="Seuil de sanctions cumulées avant alerte (FCFA)" hint="RG-SAN-017">
-              <input type="number" className="input" value={form.seuilSuspensionSanctions} onChange={set('seuilSuspensionSanctions')} />
-            </FormField>
-            <FormField label="Cycles impayés avant suspension possible" hint="RG-SAN-015">
-              <input type="number" className="input" value={form.cyclesImpayesAvantSuspension} onChange={set('cyclesImpayesAvantSuspension')} />
-            </FormField>
-          </div>
-        </SectionCard>
-      )}
-
-      {tab === 'social' && (
-        <SectionCard title="Barème des aides sociales" subtitle="Défini en AG, versionné (RG-SOC-001 à 003)">
-          <div className="grid sm:grid-cols-2 gap-4">
-            <FormField label="Aide naissance (FCFA)"><input type="number" className="input" value={form.aideNaissance} onChange={set('aideNaissance')} /></FormField>
-            <FormField label="Aide mariage (FCFA)"><input type="number" className="input" value={form.aideMariage} onChange={set('aideMariage')} /></FormField>
-            <FormField label="Aide décès (membre) (FCFA)"><input type="number" className="input" value={form.aideDecesMembre} onChange={set('aideDecesMembre')} /></FormField>
-            <FormField label="Aide décès (famille proche) (FCFA)"><input type="number" className="input" value={form.aideDecesFamille} onChange={set('aideDecesFamille')} /></FormField>
-            <FormField label="Max aides par catégorie / an" hint="RG-SOC-010"><input type="number" className="input" value={form.maxAidesParCategorieAn} onChange={set('maxAidesParCategorieAn')} /></FormField>
-          </div>
+          <p className="text-xs text-ink-600/50 mt-3">
+            Les seuils de retard aux réunions (RG-REU-017) se règlent par palier dans la configuration des types de sanction, pas ici.
+          </p>
         </SectionCard>
       )}
 
