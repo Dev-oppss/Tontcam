@@ -1,10 +1,11 @@
-import { useEffect } from 'react';
+import { useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, PieChart, Pie, Cell } from 'recharts';
 import { useApp } from '../context/AppContext';
 import { fmt, fmtDate } from '../data/mockData';
 import { PageHeader } from '../components/ui/index';
 import { TX_TYPES } from '../context/AppContext';
 import { Download, TrendingUp, TrendingDown, FileText, Receipt, Printer } from 'lucide-react';
+import { ouvrirPdfAuthentifie, telechargerFichierAuthentifie } from '../lib/api';
 import clsx from 'clsx';
 
 const tip = ({ active, payload, label }) => {
@@ -21,14 +22,16 @@ export default function Rapports() {
   const {
     membres, membresParTontine, tontines, reunions, prets, sanctions,
     evolutionCaisse, dashboardStats, banques, comptesBanque,
-    seanceTransactions, caisseJournal, chargerJournalGlobal,
+    seanceTransactions, caisseJournal, showToast,
   } = useApp();
+  // Le journal de caisse global est désormais chargé une fois au démarrage de
+  // l'app (AppContext), plus besoin de le redéclencher ici à chaque montage.
 
-  // La page n'a jamais chargé le journal global elle-même — le graphique
-  // "Évolution de la caisse" et les totaux qui en dépendent restaient vides
-  // tant qu'une autre page (le journal de caisse) n'avait pas été visitée
-  // avant dans la même session.
-  useEffect(() => { chargerJournalGlobal(); }, []);
+  const anneeCourante = new Date().getFullYear();
+  const [anneeBilan, setAnneeBilan] = useState(String(anneeCourante));
+  const anneesDisponibles = Array.from({ length: 6 }, (_, i) => String(anneeCourante - i));
+  const telechargerExport = (path, nomFichier) =>
+    telechargerFichierAuthentifie(path, nomFichier).catch((e) => showToast?.(e.message || "Impossible de télécharger l'export.", 'error'));
 
   const tauxRecouvrement = prets.length > 0
     ? Math.round((prets.filter(p=>p.statut==='rembourse').length / prets.length) * 100)
@@ -47,8 +50,8 @@ export default function Rapports() {
       }, 0) / reunionsCloturees.length * 100)
     : 0;
 
-  const soldeCaisse  = dashboardStats.soldeCaisse;
-  const totalCaisses = dashboardStats.totalBanques;
+  const soldeCaisse = dashboardStats.soldeCaisse;
+  const nbCaisses   = dashboardStats.nbCaisses;
   const COLORS = ['var(--brand)','var(--brand-soft)','var(--brand-pale)','var(--muted)'];
 
   const bancairesData = banques.map((b,i) => ({
@@ -105,7 +108,7 @@ export default function Rapports() {
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         {[
           { label:'Solde caisse',        value: fmt(soldeCaisse),       color: soldeCaisse>=0?'text-primary-600':'text-red-500' },
-          { label:'Total caisses',       value: fmt(totalCaisses),      color: 'text-blue-600'   },
+          { label:'Total caisses',       value: nbCaisses,              color: 'text-blue-600'   },
           { label:'Taux présence',       value: `${tauxPresence}%`,     color: 'text-amber-600'  },
           { label:'Taux recouvrement',   value: `${tauxRecouvrement}%`, color: 'text-purple-600' },
         ].map(k=>(
@@ -302,6 +305,47 @@ export default function Rapports() {
               <p className="text-xs text-gray-400 mt-0.5">{k.l}</p>
             </div>
           ))}
+        </div>
+      </div>
+
+      {/* ── Exports ──────────────────────────────────────────── */}
+      <div className="card">
+        <h3 className="font-semibold text-gray-800 mb-1 flex items-center gap-2">
+          <Download size={16} className="text-primary-600"/> Exports
+        </h3>
+        <p className="text-xs text-gray-400 mb-4">Documents complets à télécharger ou imprimer.</p>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+          <div>
+            <p className="text-xs font-semibold text-gray-600 mb-1.5">Bilan annuel (PDF)</p>
+            <div className="flex gap-2">
+              <select className="select" value={anneeBilan} onChange={e=>setAnneeBilan(e.target.value)}>
+                {anneesDisponibles.map(a => <option key={a} value={a}>{a}</option>)}
+              </select>
+              <button onClick={()=>ouvrirPdfAuthentifie(`/exports/bilan-annuel/${anneeBilan}.pdf`).catch(e=>showToast?.(e.message||"Impossible d'ouvrir le bilan.",'error'))}
+                className="btn-secondary shrink-0"><FileText size={14}/></button>
+            </div>
+          </div>
+          <div>
+            <p className="text-xs font-semibold text-gray-600 mb-1.5">Membres</p>
+            <div className="flex gap-2">
+              <button onClick={()=>telechargerExport('/exports/membres.csv','membres.csv')} className="btn-secondary flex-1 text-xs">CSV</button>
+              <button onClick={()=>telechargerExport('/exports/membres.xlsx','membres.xlsx')} className="btn-secondary flex-1 text-xs">Excel</button>
+            </div>
+          </div>
+          <div>
+            <p className="text-xs font-semibold text-gray-600 mb-1.5">Transactions</p>
+            <div className="flex gap-2">
+              <button onClick={()=>telechargerExport('/exports/transactions.csv','transactions.csv')} className="btn-secondary flex-1 text-xs">CSV</button>
+              <button onClick={()=>telechargerExport('/exports/transactions.xlsx','transactions.xlsx')} className="btn-secondary flex-1 text-xs">Excel</button>
+            </div>
+          </div>
+          <div>
+            <p className="text-xs font-semibold text-gray-600 mb-1.5">Sanctions</p>
+            <div className="flex gap-2">
+              <button onClick={()=>telechargerExport('/exports/sanctions.csv','sanctions.csv')} className="btn-secondary flex-1 text-xs">CSV</button>
+              <button onClick={()=>telechargerExport('/exports/sanctions.xlsx','sanctions.xlsx')} className="btn-secondary flex-1 text-xs">Excel</button>
+            </div>
+          </div>
         </div>
       </div>
     </div>

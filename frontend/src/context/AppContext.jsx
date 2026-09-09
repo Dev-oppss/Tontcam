@@ -418,6 +418,11 @@ export const AppProvider = ({ children }) => {
         await Promise.all(
           (tRes.data || tRes).filter((t) => t.mode_attribution === 'rotation').map((t) => chargerPlanningTours(t.id))
         );
+        // Journal de caisse global : chargé ici une fois pour toutes (Dashboard et
+        // Rapports en dépendent tous deux pour leur graphique d'évolution) plutôt
+        // que de dépendre de la page visitée en premier — avant, seule la page
+        // Caisse le déclenchait, laissant le graphique vide partout ailleurs.
+        await chargerJournalGlobal();
       } catch (err) {
         showToast(err.message || 'Impossible de charger les données', 'error');
       }
@@ -428,18 +433,42 @@ export const AppProvider = ({ children }) => {
     if (user && currentAssociation) chargerRubriquesODJ();
   }, [user, currentAssociation, chargerRubriquesODJ]);
 
+  const evolutionCaisse = useMemo(() => {
+    // Remplace l'ancien mock.evolutionCaisse (tableau vide codé en dur, jamais
+    // rebranché sur les vraies données) — même logique de regroupement par
+    // mois que la page Rapports utilisait déjà localement en repli, centralisée
+    // ici pour que Dashboard en bénéficie aussi.
+    const parMois = caisseJournal.reduce((acc, op) => {
+      const mois = op.date?.substring(0, 7) || 'inconnu';
+      if (!acc[mois]) acc[mois] = { cle: mois, mois: `${mois.substring(5, 7)}/${mois.substring(2, 4)}`, entrees: 0, sorties: 0 };
+      acc[mois].entrees += op.entree || 0;
+      acc[mois].sorties += op.sortie || 0;
+      return acc;
+    }, {});
+    return Object.values(parMois).sort((a, b) => a.cle.localeCompare(b.cle)).slice(-6).map(({ cle, ...rest }) => rest);
+  }, [caisseJournal]);
+
   const dashboardStats = useMemo(() => ({
     membresActifs: membres.filter((m) => m.statut === 'actif').length,
     totalMembres: membres.length,
     soldeCaisse: banques.reduce((s, b) => s + Number(b.totalSolde || 0), 0),
+    // totalBanques désignait en réalité une SOMME de soldes (doublon exact de
+    // soldeCaisse) malgré son nom et son libellé UI "Total caisses" — gardé
+    // tel quel pour ne rien casser ailleurs, nbCaisses est le vrai compte.
     totalBanques: banques.reduce((s, b) => s + Number(b.totalSolde || 0), 0),
+    nbCaisses: banques.length,
     totalPretsRestants: prets.filter((p) => p.statut !== 'rembourse').reduce((s, p) => s + Number(p.resteAPayer || 0), 0),
     pretsEnCours: prets.filter((p) => p.statut === 'en_cours').length,
     pretsEnRetard: prets.filter((p) => p.statut === 'en_retard').length,
     tontinesActives: tontines.filter((t) => t.statut === 'active').length,
     sanctionsImpayees: sanctions.filter((s) => s.statut === 'impayee').length,
+    // Avant : Dashboard.jsx lisait dashboardStats.fondAssurance / .caisseSociale,
+    // deux clés qui n'ont jamais existé ici (le vrai tableau des aides sociales
+    // est exposé séparément sous fondAssurance dans le contexte, pas dans
+    // dashboardStats) — la carte affichait donc "0 FCFA" en permanence.
+    fondAssurance: fondAssurance.reduce((s, a) => s + Number(a.montant || a.montantDemande || 0), 0),
     prochaineReunion: reunions.filter((r) => r.statutReunion !== 'cloturee').sort((a, b) => new Date(a.date) - new Date(b.date))[0]?.date || null,
-  }), [membres, banques, prets, tontines, sanctions, reunions]);
+  }), [membres, banques, prets, tontines, sanctions, reunions, fondAssurance]);
 
   const repartitionBanques = banques.map((b) => ({ name: b.nom, value: Number(b.totalSolde || 0) }));
 
@@ -1804,7 +1833,7 @@ export const AppProvider = ({ children }) => {
     // de transactions par réunion distinct du journal de caisse) — exposés vides pour éviter
     // les crashs sur Membres.jsx/Rapports.jsx ; à construire côté backend si le besoin est confirmé.
     comptesBanque: [], operationsBanque: [], seanceTransactions: seanceTransactionsState, transfertsCaisse, chargerJournalCaisse, chargerJournalGlobal,
-    utilisateurs, planningTours, cyclesTontine, chargerCycles, rechargerPartsTontine, dashboardStats, repartitionBanques, evolutionCaisse: mock.evolutionCaisse,
+    utilisateurs, planningTours, cyclesTontine, chargerCycles, rechargerPartsTontine, dashboardStats, repartitionBanques, evolutionCaisse,
     portailMoi, chargerPortailMoi,
     showToast, importerHistorique, importerHistoriqueFichier,
     activerCagnotte, chargerPropositionCagnotte, chargerRemisesGain, creerRemiseGain,

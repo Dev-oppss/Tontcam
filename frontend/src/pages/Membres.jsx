@@ -5,11 +5,12 @@ import {
   UserPlus, Search, Eye, Pencil, Trash2, Users, Plus, Minus,
   Phone, MapPin, Briefcase, Calendar, CreditCard,
   Building2, HandCoins, ShieldAlert, Shield, Trophy,
-  TrendingUp, CheckCircle, AlertCircle, Clock, RefreshCw,
+  TrendingUp, CheckCircle, AlertCircle, Clock, RefreshCw, FileText,
   ChevronDown, ChevronUp,
 } from 'lucide-react';
 import { fmtDate, fmt, periodeLabel, typeAttrLabel, STATUTS_MEMBRE, statutMembreLabel, statutMembreColor } from '../data/mockData';
 import { useApp } from '../context/AppContext';
+import { ouvrirPdfAuthentifie } from '../lib/api';
 import { PageHeader, Table, Badge, Modal, FormField } from '../components/ui/index';
 import InitialisationMembreTab from '../components/membres/InitialisationMembreTab';
 import clsx from 'clsx';
@@ -26,7 +27,7 @@ function FicheMembre({ membre, onClose, onEdit }) {
   const {
     tontines, membresParTontine, banques,
     prets, sanctions, planningTours, aidesAssurance, seanceTransactions,
-    reunions, user, chargerSoldesEpargne,
+    reunions, user, chargerSoldesEpargne, showToast,
   } = useApp();
 
   const [activeTab, setActiveTab] = useState('identite');
@@ -125,7 +126,13 @@ function FicheMembre({ membre, onClose, onEdit }) {
                 </div>
               </div>
             </div>
-            <button onClick={onClose} className="text-white/70 hover:text-white text-xl leading-none">X</button>
+            <div className="flex items-center gap-3">
+              <button onClick={() => ouvrirPdfAuthentifie(`/exports/membres/${id}/releve.pdf`).catch((e) => showToast?.(e.message || "Impossible d'ouvrir le relevé.", 'error'))}
+                title="Relevé de compte (PDF)" className="text-xs bg-white/15 hover:bg-white/25 text-white px-3 py-1.5 rounded-lg flex items-center gap-1.5 backdrop-blur-sm">
+                <FileText size={13}/> Relevé PDF
+              </button>
+              <button onClick={onClose} className="text-white/70 hover:text-white text-xl leading-none">X</button>
+            </div>
           </div>
 
           {/* KPIs rapides */}
