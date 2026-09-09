@@ -145,6 +145,7 @@ export const AppProvider = ({ children }) => {
             id: asso.id, nom: asso.nom, abrege: asso.nom_abrege, ville: asso.ville,
             pays: asso.pays, devise: asso.devise, siege: asso.siege_social,
             telephone: asso.telephone, email: asso.email, profilComplete: !!asso.profil_complete, statutsUrl: asso.statuts_url,
+            hasTransactions: !!asso.has_transactions,
           });
           setSetupComplete(!!asso.profil_complete);
         }
@@ -484,6 +485,7 @@ export const AppProvider = ({ children }) => {
           id: asso.id, nom: asso.nom, abrege: asso.nom_abrege, ville: asso.ville,
           pays: asso.pays, devise: asso.devise, siege: asso.siege_social,
           telephone: asso.telephone, email: asso.email, profilComplete: !!asso.profil_complete, statutsUrl: asso.statuts_url,
+          hasTransactions: !!asso.has_transactions,
         });
         setSetupComplete(!!asso.profil_complete);
       }
@@ -509,6 +511,7 @@ export const AppProvider = ({ children }) => {
           id: asso.id, nom: asso.nom, abrege: asso.nom_abrege, ville: asso.ville,
           pays: asso.pays, devise: asso.devise, siege: asso.siege_social,
           telephone: asso.telephone, email: asso.email, profilComplete: !!asso.profil_complete, statutsUrl: asso.statuts_url,
+          hasTransactions: !!asso.has_transactions,
         });
         setSetupComplete(!!asso.profil_complete);
       }
@@ -586,6 +589,7 @@ export const AppProvider = ({ children }) => {
         id: asso.id, nom: asso.nom, abrege: asso.nom_abrege, ville: asso.ville, pays: asso.pays,
         devise: asso.devise, siege: asso.siege_social, telephone: asso.telephone, email: asso.email,
         profilComplete: !!asso.profil_complete, statutsUrl: asso.statuts_url,
+        hasTransactions: !!asso.has_transactions,
       });
       if (asso.profil_complete) setSetupComplete(true);
       showToast('Association mise à jour');
@@ -1819,7 +1823,7 @@ export const AppProvider = ({ children }) => {
   const resetWorkspace = async () => { await logout(); };
 
   const value = {
-    booting, user, currentAssociation, setupComplete, toast, parametres, rubriquesODJ,
+    booting, user, currentAssociation, hasTransactions: currentAssociation?.hasTransactions, setupComplete, toast, parametres, rubriquesODJ,
     membres, tontines, membresParTontine, reunions, rotations, encheres,
     presences: reunions.flatMap((r) => r.presencesReunion || []),
     postes, mandats,
