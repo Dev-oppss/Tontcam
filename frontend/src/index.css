@@ -115,7 +115,10 @@
   .sidebar-link-inactive:hover { color:#fff; background: rgba(255,255,255,.07); }
 
   .modal-overlay { @apply fixed inset-0 z-50 flex items-center justify-center overflow-y-auto p-3 md:p-4; left:0; background: rgba(8,10,16,.86); backdrop-filter: blur(10px); }
-  .modal-box { @apply w-full flex flex-col overflow-hidden relative; max-width:680px; max-height:calc(100dvh - 8rem); border-radius:24px; background: rgba(255,255,255,.4); backdrop-filter: blur(34px) saturate(180%); border:1px solid rgba(255,255,255,.6); box-shadow: 0 30px 90px rgba(11,13,18,.3); margin:auto; }
+  /* 0.75 plutôt que 0.4 (illisible sans fond propre) ou 0.94 (tue l'effet verre
+     dépoli) : compromis qui garde le flou visible tout en assurant un contraste
+     correct pour du texte gris standard sur les zones sans bg-white dédié. */
+  .modal-box { @apply w-full flex flex-col overflow-hidden relative; max-width:680px; max-height:calc(100dvh - 8rem); border-radius:24px; background: rgba(255,255,255,.75); backdrop-filter: blur(34px) saturate(180%); border:1px solid rgba(255,255,255,.6); box-shadow: 0 30px 90px rgba(11,13,18,.3); margin:auto; }
   .modal-box.wide { max-width: 100rem; }
   .modal-body { @apply flex-1 min-h-0 overflow-y-auto scroll-py-4; }
 

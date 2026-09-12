@@ -153,7 +153,11 @@ function FicheMembre({ membre, onClose, onEdit }) {
         </div>
 
         {/* Tabs */}
-        <div className="flex border-b border-gray-100 overflow-x-auto">
+        {/* Fond blanc explicite obligatoire ici : la modale utilise un effet "verre
+            dépoli" semi-transparent (voir .modal-box) posé sur un overlay sombre — sans
+            fond propre, le texte gris de cette barre devenait illisible (transparence
+            laissant transparaître le fond sombre). */}
+        <div className="flex border-b border-gray-100 overflow-x-auto bg-white">
           {tabs.map(tab => (
             <button key={tab.id} onClick={() => setActiveTab(tab.id)}
               className={clsx('flex items-center gap-1.5 px-4 py-3 text-xs font-medium border-b-2 transition-all whitespace-nowrap',
