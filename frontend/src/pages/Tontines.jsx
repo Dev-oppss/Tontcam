@@ -408,7 +408,12 @@ export default function Tontines() {
               <div className="mb-4">
                 <div className="flex justify-between text-xs text-gray-500 mb-1.5">
                   <span className="font-medium">Progression des tours</span>
-                  <span>{encaisses}/{t.nbTours} · Tour N°{prochain}</span>
+                  {/* Le tour "prochain" du badge doit venir de la même source que la carte
+                      bénéficiaire ci-dessous (premier tour au statut 'planifie'), pas d'un
+                      calcul séparé (encaissés+1) qui suppose une numérotation sans trou —
+                      sinon les deux affichages peuvent se contredire (ex: badge "Tour N°1"
+                      alors que le planning réel commence au tour 4). */}
+                  <span>{encaisses}/{t.nbTours} · Tour N°{prochainTour?.numeroTour ?? prochain}</span>
                 </div>
                 <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
                   <div className="h-full bg-gradient-to-r from-primary-400 to-primary-600 rounded-full transition-all" style={{ width: `${progress}%` }}/>
