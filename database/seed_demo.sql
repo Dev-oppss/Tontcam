@@ -1,5 +1,4 @@
--- ============================================================================
--- DONNÉES DE DÉMARRAGE (SEED) — "Tontine Excellence Bassa"
+-- ============================================================================--- DONNÉES DE DÉMARRAGE (SEED) — "Tontine Excellence Bassa"
 -- ============================================================================
 -- Jeu de données complet pour tester TOUS les écrans et TOUS les états
 -- métier de l'application manuellement, de A à Z, sans avoir à cliquer
@@ -102,13 +101,13 @@ INSERT INTO membres (id, association_id, matricule, nom, prenom, date_naissance,
 -- 4. UTILISATEURS (mot de passe identique : Demo@2026!)
 -- ============================================================================
 INSERT INTO utilisateurs (id, membre_id, email, password_hash, role, actif) VALUES
-('a3000000-0000-0000-0000-000000000001','a2000000-0000-0000-0000-000000000013','admin@tontix.cm',      crypt('Demo@2026!',gen_salt('bf')),'super_admin',TRUE),
-('a3000000-0000-0000-0000-000000000002','a2000000-0000-0000-0000-000000000001','president@tontix.cm',  crypt('Demo@2026!',gen_salt('bf')),'president',TRUE),
-('a3000000-0000-0000-0000-000000000003','a2000000-0000-0000-0000-000000000002','vp@tontix.cm',          crypt('Demo@2026!',gen_salt('bf')),'vice_president',TRUE),
-('a3000000-0000-0000-0000-000000000004','a2000000-0000-0000-0000-000000000004','tresorier@tontix.cm',   crypt('Demo@2026!',gen_salt('bf')),'tresorier',TRUE),
-('a3000000-0000-0000-0000-000000000005','a2000000-0000-0000-0000-000000000003','secretaire@tontix.cm',  crypt('Demo@2026!',gen_salt('bf')),'secretaire',TRUE),
-('a3000000-0000-0000-0000-000000000006','a2000000-0000-0000-0000-000000000005','controleur@tontix.cm',  crypt('Demo@2026!',gen_salt('bf')),'controleur',TRUE),
-('a3000000-0000-0000-0000-000000000007','a2000000-0000-0000-0000-000000000006','membre@tontix.cm',      crypt('Demo@2026!',gen_salt('bf')),'membre',TRUE);
+('a3000000-0000-0000-0000-000000000001','a2000000-0000-0000-0000-000000000013','admin@tontix.cm',      '$2y$10$/Xk/yYDwLiA9k68gaC.V0ei3yJVSOgMshNJjB4smL9YI3pKKGeXUS','super_admin',TRUE),
+('a3000000-0000-0000-0000-000000000002','a2000000-0000-0000-0000-000000000001','president@tontix.cm',  '$2y$10$/Xk/yYDwLiA9k68gaC.V0ei3yJVSOgMshNJjB4smL9YI3pKKGeXUS','president',TRUE),
+('a3000000-0000-0000-0000-000000000003','a2000000-0000-0000-0000-000000000002','vp@tontix.cm',          '$2y$10$/Xk/yYDwLiA9k68gaC.V0ei3yJVSOgMshNJjB4smL9YI3pKKGeXUS','vice_president',TRUE),
+('a3000000-0000-0000-0000-000000000004','a2000000-0000-0000-0000-000000000004','tresorier@tontix.cm',   '$2y$10$/Xk/yYDwLiA9k68gaC.V0ei3yJVSOgMshNJjB4smL9YI3pKKGeXUS','tresorier',TRUE),
+('a3000000-0000-0000-0000-000000000005','a2000000-0000-0000-0000-000000000003','secretaire@tontix.cm',  '$2y$10$/Xk/yYDwLiA9k68gaC.V0ei3yJVSOgMshNJjB4smL9YI3pKKGeXUS','secretaire',TRUE),
+('a3000000-0000-0000-0000-000000000006','a2000000-0000-0000-0000-000000000005','controleur@tontix.cm',  '$2y$10$/Xk/yYDwLiA9k68gaC.V0ei3yJVSOgMshNJjB4smL9YI3pKKGeXUS','controleur',TRUE),
+('a3000000-0000-0000-0000-000000000007','a2000000-0000-0000-0000-000000000006','membre@tontix.cm',      '$2y$10$/Xk/yYDwLiA9k68gaC.V0ei3yJVSOgMshNJjB4smL9YI3pKKGeXUS','membre',TRUE);
 
 -- ============================================================================
 -- 5. MANDATS (membre_postes) — 5 mandats en cours + 1 mandat historique clos
@@ -659,3 +658,4 @@ INSERT INTO notifications (association_id, reunion_id, membre_id, canal, type_ev
 UPDATE notifications SET erreur = 'Numéro de téléphone invalide ou injoignable', nb_tentatives = 2 WHERE statut = 'echec';
 
 COMMIT;
+
