@@ -68,7 +68,7 @@ export default function Prets() {
   // Recalcul "live" des pénalités à l'affichage : ne dépend pas d'un
   // remboursement pour refléter un retard qui vient d'apparaître (date dépassée).
   const pretsLive = useMemo(() => prets.map((p) => {
-    const caisse = caissesMap[p.caisseId];
+    const caisse = caissesMap[p.idCaisse];
     const penaliteActive = Boolean(caisse?.penaliteRetardActive);
     const tauxPenalite = Number(caisse?.tauxPenalite || 0);
     if (!Array.isArray(p.ficheAmortissement) || p.ficheAmortissement.length === 0 || p.statut === 'rembourse') {
@@ -279,7 +279,7 @@ export default function Prets() {
               ))}</tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {pretsLive.filter(p => !filtreCaisseId || p.caisseId === filtreCaisseId).map(p => {
+              {pretsLive.filter(p => !filtreCaisseId || p.idCaisse === filtreCaisseId).map(p => {
                 const pct = Math.round((p.montantRembourse / p.montantTotal) * 100);
                 const isOpen = detailPret === p.id;
                 const enRetardLive = p.statut === 'en_cours' && p.nbEcheancesEnRetard > 0;
@@ -295,7 +295,7 @@ export default function Prets() {
                           </div>
                         </div>
                       </td>
-                      <td className="td text-gray-600">{caissesMap[p.caisseId]?.nom || '—'}</td>
+                      <td className="td text-gray-600">{caissesMap[p.idCaisse]?.nom || '—'}</td>
                       <td className="td font-medium">{fmt(p.montantPret)}</td>
                       <td className="td text-amber-600 font-semibold">{p.tauxInteret}%</td>
                       <td className="td">
@@ -483,7 +483,7 @@ export default function Prets() {
           ><CreditCard size={14}/>{remboursing ? 'Validation…' : 'Valider'}</button>
         </>}>
         {remModal && (() => {
-          const caisseDuPret = caissesMap[remModal.caisseId];
+          const caisseDuPret = caissesMap[remModal.idCaisse];
           const penaliteActive = Boolean(caisseDuPret?.penaliteRetardActive);
           const live = Array.isArray(remModal.ficheAmortissement) && remModal.ficheAmortissement.length > 0
             ? computeEcheancesAvecPenalites(remModal.ficheAmortissement, remModal.montantRembourse, Number(caisseDuPret?.tauxPenalite || 0), penaliteActive)
