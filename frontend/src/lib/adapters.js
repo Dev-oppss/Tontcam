@@ -339,6 +339,8 @@ export const sanctionFromApi = (s) => !s ? null : ({
   numReunion: s.reunion_id,
   dateSanction: s.created_at,
   statut: s.statut === 'due' ? 'impayee' : s.statut === 'payee' ? 'payee' : s.statut,
+  modePaiement: s.mode_paiement || undefined,
+  detailsPaiement: s.details_paiement || undefined,
 });
 
 export const typeSanctionFromApi = (t) => !t ? null : ({

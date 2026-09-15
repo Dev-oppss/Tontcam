@@ -1256,7 +1256,7 @@ export const AppProvider = ({ children }) => {
   const addTypeSanction = async (data) => {
     try {
       const t = await request('/types-sanction', { method: 'POST', body: {
-        libelle: data.libelle, mode_calcul: data.modeCalcul || 'fixe', montant_fixe: data.montantFixe,
+        libelle: data.libelle, code: data.code || undefined, mode_calcul: data.modeCalcul || 'fixe', montant_fixe: data.montantFixe,
         declencheur: data.declencheur || undefined, est_automatique: !!data.estAutomatique, description: data.description,
         paliers_retard: data.paliersRetard?.length ? data.paliersRetard.map(p => ({ minutes: Number(p.minutes), montant: Number(p.montant) })) : undefined,
         paliers_absence: data.paliersAbsence?.length ? data.paliersAbsence.map(p => ({ nombre: Number(p.nombre), montant: Number(p.montant) })) : undefined,
