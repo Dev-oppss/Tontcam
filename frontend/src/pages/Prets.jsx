@@ -540,6 +540,12 @@ export default function Prets() {
               <p className="text-sm font-semibold text-gray-800">{garantieModal.pret.nomMembre}</p>
               <div className="flex justify-between text-sm"><span className="text-gray-500">Reste à payer sur le prêt :</span><span className="font-bold text-red-600">{fmt(garantieModal.pret.resteAPayer)}</span></div>
               <div className="flex justify-between text-sm"><span className="text-gray-500">Solde épargne disponible :</span><span className="font-medium text-primary-600">{chargeGarantieSolde ? '…' : fmt(garantieSolde)}</span></div>
+              {/* Sans ce message, un bouton grisé sur un solde à 0 est indevinable :
+                  l'utilisateur ne sait pas s'il s'agit d'un bug de chargement ou d'une
+                  absence réelle d'épargne à prélever. */}
+              {!chargeGarantieSolde && garantieSolde <= 0 && (
+                <p className="mt-2 text-xs text-amber-700">Ce membre n'a aucune épargne dans la caisse de ce prêt — il n'y a donc rien à prélever. Enregistrez un dépôt épargne, ou utilisez un remboursement classique.</p>
+              )}
             </div>
             <p className="text-xs text-amber-700">Le montant est prélevé sur l'épargne du membre et directement imputé sur les échéances impayées du prêt — l'argent ne quitte pas la caisse une seconde fois, il y était déjà déposé.</p>
             <FormField label="Montant à couper (FCFA)" required>

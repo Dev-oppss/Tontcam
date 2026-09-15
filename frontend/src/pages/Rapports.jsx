@@ -76,8 +76,16 @@ export default function Rapports() {
   // réunion ouverte dans l'appli — pas l'ensemble des réunions listées ici.
   const reunionsAvecTx = reunions.map(r => {
     const txs = seanceTransactions.filter(t => t.reunionId === r.id);
+    // « Caisses » (dépôts en banque) et « Solde séance » se basaient sur txs, donc
+    // sur seanceTransactions — qui ne contient QUE la dernière réunion ouverte dans
+    // l'appli, jamais toutes celles listées ici : les deux colonnes affichaient donc
+    // « — » sur chaque ligne. entrees/sorties avaient déjà été corrigés en passant
+    // par des totaux serveur ; on dérive maintenant le solde de ces mêmes totaux, et
+    // on ne montre la colonne banque que pour la réunion effectivement chargée.
     const banque = txs.filter(t => t.type==='depot_banque').reduce((s,t)=>s+t.montant,0);
-    return { ...r, entrees: r.entreesSeance || 0, sorties: r.sortiesSeance || 0, banque, nbTx: txs.length };
+    const entrees = r.entreesSeance || 0;
+    const sorties = r.sortiesSeance || 0;
+    return { ...r, entrees, sorties, banque, nbTx: txs.length, aDesMouvements: entrees > 0 || sorties > 0 };
   });
 
   // Données pour le graphique caisse par mois (depuis caisseJournal)
@@ -243,7 +251,20 @@ export default function Rapports() {
                   ? Math.round(r.cloture.presents/(r.cloture.presents+r.cloture.absents)*100) : null;
                 const couleur = { planifiee:'text-blue-600', en_cours:'text-amber-600', cloturee:'text-green-600' };
                 return (
-                  <tr key={r.id} className="hover:bg-gray-50 transition-colors">
+                  <tr key={r.id}
+                    onClick={() => {
+                      // Le libellé « Cliquez sur une réunion pour voir son PV complet »
+                      // était présent depuis le début mais AUCUN handler n'existait :
+                      // cliquer ne faisait rien. Le PV n'a de sens que pour une séance
+                      // terminée (il n'existe pas encore pour une planifiée/en cours).
+                      if (!['cloturee', 'tenue'].includes(r.statutReunion)) {
+                        showToast?.('Le PV n\u2019est disponible qu\u2019une fois la séance clôturée.', 'info');
+                        return;
+                      }
+                      ouvrirPdfAuthentifie(`/reunions/${r.id}/pv-pdf`)
+                        .catch(e => showToast?.(e.message || 'Impossible d\u2019ouvrir le PV.', 'error'));
+                    }}
+                    className="hover:bg-gray-50 transition-colors cursor-pointer">
                     <td className="td font-bold text-gray-800">N°{r.numero}</td>
                     <td className="td text-xs text-gray-500">{fmtDate(r.date)}</td>
                     <td className="td text-xs text-gray-500 truncate max-w-[140px]">{r.lieu}</td>
@@ -256,7 +277,7 @@ export default function Rapports() {
                     <td className="td text-right font-semibold text-red-500">{r.sorties > 0 ? fmt(r.sorties) : '—'}</td>
                     <td className="td text-right font-semibold text-blue-600">{r.banque > 0 ? fmt(r.banque) : '—'}</td>
                     <td className={clsx('td text-right font-bold', solde>0?'text-primary-600':solde<0?'text-red-600':'text-gray-400')}>
-                      {r.nbTx > 0 ? (solde >= 0 ? '+' : '') + fmt(solde) : '—'}
+                      {r.aDesMouvements ? (solde >= 0 ? '+' : '') + fmt(solde) : '—'}
                     </td>
                     <td className="td">
                       <span className={clsx('text-xs font-semibold', couleur[r.statutReunion])}>
