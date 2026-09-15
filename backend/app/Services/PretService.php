@@ -277,9 +277,16 @@ class PretService
                 'capital_restant' => max(0, (float) $pret->capital_restant - $capitalRembourseReel),
             ]);
 
-            // Si toutes les échéances sont soldées → prêt SOLDE
+            // Si toutes les échéances sont soldées → prêt SOLDE.
+            // Le garde `$total > 0` est indispensable : sur un prêt sans aucune
+            // échéance en base (cas réel — le trigger trg_prets_amortissement ne
+            // génère l'échéancier que pour un prêt créé en statut 'en_cours', donc
+            // un prêt passé directement en 'en_retard'/'defaut', ou importé, n'en a
+            // aucune), un simple count() de non-payées vaut 0 et faisait basculer le
+            // prêt en 'solde' dès le premier versement, quel que soit le montant.
+            $total = $pret->echeances()->count();
             $resteAPayer = $pret->echeances()->whereNotIn('statut', ['payee'])->count();
-            if ($resteAPayer === 0) {
+            if ($total > 0 && $resteAPayer === 0) {
                 $pret->update(['statut' => 'solde', 'date_solde' => now()->toDateString(), 'capital_restant' => 0]);
                 $this->loguerStatut($pret, 'en_cours', 'solde', 'Prêt intégralement remboursé', $tresorier);
             }
@@ -311,6 +318,18 @@ class PretService
                 ->whereIn('statut', ['a_venir', 'due', 'partielle', 'en_retard', 'penalisee'])
                 ->orderBy('numero_echeance')
                 ->get();
+
+            // Même cause que le garde dans rembourser() : un prêt peut n'avoir aucune
+            // échéance en base (statut initial ≠ 'en_cours', donc échéancier jamais
+            // généré par le trigger). Sans ce message, le trésorier recevait
+            // « Le montant saisi dépasse le reste à payer de X FCFA » pour un prêt
+            // pourtant bien actif — diagnostic impossible à deviner côté UI.
+            if ($echeances->isEmpty()) {
+                throw new RuntimeException(
+                    "Ce prêt n'a pas d'échéancier généré : impossible d'imputer un remboursement. "
+                    . "Régénérez l'échéancier du prêt avant d'enregistrer un versement."
+                );
+            }
 
             foreach ($echeances as $echeance) {
                 if ($restant <= 0) {
