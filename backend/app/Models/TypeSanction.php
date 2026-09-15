@@ -14,6 +14,7 @@ class TypeSanction extends Model
     protected $fillable = [
         'association_id',
         'libelle',
+        'code',
         'mode_calcul',
         'montant_fixe',
         'montant_pct',
