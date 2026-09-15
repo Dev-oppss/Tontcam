@@ -131,8 +131,6 @@ export default function Prets() {
       montantTotal: pretSimule.montantTotal,
       montantMensuel: pretSimule.mensualiteMoyenne,
       ficheAmortissement: pretSimule.ficheAmortissement,
-      amortissementPret: caisseSelectionnee?.amortissementPret || 'unique',
-      echeancesPret: caisseSelectionnee?.echeancesPret || 'mensuel',
     });
     setAdd(false);
     setForm({ idMembre: '', caisseId: '', montantPret: '', tauxInteret: 10, dureeMois: 3, datePret: new Date().toISOString().split('T')[0], dateEcheance: '', garantie: 'caution_membre', idAvaliste: '', observation: '' });
@@ -347,9 +345,9 @@ export default function Prets() {
                             </button>
                           )}
                           {!p.interetsDistribues && p.statut === 'rembourse' && (
-                            <button onClick={() => distribuerInteretsPret(p.id)}
-                              className="btn-primary py-1 px-2.5 text-xs flex items-center gap-1">
-                              <Coins size={12}/>Distribuer
+                            <button onClick={() => showToast?.('L\u2019intérêt de ce prêt a déjà été réparti automatiquement à chaque échéance soldée — voir l\u2019onglet Épargne de la caisse concernée.', 'info')}
+                              className="btn-secondary py-1 px-2.5 text-xs flex items-center gap-1" title="La répartition se fait automatiquement, pas de geste manuel requis">
+                              <Coins size={12}/>Intérêts
                             </button>
                           )}
                           <button onClick={() => setDetailPret(isOpen ? null : p.id)}
@@ -385,14 +383,7 @@ export default function Prets() {
                               </div>
                               {!p.interetsDistribues && (
                                 <div className="mt-3 flex items-center gap-3">
-                                  {p.statut === 'rembourse' ? (
-                                    <button onClick={() => distribuerInteretsPret(p.id)}
-                                      className="btn-primary text-xs py-1.5 px-3 flex items-center gap-1">
-                                      <Coins size={13}/> Distribuer les intérêts maintenant
-                                    </button>
-                                  ) : (
-                                    <p className="text-xs text-purple-500 italic"> Distribution automatique à la clôture du remboursement.</p>
-                                  )}
+                                  <p className="text-xs text-purple-500 italic">Répartition automatique : l'intérêt de chaque échéance est crédité aux comptes épargne dès que cette échéance est soldée (aucun geste manuel requis).</p>
                                 </div>
                               )}
                             </>
