@@ -25,6 +25,7 @@ class TypeSanctionController extends Controller
         }
         $data = $request->validate([
             'libelle' => ['required', 'string', 'max:150'],
+            'code' => ['nullable', 'string', 'max:150'],
             'mode_calcul' => ['required', 'in:fixe,pourcentage,journalier'],
             'montant_fixe' => ['required_if:mode_calcul,fixe', 'nullable', 'numeric', 'min:0'],
             'montant_pct' => ['required_if:mode_calcul,pourcentage', 'nullable', 'numeric', 'min:0'],
@@ -54,6 +55,7 @@ class TypeSanctionController extends Controller
         if (! empty($data['paliers_absence'])) {
             usort($data['paliers_absence'], fn ($a, $b) => $a['nombre'] <=> $b['nombre']);
         }
+        $data['code'] = $data['code'] ?? \Illuminate\Support\Str::slug($data['libelle'], '_');
         $data['association_id'] = $this->scope->associationId();
         $data['actif'] = true;
 
@@ -68,6 +70,7 @@ class TypeSanctionController extends Controller
 
         $data = $request->validate([
             'libelle' => ['sometimes', 'string', 'max:150'],
+            'code' => ['sometimes', 'nullable', 'string', 'max:150'],
             'montant_fixe' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'montant_pct' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'montant_journalier' => ['sometimes', 'nullable', 'numeric', 'min:0'],

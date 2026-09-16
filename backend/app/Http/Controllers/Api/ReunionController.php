@@ -21,6 +21,21 @@ class ReunionController extends Controller
         return response()->json(
             $this->scope->scopeAssociation(Reunion::query())
                 ->with('hote')
+                // Comptes de présence (RG-REU) : nécessaires au taux de présence des
+                // Rapports & Statistiques — jamais renvoyés auparavant, d'où un taux
+                // de présence toujours à 0% quel que soit l'appel des membres.
+                ->withCount([
+                    'presences as presents_count' => fn ($q) => $q->whereIn('statut', ['present', 'en_retard']),
+                    'presences as absents_count' => fn ($q) => $q->whereIn('statut', ['absent', 'absent_excuse']),
+                ])
+                // Entrées/sorties de séance (RG-REU) : nécessaires au « Rapport condensé
+                // par séance » des Rapports & Statistiques. Avant ce fix, ce tableau lisait
+                // le state React seanceTransactions — qui ne contient les transactions
+                // que de la DERNIÈRE réunion ouverte dans l'appli, pas de toutes les
+                // réunions — d'où des tirets partout dès qu'on arrivait directement sur
+                // l'écran Rapports.
+                ->withSum(['seanceTransactions as entrees_seance' => fn ($q) => $q->whereIn('type', ['cotisation', 'amende', 'paiement_sanction', 'remboursement_pret', 'divers_entree'])], 'montant')
+                ->withSum(['seanceTransactions as sorties_seance' => fn ($q) => $q->whereIn('type', ['pret_accorde', 'aide_sociale', 'attribution_tour', 'divers_sortie'])], 'montant')
                 ->orderByDesc('date_reunion')
                 ->paginate($request->integer('per_page', 25))
         );

@@ -29,6 +29,8 @@ class SanctionMembre extends Model
         'payee_at',
         'transaction_id',
         'bulletin_id',
+        'mode_paiement',
+        'details_paiement',
     ];
 
     protected $casts = [

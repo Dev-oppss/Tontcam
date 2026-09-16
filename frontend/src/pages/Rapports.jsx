@@ -1,9 +1,11 @@
+import { useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, PieChart, Pie, Cell } from 'recharts';
 import { useApp } from '../context/AppContext';
 import { fmt, fmtDate } from '../data/mockData';
 import { PageHeader } from '../components/ui/index';
 import { TX_TYPES } from '../context/AppContext';
 import { Download, TrendingUp, TrendingDown, FileText, Receipt, Printer } from 'lucide-react';
+import { ouvrirPdfAuthentifie, telechargerFichierAuthentifie } from '../lib/api';
 import clsx from 'clsx';
 
 const tip = ({ active, payload, label }) => {
@@ -20,8 +22,16 @@ export default function Rapports() {
   const {
     membres, membresParTontine, tontines, reunions, prets, sanctions,
     evolutionCaisse, dashboardStats, banques, comptesBanque,
-    seanceTransactions, caisseJournal,
+    seanceTransactions, caisseJournal, showToast,
   } = useApp();
+  // Le journal de caisse global est désormais chargé une fois au démarrage de
+  // l'app (AppContext), plus besoin de le redéclencher ici à chaque montage.
+
+  const anneeCourante = new Date().getFullYear();
+  const [anneeBilan, setAnneeBilan] = useState(String(anneeCourante));
+  const anneesDisponibles = Array.from({ length: 6 }, (_, i) => String(anneeCourante - i));
+  const telechargerExport = (path, nomFichier) =>
+    telechargerFichierAuthentifie(path, nomFichier).catch((e) => showToast?.(e.message || "Impossible de télécharger l'export.", 'error'));
 
   const tauxRecouvrement = prets.length > 0
     ? Math.round((prets.filter(p=>p.statut==='rembourse').length / prets.length) * 100)
@@ -40,8 +50,8 @@ export default function Rapports() {
       }, 0) / reunionsCloturees.length * 100)
     : 0;
 
-  const soldeCaisse  = dashboardStats.soldeCaisse;
-  const totalCaisses = dashboardStats.totalBanques;
+  const soldeCaisse = dashboardStats.soldeCaisse;
+  const nbCaisses   = dashboardStats.nbCaisses;
   const COLORS = ['var(--brand)','var(--brand-soft)','var(--brand-pale)','var(--muted)'];
 
   const bancairesData = banques.map((b,i) => ({
@@ -61,12 +71,21 @@ export default function Rapports() {
   }).filter(t => t.count > 0);
 
   // ── Historique des séances (rapport condensé) ──────────
+  // Utilise les totaux précalculés côté serveur (r.entreesSeance/sortiesSeance)
+  // plutôt que de filtrer seanceTransactions, qui ne couvre que la dernière
+  // réunion ouverte dans l'appli — pas l'ensemble des réunions listées ici.
   const reunionsAvecTx = reunions.map(r => {
     const txs = seanceTransactions.filter(t => t.reunionId === r.id);
-    const entrees = txs.filter(t => TX_TYPES.find(tt=>tt.value===t.type)?.dir==='entree').reduce((s,t)=>s+t.montant,0);
-    const sorties = txs.filter(t => TX_TYPES.find(tt=>tt.value===t.type)?.dir==='sortie').reduce((s,t)=>s+t.montant,0);
-    const banque  = txs.filter(t => t.type==='depot_banque').reduce((s,t)=>s+t.montant,0);
-    return { ...r, entrees, sorties, banque, nbTx: txs.length };
+    // « Caisses » (dépôts en banque) et « Solde séance » se basaient sur txs, donc
+    // sur seanceTransactions — qui ne contient QUE la dernière réunion ouverte dans
+    // l'appli, jamais toutes celles listées ici : les deux colonnes affichaient donc
+    // « — » sur chaque ligne. entrees/sorties avaient déjà été corrigés en passant
+    // par des totaux serveur ; on dérive maintenant le solde de ces mêmes totaux, et
+    // on ne montre la colonne banque que pour la réunion effectivement chargée.
+    const banque = txs.filter(t => t.type==='depot_banque').reduce((s,t)=>s+t.montant,0);
+    const entrees = r.entreesSeance || 0;
+    const sorties = r.sortiesSeance || 0;
+    return { ...r, entrees, sorties, banque, nbTx: txs.length, aDesMouvements: entrees > 0 || sorties > 0 };
   });
 
   // Données pour le graphique caisse par mois (depuis caisseJournal)
@@ -97,7 +116,7 @@ export default function Rapports() {
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         {[
           { label:'Solde caisse',        value: fmt(soldeCaisse),       color: soldeCaisse>=0?'text-primary-600':'text-red-500' },
-          { label:'Total caisses',       value: fmt(totalCaisses),      color: 'text-blue-600'   },
+          { label:'Total caisses',       value: nbCaisses,              color: 'text-blue-600'   },
           { label:'Taux présence',       value: `${tauxPresence}%`,     color: 'text-amber-600'  },
           { label:'Taux recouvrement',   value: `${tauxRecouvrement}%`, color: 'text-purple-600' },
         ].map(k=>(
@@ -136,12 +155,27 @@ export default function Rapports() {
           ) : (
             <ResponsiveContainer width="100%" height={180}>
               <PieChart>
-                <Pie data={bancairesData} cx="50%" cy="50%" outerRadius={70} dataKey="value" label={({name,percent})=>`${name.substring(0,8)}… ${Math.round(percent*100)}%`} labelLine={false}>
+                <Pie data={bancairesData} cx="50%" cy="50%" outerRadius={70} dataKey="value">
                   {bancairesData.map((entry,i)=><Cell key={i} fill={entry.color}/>)}
                 </Pie>
                 <Tooltip formatter={v=>fmt(v)}/>
               </PieChart>
             </ResponsiveContainer>
+          )}
+          {!bancairesData.every(b=>b.value===0) && (
+            <ul className="mt-3 space-y-1">
+              {bancairesData.map((b,i) => {
+                const total = bancairesData.reduce((s,x)=>s+x.value,0);
+                const pct = total > 0 ? Math.round((b.value/total)*100) : 0;
+                return (
+                  <li key={i} className="flex items-center gap-2 text-xs text-gray-600">
+                    <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: b.color }}/>
+                    <span className="truncate flex-1">{b.name}</span>
+                    <span className="font-semibold text-gray-800">{pct}%</span>
+                  </li>
+                );
+              })}
+            </ul>
           )}
         </div>
 
@@ -217,7 +251,20 @@ export default function Rapports() {
                   ? Math.round(r.cloture.presents/(r.cloture.presents+r.cloture.absents)*100) : null;
                 const couleur = { planifiee:'text-blue-600', en_cours:'text-amber-600', cloturee:'text-green-600' };
                 return (
-                  <tr key={r.id} className="hover:bg-gray-50 transition-colors">
+                  <tr key={r.id}
+                    onClick={() => {
+                      // Le libellé « Cliquez sur une réunion pour voir son PV complet »
+                      // était présent depuis le début mais AUCUN handler n'existait :
+                      // cliquer ne faisait rien. Le PV n'a de sens que pour une séance
+                      // terminée (il n'existe pas encore pour une planifiée/en cours).
+                      if (!['cloturee', 'tenue'].includes(r.statutReunion)) {
+                        showToast?.('Le PV n\u2019est disponible qu\u2019une fois la séance clôturée.', 'info');
+                        return;
+                      }
+                      ouvrirPdfAuthentifie(`/reunions/${r.id}/pv-pdf`)
+                        .catch(e => showToast?.(e.message || 'Impossible d\u2019ouvrir le PV.', 'error'));
+                    }}
+                    className="hover:bg-gray-50 transition-colors cursor-pointer">
                     <td className="td font-bold text-gray-800">N°{r.numero}</td>
                     <td className="td text-xs text-gray-500">{fmtDate(r.date)}</td>
                     <td className="td text-xs text-gray-500 truncate max-w-[140px]">{r.lieu}</td>
@@ -230,7 +277,7 @@ export default function Rapports() {
                     <td className="td text-right font-semibold text-red-500">{r.sorties > 0 ? fmt(r.sorties) : '—'}</td>
                     <td className="td text-right font-semibold text-blue-600">{r.banque > 0 ? fmt(r.banque) : '—'}</td>
                     <td className={clsx('td text-right font-bold', solde>0?'text-primary-600':solde<0?'text-red-600':'text-gray-400')}>
-                      {r.nbTx > 0 ? (solde >= 0 ? '+' : '') + fmt(solde) : '—'}
+                      {r.aDesMouvements ? (solde >= 0 ? '+' : '') + fmt(solde) : '—'}
                     </td>
                     <td className="td">
                       <span className={clsx('text-xs font-semibold', couleur[r.statutReunion])}>
@@ -279,6 +326,47 @@ export default function Rapports() {
               <p className="text-xs text-gray-400 mt-0.5">{k.l}</p>
             </div>
           ))}
+        </div>
+      </div>
+
+      {/* ── Exports ──────────────────────────────────────────── */}
+      <div className="card">
+        <h3 className="font-semibold text-gray-800 mb-1 flex items-center gap-2">
+          <Download size={16} className="text-primary-600"/> Exports
+        </h3>
+        <p className="text-xs text-gray-400 mb-4">Documents complets à télécharger ou imprimer.</p>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+          <div>
+            <p className="text-xs font-semibold text-gray-600 mb-1.5">Bilan annuel (PDF)</p>
+            <div className="flex gap-2">
+              <select className="select" value={anneeBilan} onChange={e=>setAnneeBilan(e.target.value)}>
+                {anneesDisponibles.map(a => <option key={a} value={a}>{a}</option>)}
+              </select>
+              <button onClick={()=>ouvrirPdfAuthentifie(`/exports/bilan-annuel/${anneeBilan}.pdf`).catch(e=>showToast?.(e.message||"Impossible d'ouvrir le bilan.",'error'))}
+                className="btn-secondary shrink-0"><FileText size={14}/></button>
+            </div>
+          </div>
+          <div>
+            <p className="text-xs font-semibold text-gray-600 mb-1.5">Membres</p>
+            <div className="flex gap-2">
+              <button onClick={()=>telechargerExport('/exports/membres.csv','membres.csv')} className="btn-secondary flex-1 text-xs">CSV</button>
+              <button onClick={()=>telechargerExport('/exports/membres.xlsx','membres.xlsx')} className="btn-secondary flex-1 text-xs">Excel</button>
+            </div>
+          </div>
+          <div>
+            <p className="text-xs font-semibold text-gray-600 mb-1.5">Transactions</p>
+            <div className="flex gap-2">
+              <button onClick={()=>telechargerExport('/exports/transactions.csv','transactions.csv')} className="btn-secondary flex-1 text-xs">CSV</button>
+              <button onClick={()=>telechargerExport('/exports/transactions.xlsx','transactions.xlsx')} className="btn-secondary flex-1 text-xs">Excel</button>
+            </div>
+          </div>
+          <div>
+            <p className="text-xs font-semibold text-gray-600 mb-1.5">Sanctions</p>
+            <div className="flex gap-2">
+              <button onClick={()=>telechargerExport('/exports/sanctions.csv','sanctions.csv')} className="btn-secondary flex-1 text-xs">CSV</button>
+              <button onClick={()=>telechargerExport('/exports/sanctions.xlsx','sanctions.xlsx')} className="btn-secondary flex-1 text-xs">Excel</button>
+            </div>
+          </div>
         </div>
       </div>
     </div>

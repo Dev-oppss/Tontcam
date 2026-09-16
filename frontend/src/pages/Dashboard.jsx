@@ -134,13 +134,13 @@ export default function Dashboard() {
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
         <StatCard icon={Users} label="Membres actifs" value={dashboardStats.membresActifs} sub={`sur ${dashboardStats.totalMembres} membres`} iconBg="bg-[#e7efff]" iconColor="text-[#4C5FD6]" accent="var(--brand)" />
         <StatCard icon={Wallet} label="Solde caisse" value={fmt(dashboardStats.soldeCaisse)} sub="Caisse centrale" iconBg="bg-[#fff3d1]" iconColor="text-[#b57f13]" accent="var(--brand-dark)" />
-        <StatCard icon={Building2} label="Total caisses" value={fmt(dashboardStats.totalBanques)} sub="Épargnes internes" iconBg="bg-[#eef4ff]" iconColor="text-[#4C5FD6]" accent="#8D98EA" />
+        <StatCard icon={Building2} label="Total caisses" value={dashboardStats.nbCaisses} sub="Caisses internes" iconBg="bg-[#eef4ff]" iconColor="text-[#4C5FD6]" accent="#8D98EA" />
         <StatCard icon={HandCoins} label="Prêts en cours" value={dashboardStats.pretsEnCours} sub={`Restant : ${fmt(dashboardStats.totalPretsRestants)}`} iconBg="bg-[#f2f0eb]" iconColor="text-[#55617c]" accent="#D9BA79" />
       </div>
 
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
         <StatCard icon={RefreshCw} label="Tontines actives" value={dashboardStats.tontinesActives} iconBg="bg-[#e7efff]" iconColor="text-[#4C5FD6]" accent="var(--brand)" />
-        <StatCard icon={Heart} label="Fond assurance" value={fmt(dashboardStats.fondAssurance || dashboardStats.caisseSociale)} iconBg="bg-[#fff3d1]" iconColor="text-[#B08A3E]" accent="var(--brand-dark)" />
+        <StatCard icon={Heart} label="Fond assurance" value={fmt(dashboardStats.fondAssurance)} iconBg="bg-[#fff3d1]" iconColor="text-[#B08A3E]" accent="var(--brand-dark)" />
         <StatCard icon={ShieldAlert} label="Sanctions impayées" value={dashboardStats.sanctionsImpayees} iconBg="bg-[#fff3d1]" iconColor="text-[#b57f13]" accent="var(--brand-dark)" />
         <StatCard icon={CalendarDays} label="Prochaine réunion" value={dashboardStats.prochaineReunion ? fmtDate(dashboardStats.prochaineReunion) : '—'} sub="Agenda à venir" iconBg="bg-[#eef4ff]" iconColor="text-[#4C5FD6]" accent="#8D98EA" />
       </div>

@@ -8,6 +8,7 @@ import {
 import { fmt, fmtDate, typeAttrLabel, periodeLabel } from '../data/mockData';
 import { getMissingFields } from '../lib/validation';
 import { useApp } from '../context/AppContext';
+import { ouvrirPdfAuthentifie } from '../lib/api';
 import { PageHeader, Badge, Modal, FormField } from '../components/ui/index';
 import { ModePaiementFields, isModePaiementValid } from '../components/ui/ModePaiement';
 import { NavLink, useSearchParams } from 'react-router-dom';
@@ -407,7 +408,12 @@ export default function Tontines() {
               <div className="mb-4">
                 <div className="flex justify-between text-xs text-gray-500 mb-1.5">
                   <span className="font-medium">Progression des tours</span>
-                  <span>{encaisses}/{t.nbTours} · Tour N°{prochain}</span>
+                  {/* Le tour "prochain" du badge doit venir de la même source que la carte
+                      bénéficiaire ci-dessous (premier tour au statut 'planifie'), pas d'un
+                      calcul séparé (encaissés+1) qui suppose une numérotation sans trou —
+                      sinon les deux affichages peuvent se contredire (ex: badge "Tour N°1"
+                      alors que le planning réel commence au tour 4). */}
+                  <span>{encaisses}/{t.nbTours} · Tour N°{prochainTour?.numeroTour ?? prochain}</span>
                 </div>
                 <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
                   <div className="h-full bg-gradient-to-r from-primary-400 to-primary-600 rounded-full transition-all" style={{ width: `${progress}%` }}/>
@@ -834,7 +840,12 @@ export default function Tontines() {
       })()}
 
       <Modal open={!!showBulletin} onClose={()=>setShowBulletin(null)} title={`Bulletin de gain — ${showBulletin?.nom || ''}`}
-        footer={<><button onClick={()=>setShowBulletin(null)} className="btn-secondary">Annuler</button><button disabled={!bulletinForm.idCycle} onClick={async()=>{const b=await genererBulletin(bulletinForm.idCycle);if(b){ouvrirBulletinPdf(b.id);setShowBulletin(null);}}} className="btn-primary"><FileText size={14}/> Télécharger le PDF</button></>}>
+        footer={<>
+          <button onClick={()=>setShowBulletin(null)} className="btn-secondary">Annuler</button>
+          <button disabled={!bulletinForm.idCycle} onClick={() => ouvrirPdfAuthentifie(`/exports/cycles/${bulletinForm.idCycle}/rapport.pdf`).catch((e) => showToast?.(e.message || "Impossible d'ouvrir le rapport.", 'error'))}
+            className="btn-secondary"><FileText size={14}/> Rapport de cycle (PDF)</button>
+          <button disabled={!bulletinForm.idCycle} onClick={async()=>{const b=await genererBulletin(bulletinForm.idCycle);if(b){ouvrirBulletinPdf(b.id);setShowBulletin(null);}}} className="btn-primary"><FileText size={14}/> Télécharger le bulletin</button>
+        </>}>
         <div className="space-y-4">
           <FormField label="Cycle clôturé" required hint="Le bulletin (montant, retenues) est calculé automatiquement à la clôture du cycle.">
             <select className="select" value={bulletinForm.idCycle} onChange={e=>setBulletinForm(f=>({...f,idCycle:e.target.value}))}>

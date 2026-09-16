@@ -34,6 +34,11 @@ return new class extends Migration
         // déjà enregistrés si on désactivait après coup).
         DB::statement('ALTER TABLE caisses ADD COLUMN IF NOT EXISTS suivi_epargne BOOLEAN NOT NULL DEFAULT FALSE');
 
+        // migrate:fresh DROP les tables mais pas les types ENUM (et n'appelle
+        // jamais down()) : un run précédent interrompu peut laisser ce type
+        // orphelin en base. On le supprime avant de le recréer pour rester
+        // idempotent sur un migrate:fresh répété.
+        DB::statement('DROP TYPE IF EXISTS type_mouvement_epargne');
         DB::statement("CREATE TYPE type_mouvement_epargne AS ENUM ('depot','interet','retrait','retrait_garantie')");
 
         DB::statement(<<<'SQL'

@@ -178,7 +178,7 @@ class SanctionController extends Controller
             ]);
         }
 
-        return response()->json($sanction);
+        return response()->json($sanction->load('type'));
     }
 
     /**
@@ -204,8 +204,14 @@ class SanctionController extends Controller
             'mode_paiement' => $data['mode_paiement'] ?? null, 'cheque_numero' => $data['details_paiement'] ?? null,
         ]);
 
-        $sanction->update(['statut' => 'payee', 'payee_at' => now(), 'transaction_id' => $transaction->id]);
+        $sanction->update([
+            'statut' => 'payee',
+            'payee_at' => now(),
+            'transaction_id' => $transaction->id,
+            'mode_paiement' => $data['mode_paiement'] ?? null,
+            'details_paiement' => $data['details_paiement'] ?? null,
+        ]);
 
-        return response()->json($sanction);
+        return response()->json($sanction->load('type'));
     }
 }
